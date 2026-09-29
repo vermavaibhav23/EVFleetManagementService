@@ -10,25 +10,39 @@ from app.core.kafka import KafkaBus
 mongo_client: AsyncIOMotorClient | None = None
 redis_client: Redis | None = None
 kafka_bus: KafkaBus | None = None
+connection_errors: dict[str, str] = {}
 
 
 async def connect_clients() -> None:
     global kafka_bus, mongo_client, redis_client
 
-    mongo_client = AsyncIOMotorClient(settings.mongodb_uri, serverSelectionTimeoutMS=5000)
-    await mongo_client.admin.command("ping")
+    connection_errors.clear()
 
-    redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
-    await redis_client.ping()
+    try:
+        mongo_client = AsyncIOMotorClient(settings.mongodb_uri, serverSelectionTimeoutMS=5000)
+        await mongo_client.admin.command("ping")
+        db = get_database()
+        await db.telemetry.create_index([("vin", 1), ("ts", -1)])
+        await db.telemetry.create_index([("ts", -1)])
+        await db.chargers.create_index("charger_id", unique=True)
+        await db.alerts.create_index([("vin", 1), ("created_at", -1)])
+    except Exception as exc:
+        mongo_client = None
+        connection_errors["mongodb"] = str(exc)
 
-    kafka_bus = KafkaBus()
-    await kafka_bus.start()
+    try:
+        redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
+        await redis_client.ping()
+    except Exception as exc:
+        redis_client = None
+        connection_errors["redis"] = str(exc)
 
-    db = get_database()
-    await db.telemetry.create_index([("vin", 1), ("ts", -1)])
-    await db.telemetry.create_index([("ts", -1)])
-    await db.chargers.create_index("charger_id", unique=True)
-    await db.alerts.create_index([("vin", 1), ("created_at", -1)])
+    try:
+        kafka_bus = KafkaBus()
+        await kafka_bus.start()
+    except Exception as exc:
+        kafka_bus = None
+        connection_errors["kafka"] = str(exc)
 
 
 async def close_clients() -> None:
@@ -64,3 +78,10 @@ def get_kafka_bus() -> KafkaBus:
         raise RuntimeError("Kafka bus is not connected")
     return kafka_bus
 
+
+def is_kafka_connected() -> bool:
+    return kafka_bus is not None
+
+
+def get_connection_errors() -> dict[str, str]:
+    return dict(connection_errors)

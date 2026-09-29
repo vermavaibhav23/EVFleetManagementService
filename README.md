@@ -32,8 +32,8 @@ docker compose up --build
 
 ## Key endpoints
 
-- `GET /health/live`
-- `GET /health/ready`
+- `GET /api/v1/health/live`
+- `GET /api/v1/health/ready`
 - `POST /api/v1/telemetry`
 - `GET /api/v1/vehicles/{vin}/latest`
 - `GET /api/v1/vehicles/{vin}/alerts`
@@ -53,6 +53,12 @@ KAFKA_SECURITY_PROTOCOL=PLAINTEXT
 KAFKA_SASL_MECHANISM=
 KAFKA_USERNAME=
 KAFKA_PASSWORD=
+```
+
+For Railway Simple Kafka, `KAFKA_BOOTSTRAP_SERVERS` should reference the Kafka service's private URL:
+
+```env
+KAFKA_BOOTSTRAP_SERVERS=${{kafka-broker.KAFKA_URL}}
 ```
 
 If your Railway Kafka service exposes SASL credentials, set `KAFKA_SECURITY_PROTOCOL=SASL_SSL` or `SASL_PLAINTEXT` and fill the username/password/mechanism values from Railway.
