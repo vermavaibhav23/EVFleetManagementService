@@ -1464,7 +1464,7 @@ footer .muted {
   td {
     padding: 12px 9px;
   }
-  table {
+  .history table {
     min-width: 660px;
   }
   .section-heading h2 {
