@@ -646,6 +646,15 @@ function mapProjection(camera, width, height) {
     }),
   };
 }
+function geographicDistance(a, b) {
+  const radians = Math.PI / 180;
+  const value =
+    Math.sin(((b.lat - a.lat) * radians) / 2) ** 2 +
+    Math.cos(a.lat * radians) *
+      Math.cos(b.lat * radians) *
+      Math.sin(((b.lon - a.lon) * radians) / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
+}
 function fitViewport(vehicles, chargers, depots) {
   const v = selected();
   const nodes = [...vehicles, ...chargers, ...depots].filter(
@@ -710,12 +719,14 @@ function drawMap(svg, vehicles, chargers, depots) {
     destination = `<g><circle cx="${p.x}" cy="${p.y}" r="7" fill="#f6f8f1" stroke="#7c916c" stroke-width="2"/><text class="map-label" x="${p.x + 11}" y="${p.y - 9}">${escapeHtml(v.current_trip.destination)}</text></g>`;
     const c = chargers.find((c) => c.charger_id === plan?.charger_id);
     if (c) {
-      routes += line(
-        v,
-        c,
-        plan.status === "PROPOSED" ? "proposed" : "approved",
-        `${number(v.navigation_phase === "TO_CHARGER" ? v.distance_to_destination_km : plan.travel_distance_km, " km")} ${plan.status === "PROPOSED" ? "proposed" : "diversion"}`,
-      );
+      const remainingToStation = geographicDistance(v, c);
+      if (remainingToStation > 0.001)
+        routes += line(
+          v,
+          c,
+          plan.status === "PROPOSED" ? "proposed" : "approved",
+          `${number(remainingToStation, " km")} ${plan.status === "PROPOSED" ? "proposed" : "diversion"}`,
+        );
       routes += line(c, target, "return", "");
     }
   }
@@ -767,7 +778,7 @@ function drawMap(svg, vehicles, chargers, depots) {
     base = 10 ** Math.floor(Math.log10(raw)),
     distance = raw / base >= 5 ? 5 * base : raw / base >= 2 ? 2 * base : base,
     bar = distance * scale;
-  svg.innerHTML = `<defs><pattern id="grid" width="45" height="45" patternUnits="userSpaceOnUse"><path d="M45 0H0V45" fill="none" stroke="#dfe8dc" stroke-width=".6"/></pattern></defs><rect width="${width}" height="${height}" fill="#f1f5ee"/><rect width="${width}" height="${height}" fill="url(#grid)"/><text class="map-text" x="17" y="22">BENGALURU · DEMO REGION</text><path d="M${width - 25} 39V18l-4 7m4-7l4 7" fill="none" stroke="#7b8d75"/><text class="map-text" x="${width - 29}" y="53">N</text>${routes}${destination}${depotMarkers}${chargerMarkers}${markers}${clusterLabels}<rect x="10" y="${height - 35}" width="${bar + 25}" height="31" rx="4" fill="#f1f5ee" fill-opacity=".92"/><path d="M20 ${height - 16}v5h${bar}v-5" fill="none" stroke="#657e59" stroke-width="1.4"/><text class="map-text" x="20" y="${height - 22}">${number(distance, " km", distance < 1 ? 1 : 0)}</text>`;
+  svg.innerHTML = `<defs><pattern id="grid" width="45" height="45" patternUnits="userSpaceOnUse"><path d="M45 0H0V45" fill="none" stroke="#dfe8dc" stroke-width=".6"/></pattern></defs><rect width="${width}" height="${height}" fill="#f1f5ee"/><rect width="${width}" height="${height}" fill="url(#grid)"/><text class="map-text" x="17" y="22">BENGALURU · DEMO REGION</text><path d="M${width - 25} 39V18l-4 7m4-7l4 7" fill="none" stroke="#7b8d75"/><text class="map-text" x="${width - 29}" y="53">N</text>${routes}${destination}${depotMarkers}${markers}${chargerMarkers}${clusterLabels}<rect x="10" y="${height - 35}" width="${bar + 25}" height="31" rx="4" fill="#f1f5ee" fill-opacity=".92"/><path d="M20 ${height - 16}v5h${bar}v-5" fill="none" stroke="#657e59" stroke-width="1.4"/><text class="map-text" x="20" y="${height - 22}">${number(distance, " km", distance < 1 ? 1 : 0)}</text>`;
   return coord;
 }
 function renderMap() {

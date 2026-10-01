@@ -232,3 +232,14 @@ test("infeasible options display exclusions only for the evaluated vehicle and r
   h.run("dashboard.run_id='r2';renderPlans()");
   assert.equal(h.node("decision-reasoning").innerHTML, "");
 });
+
+test("arrived vehicle does not retain an obsolete diversion distance label", () => {
+  const h = harness(() => new Promise(() => {}));
+  h.run(
+    `dashboard={primary_demo_vin:'A',vehicles:[{vin:'A',name:'Van',lat:13,lon:77,soc_pct:30,manager_readiness:'NEEDS_CHARGING',delivery_remaining_km:10,current_trip:{destination_lat:13.1,destination_lon:77.1,destination:'Customer'}}],plans:[{vin:'A',status:'CHARGING',charger_id:'C',travel_distance_km:4.3}]};selectedVin='A';drawMap(byId('fleet-map'),dashboard.vehicles,[{charger_id:'C',name:'Charger',lat:13,lon:77,status:'AVAILABLE'}],[])`,
+  );
+  assert.ok(!h.node("fleet-map").innerHTML.includes("km diversion"));
+  assert.ok(h.node("fleet-map").innerHTML.includes("C1"));
+  assert.equal(h.run("geographicDistance({lat:13,lon:77},{lat:13,lon:77})"), 0);
+  assert.ok(h.run("geographicDistance({lat:0,lon:0},{lat:0,lon:1})") > 111);
+});
