@@ -53,9 +53,20 @@ class AlertConsumer:
             "last_processed_at": self.last_processed_at,
         }
 
-    @serialized
     async def _process(self, message):
         event = TelemetryEvent(**message.value)
+        stored = await get_database().telemetry.find_one(
+            {"event_id": event.event_id}, {"operations_processed": 1}
+        )
+        # Published simulator events have already applied operational state.
+        # Acknowledge these without competing with the next simulation tick.
+        # Missing history belongs to an old reset and must be discarded.
+        if not stored or stored.get("operations_processed"):
+            return
+        await self._process_unprocessed(event)
+
+    @serialized
+    async def _process_unprocessed(self, event):
         await process_telemetry_for_operations(get_database(), event, get_kafka_bus())
 
     async def _consume(self):
