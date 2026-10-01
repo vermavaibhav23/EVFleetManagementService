@@ -634,7 +634,6 @@ class SimulatorManager:
                         if state.resume_pending
                         else OperatingState.DRIVING
                     )
-                    state.resume_pending = False
                     speed_kmh = self._rng.uniform(32, 48)
                     if destination_lat is not None and destination_lon is not None:
                         distance, distance_to_destination_km = advance_toward_location(
@@ -671,6 +670,7 @@ class SimulatorManager:
                     )
                     state.trip_id = None
                     state.route_remaining_km = 0
+                    state.resume_pending = False
                     operating_state = OperatingState.AT_CUSTOMER
                     navigation_phase = "ARRIVED"
                     distance_to_destination_km = 0.0
