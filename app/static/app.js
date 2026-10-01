@@ -513,7 +513,7 @@ function renderVehicleProfile() {
         .map((t) => {
           const current = t.trip_id === v.current_trip?.trip_id,
             done = t.status === "COMPLETED";
-          return `<li class="${done ? "completed" : current ? "current" : ""}">${badge(done ? "COMPLETE" : current ? "APPROVED" : "neutral", done ? "Delivered" : current ? "Next stop" : "Upcoming")}<h3>${escapeHtml(t.destination)}</h3><p>${escapeHtml(t.origin)} → ${escapeHtml(t.destination)} · ${number(t.distance_km, " km")}</p><p>Earliest departure ${formatTime(t.departure_time)} · Due ${formatDate(t.delivery_deadline)}, ${formatTime(t.delivery_deadline)}${t.completed_at ? " · Arrived " + formatTime(t.completed_at) : ""} IST</p>${t.accepted_delay ? '<span class="badge NEEDS_CHARGING">Delay accepted</span>' : ""}${t.reserve_exception ? '<span class="badge EMERGENCY">Reserve exception · recovery requested</span>' : ""}${t.transfer_from_vin ? '<span class="badge neutral">Reassigned · package handover required</span>' : ""}</li>`;
+          return `<li class="${done ? "completed" : current ? "current" : ""}">${badge(done ? "COMPLETE" : current ? "APPROVED" : "neutral", done ? "Delivered" : current ? "Next stop" : "Upcoming")}<h3>${escapeHtml(t.destination)}</h3><p>${escapeHtml(t.origin)} → ${escapeHtml(t.destination)} · ${number(t.distance_km, " km")}</p><p>Earliest departure ${formatTime(t.departure_time)} · Due ${formatDate(t.delivery_deadline)}, ${formatTime(t.delivery_deadline)}${t.completed_at ? " · Arrived " + formatTime(t.completed_at) : ""} IST</p>${t.accepted_delay ? '<span class="badge NEEDS_CHARGING">Delay accepted</span>' : ""}${t.reserve_exception ? '<span class="badge EMERGENCY">Priority exception · recovery requested</span>' : ""}${t.transfer_from_vin ? '<span class="badge neutral">Reassigned · package handover required</span>' : ""}</li>`;
         })
         .join("") || "<li>Available for reassignment.</li>"
     }</ol><details><summary>Vehicle specifications</summary><dl class="facts">${fact("Usable battery", number(v.usable_capacity_kwh, " kWh"))}${fact("Connector", v.connector_type)}${fact("Charging limit", number(v.max_charge_power_kw, " kW"))}${fact("Consumption", number(v.consumption_kwh_per_km, " kWh/km", 2))}</dl></details>`;
@@ -979,7 +979,7 @@ document.addEventListener("click", async (event) => {
       },
       action === "accept-delay"
         ? "Charging and delay approved. The vehicle can continue."
-        : "Reserve exception approved. Recovery requested.",
+        : "Priority delivery approved. Recovery requested.",
     );
     return;
   }

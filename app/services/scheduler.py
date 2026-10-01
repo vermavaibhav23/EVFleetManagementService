@@ -134,7 +134,7 @@ def create_recommendation(
     )
     if trip.reserve_exception:
         return no(
-            "Manager approved direct delivery with a reserve exception. Recovery is requested."
+            "Manager approved priority delivery with a reserve or continuation exception. Recovery is requested."
         )
     depot_power_limits = depot_power_limits or {}
     charger_depots = {c.charger_id: c.depot_id for c in chargers}

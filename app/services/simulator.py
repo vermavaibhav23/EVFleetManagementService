@@ -782,6 +782,9 @@ class SimulatorManager:
                 in {"READY", "RESUMING_TRIP"},
                 arrived=telemetry_doc.get("operating_state") == "AT_CUSTOMER",
                 simulation_run_id=telemetry_doc.get("simulation_run_id"),
+                decision_reason=telemetry_doc.get("decision_reason")
+                if telemetry_doc.get("operating_state") == "AWAITING_DECISION"
+                else None,
                 journey_progress=JourneyProgress(**telemetry_doc["journey_progress"])
                 if telemetry_doc.get("journey_progress")
                 else None,
@@ -1212,7 +1215,7 @@ class SimulatorManager:
             elif trip_doc:
                 journey_trip_id = trip_doc["trip_id"]
                 if trip_doc.get("reserve_exception"):
-                    journey_decision = "Reserve exception approved"
+                    journey_decision = "Priority delivery approved"
                     state.decision_reason = None
             hold = False
             if (

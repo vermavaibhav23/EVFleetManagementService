@@ -6,6 +6,28 @@ from tests import test_demo_journey as fixtures
 
 
 class ExpandedScenariosTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pending_mid_route_decision_survives_pause_resume(self):
+        await self.seed("NONFINAL_PRIORITY")
+        await self.choice("accept-delay")
+        await self.f.db.trips.update_one(
+            {"trip_id": "SIM-TRIP-0001"}, {"$set": {"status": "IN_PROGRESS"}}
+        )
+        plan = await self.f.db.charging_plans.find_one(
+            {"vin": self.f.vin, "status": "APPROVED"}
+        )
+        await self.f.db.chargers.update_one(
+            {"charger_id": plan["charger_id"]}, {"$set": {"status": "FAULTY"}}
+        )
+        before = await self.tick()
+        self.assertEqual("AWAITING_DECISION", before["operating_state"])
+        await self.f.manager._load_states()
+        after = await self.tick()
+        self.assertEqual("AWAITING_DECISION", after["operating_state"])
+        self.assertEqual(
+            (before["lat"], before["lon"], before["soc_pct"]),
+            (after["lat"], after["lon"], after["soc_pct"]),
+        )
+
     async def test_removed_station_releases_plan_and_new_manager_choice_after_cancel(
         self,
     ):

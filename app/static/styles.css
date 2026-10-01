@@ -1852,4 +1852,4 @@ details summary {
 .journey-progress details { font-size:11px; }
 .control-band select#scenario { max-width:290px; }
 .control-band [hidden] { display:none !important; }
-@media (prefers-reduced-motion:no-preference) { .stage-charging.current .journey-symbol { animation:chargeGlow 1.8s ease-in-out infinite; } }
+@media (prefers-reduced-motion:no-preference) { .stage-charging.current .journey-symbol { animation:chargePulse 1.8s ease-in-out infinite; } }

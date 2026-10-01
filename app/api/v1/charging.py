@@ -624,7 +624,7 @@ async def manager_decision(vin: str, choice: str, request: ManagerDecisionReques
         "recovery_status": "REQUESTED" if choice == "deliver-now" else None,
         "reason": "Original deadline retained; charging delay accepted."
         if choice == "accept-delay"
-        else "Reserve exception approved; recovery requested and remaining work reassigned where applicable.",
+        else "Priority delivery approved; recovery requested and remaining work reassigned where applicable.",
     }
     if choice == "accept-delay":
         try:
