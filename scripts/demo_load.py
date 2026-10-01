@@ -56,6 +56,16 @@ async def main(args):
                     await asyncio.sleep(max(0, 2 - (perf_counter() - sample_start)))
                 final = await call("POST", "/simulator/stop")
                 elapsed = perf_counter() - started
+                drain_started = perf_counter()
+                while True:
+                    drained = await call("GET", "/health/ready")
+                    if drained["consumer"]["lag"] == 0:
+                        break
+                    if perf_counter() - drain_started > 30:
+                        raise AssertionError(
+                            "Kafka lag did not drain within 30 seconds"
+                        )
+                    await asyncio.sleep(1)
                 latencies.sort()
                 result = {
                     "vehicles": count,
@@ -72,6 +82,9 @@ async def main(args):
                         3,
                     ),
                     "max_consumer_lag": max(s["lag"] for s in samples),
+                    "consumer_lag_after_stop": drained["consumer"]["lag"],
+                    "drain_seconds": round(perf_counter() - drain_started, 2),
+                    "deployment": await call("GET", "/health/live"),
                     "samples": samples,
                 }
                 results.append(result)

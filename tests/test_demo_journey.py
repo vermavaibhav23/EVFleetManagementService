@@ -152,7 +152,7 @@ class DemoJourneyTests(unittest.IsolatedAsyncioTestCase):
                     ),
                     0.001,
                 )
-                self.assertGreater(event["soc_pct"], previous["soc_pct"])
+                self.assertGreaterEqual(event["soc_pct"], previous["soc_pct"])
             elif state in {"DRIVING", "RESUMING_TRIP", "EN_ROUTE_TO_CHARGER"}:
                 self.assertLess(event["soc_pct"], previous["soc_pct"])
                 if previous["navigation_target"] == event["navigation_target"]:
@@ -192,6 +192,26 @@ class DemoJourneyTests(unittest.IsolatedAsyncioTestCase):
         await self.manager._load_states()
         await self.manager._tick()
         self.assertEqual("AT_CUSTOMER", (await self.latest())["operating_state"])
+
+    async def test_arrival_reports_waiting_and_does_not_charge_before_slot(self):
+        plan = await self.plan()
+        await self.client.post(f"/charging/plans/{plan['plan_id']}/approve")
+        plan = await self.db.charging_plans.find_one({"plan_id": plan["plan_id"]})
+        charger = await self.db.chargers.find_one({"charger_id": plan["charger_id"]})
+        state = self.manager._states[self.vin]
+        state.lat, state.lon = charger["lat"] - 0.001, charger["lon"]
+        self.manager._simulated_time = plan["start_time"] - timedelta(minutes=2)
+        self.manager._time_scale = 60
+        await self.manager._tick()
+        arrived = await self.latest()
+        self.assertEqual("WAITING_FOR_CHARGER", arrived["operating_state"])
+        self.assertEqual(0, arrived["distance_to_destination_km"])
+        self.assertFalse(arrived["is_plugged_in"])
+        await self.manager._tick()
+        at_start = await self.latest()
+        self.assertEqual(arrived["soc_pct"], at_start["soc_pct"])
+        await self.manager._tick()
+        self.assertGreater((await self.latest())["soc_pct"], at_start["soc_pct"])
 
     async def test_repeated_concurrent_plan_lifecycle_requests(self):
         responses = await asyncio.gather(

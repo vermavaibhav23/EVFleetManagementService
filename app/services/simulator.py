@@ -662,6 +662,14 @@ class SimulatorManager:
                         elapsed_seconds / 3600
                     )
                     eta_minutes = distance_to_destination_km / speed_kmh * 60
+                    if distance_to_destination_km <= 0.000001:
+                        # Arrival and plugging in are separate observable transitions.
+                        operating_state = OperatingState.WAITING_FOR_CHARGER
+                        navigation_phase = "AT_CHARGER"
+                        speed_kmh = 0.0
+                        eta_minutes = max(
+                            0, (plan["start_time"] - now).total_seconds() / 60
+                        )
             else:
                 state.lat, state.lon = destination_lat, destination_lon
                 if now > plan["end_time"] and plan["status"] != "CHARGING":
@@ -739,7 +747,10 @@ class SimulatorManager:
                         plan["status"] = "CHARGING"
                     advance_charging_state(
                         state,
-                        elapsed_seconds,
+                        min(
+                            elapsed_seconds,
+                            max(0, (now - plan["start_time"]).total_seconds()),
+                        ),
                         power_kw,
                         float(plan["target_soc_pct"]),
                     )
