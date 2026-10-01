@@ -205,6 +205,17 @@ class TimetableTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(data["plan"])
         await self.finish(4)
 
+    async def test_large_speed_step_preserves_booking_transitions(self):
+        await self.seed("CHARGER_CONGESTION")
+        before = self.f.manager._simulated_time
+        self.f.manager._tick_seconds = 60
+        self.f.manager._time_scale = 3600
+        await self.f.manager._tick()
+        self.assertEqual(timedelta(minutes=1), self.f.manager._simulated_time - before)
+        waiting = await self.f.latest("SIM00000000000008")
+        self.assertEqual("WAITING_FOR_CHARGER", waiting["operating_state"])
+        self.assertEqual(25, waiting["soc_pct"])
+
     async def test_decision_stale_and_no_replacement(self):
         await self.seed("NONFINAL_PRIORITY")
         d = await self.get(f"/charging/manager-decisions/{self.f.vin}")
