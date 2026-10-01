@@ -6,8 +6,8 @@ Load a Scenario with 10 vehicles. Each reset starts paused at current IST and cl
 |---|---|---|---|
 | Normal Operations | Smooth Deliveries | Energy covers four scheduled legs and reserve | Execute the timetable without charging |
 | Normal Operations | Charging Needed Later | Initial stops safe; six-stop route exceeds battery | Drive first; request charging when needed |
-| Charger Scenarios | Busy Chargers – Time to Save | Six charging; three waiting; generous deadline | Choose cheaper East Solar despite its queue |
-| Charger Scenarios | Busy Chargers – Deadline First | Same real congestion; tight deadline | Choose more expensive North Hub to arrive on time |
+| Charger Scenarios | Busy Chargers – Save Money | Six charging; three waiting; generous deadline | Choose cheaper East Solar despite its queue |
+| Charger Scenarios | Busy Chargers – Protect Deadline | Same real congestion; tight deadline | Choose more expensive North Hub to arrive on time |
 | Charger Scenarios | Charger Unavailable / Offline / Faulty / Incompatible Connector | Select a variation; unsuitable East Solar or all stations unavailable | Exclude unsuitable stations; if charging is required and none is reachable, declare Energy Emergency |
 | Charger Scenarios | Charger Fails During Journey | Approved station fails en route or while charging | Cancel affected bookings; hold and review a new safe option |
 | Charger Scenarios | Queue Takes Longer | Existing charging sessions slow and overrun | Recheck arrival; cancel a now-infeasible booking and request a new decision |

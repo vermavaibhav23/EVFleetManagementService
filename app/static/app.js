@@ -72,12 +72,12 @@ const scenarios = {
   },
   "CHARGER_RELAXED": {
     "group": "Charger Scenarios",
-    "name": "Busy Chargers - Time to Save",
+    "name": "Busy Chargers - Save Money",
     "description": "Waiting at the cheaper station fits the timetable."
   },
   "CHARGER_CONGESTION": {
     "group": "Charger Scenarios",
-    "name": "Busy Chargers - Deadline First",
+    "name": "Busy Chargers - Protect Deadline",
     "description": "The cheaper queue would miss the deadline."
   },
   "CHARGER_FAILURE": {

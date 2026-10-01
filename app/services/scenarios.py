@@ -16,13 +16,13 @@ SCENARIOS = [
     (
         "CHARGER_RELAXED",
         "Charger Scenarios",
-        "Busy Chargers - Time to Save",
+        "Busy Chargers - Save Money",
         "Waiting at the cheaper station fits the timetable.",
     ),
     (
         "CHARGER_CONGESTION",
         "Charger Scenarios",
-        "Busy Chargers - Deadline First",
+        "Busy Chargers - Protect Deadline",
         "The cheaper queue would miss the deadline.",
     ),
     (
