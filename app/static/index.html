@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EV Fleet Operations</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">Connected fleet operations</p>
+      <h1>EV Fleet Control</h1>
+    </div>
+    <div class="system-state"><span id="live-dot"></span><span id="system-label">Connecting</span></div>
+  </header>
+
+  <main>
+    <section class="control-band" aria-label="Simulation controls">
+      <label>Scenario
+        <select id="scenario">
+          <option>LOW_BATTERY_BEFORE_TRIP</option>
+          <option>CHARGER_CONGESTION</option>
+          <option>CHARGER_FAILURE</option>
+          <option>UNEXPECTED_LONG_TRIP</option>
+          <option>BATTERY_OVERHEATING</option>
+          <option>NORMAL_DAY</option>
+        </select>
+      </label>
+      <label>Vehicles
+        <input id="vehicle-count" type="number" min="1" max="1000" value="10">
+      </label>
+      <button id="seed-button">Seed scenario</button>
+      <button id="start-button" class="primary">Start simulation</button>
+      <button id="stop-button" class="danger">Stop</button>
+      <span id="sim-clock">Simulator stopped</span>
+    </section>
+
+    <section class="metrics" aria-label="Fleet summary">
+      <div><span>Vehicles</span><strong id="metric-vehicles">0</strong></div>
+      <div><span>Critical alerts</span><strong id="metric-critical">0</strong></div>
+      <div><span>Open alerts</span><strong id="metric-alerts">0</strong></div>
+      <div><span>Active plans</span><strong id="metric-plans">0</strong></div>
+      <div><span>Chargers available</span><strong id="metric-chargers">0 / 0</strong></div>
+    </section>
+
+    <p id="message" role="status"></p>
+
+    <section class="workspace">
+      <div class="section-heading">
+        <div><p class="eyebrow">Readiness</p><h2>Fleet risk queue</h2></div>
+        <button id="refresh-button" class="icon-button" title="Refresh data" aria-label="Refresh data">↻</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Vehicle</th><th>State</th><th>SoC</th><th>Current range</th><th>After trip</th><th>Safe margin</th><th>Readiness</th><th>Action</th></tr></thead>
+          <tbody id="vehicles-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="workspace">
+      <div class="section-heading"><div><p class="eyebrow">Operations</p><h2>Alerts</h2></div></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Severity</th><th>Vehicle</th><th>Status</th><th>Message</th><th>Updated</th></tr></thead>
+          <tbody id="alerts-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="workspace">
+      <div class="section-heading"><div><p class="eyebrow">Charging</p><h2>Plans and reservations</h2></div></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Vehicle</th><th>Charger</th><th>Window</th><th>Target</th><th>Cost</th><th>Status</th><th>Action</th></tr></thead>
+          <tbody id="plans-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

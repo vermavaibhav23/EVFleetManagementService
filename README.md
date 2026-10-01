@@ -1,49 +1,145 @@
 # EV Fleet Charging Management
 
-Small FastAPI starter for a connected EV fleet platform. It is designed to connect one main API service to independently deployed Kafka, Redis, and MongoDB services on Railway.
+Stage 2 of a connected EV fleet platform. The service converts live battery telemetry and assigned trips into distance-based readiness, actionable alerts, reservation-aware charger recommendations, and approved charging plans.
 
-## What is included
+## Stage 2 capabilities
 
-- FastAPI app with startup/shutdown lifecycle for MongoDB, Redis, and Kafka.
-- `/health/live` and `/health/ready` endpoints to verify dependency connectivity.
-- Basic EV telemetry ingestion endpoint that stores telemetry in MongoDB, caches latest vehicle state in Redis, and publishes the event to Kafka.
-- Basic charger listing and recommendation endpoint.
-- Kafka consumer loop that can react to telemetry events and create low-battery alerts.
-- Dockerfile and Railway-friendly environment variables.
+- Persistent vehicles, daily trips, chargers, tariffs, reservations, alerts, and charging plans.
+- Depot power limits enforced across simultaneous charger reservations.
+- Idempotent telemetry ingestion into MongoDB, latest-state caching in Redis, and Kafka publication.
+- Readiness calculated from available energy, trip distance, vehicle efficiency, and a configurable reserve.
+- Fleet-facing distance values: current range, post-trip range, and safe range margin.
+- Separate battery-health flags for temperature, state of health, and diagnostic trouble codes.
+- Deduplicated `CRITICAL` and `CHARGE_SOON` alerts with an operational lifecycle.
+- Charger selection that checks connector compatibility, reachability, port reservations, waiting time, tariffs, charging duration, and the next departure deadline.
+- Proposed-plan approval that atomically creates a charger-port reservation.
+- Deterministic simulator with realistic battery decrease while driving and increase while charging.
+- Six reproducible demo scenarios and an accelerated simulation clock.
+- Manual fleet portal at `/portal` and interactive OpenAPI documentation at `/docs`.
+
+## Architecture
+
+```text
+Simulator / vehicle client
+          |
+          v
+FastAPI telemetry API --> MongoDB telemetry history
+          |              Redis latest state
+          v
+        Kafka
+          |
+          v
+Readiness consumer --> deduplicated fleet alert
+          |
+          v
+Charging scheduler --> proposed plan --> approval --> reservation
+          |
+          v
+New telemetry confirms charging and automatically completes the plan
+```
+
+Energy remains the backend source of truth. Distance values are derived for operators:
+
+```text
+available energy = usable capacity * battery health * SoC
+current range = available energy / expected consumption per km
+safe range margin = current range - trip distance - reserve distance
+```
 
 ## Local setup
 
-```bash
+```powershell
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-copy .env.example .env
-uvicorn app.main:app --reload
-```
-
-Update `.env` with your Railway service URLs before running against deployed services.
-
-For local containers:
-
-```bash
-copy .env.example .env
+Copy-Item .env.example .env
 docker compose up --build
 ```
 
-## Key endpoints
+Open:
 
-- `GET /api/v1/health/live`
-- `GET /api/v1/health/ready`
-- `POST /api/v1/telemetry`
-- `GET /api/v1/vehicles/{vin}/latest`
-- `GET /api/v1/vehicles/{vin}/alerts`
-- `POST /api/v1/chargers`
-- `GET /api/v1/chargers`
-- `GET /api/v1/charging/recommendations/{vin}`
+- Fleet portal: `http://localhost:8000/portal`
+- API documentation: `http://localhost:8000/docs`
+- Readiness check: `http://localhost:8000/api/v1/health/ready`
 
-## Railway variables
+## Fastest manual demo
 
-Set these on the FastAPI Railway service:
+1. Open `/portal`.
+2. Select `LOW_BATTERY_BEFORE_TRIP` and seed 10 vehicles.
+3. The first vehicle appears as `CRITICAL`; generate a plan from its row.
+4. Review the charger, charging window, target SoC, cost, and explanation.
+5. Approve the plan. This creates a confirmed port reservation.
+6. Start the simulator. One real second advances one simulated minute.
+7. Watch the vehicle move to `WAITING_TO_CHARGE`, then `CHARGING`.
+8. SoC and range rise from generated telemetry.
+9. At target SoC, the plan and reservation become `COMPLETED` and the readiness alert resolves.
+
+Other scenarios:
+
+- `CHARGER_CONGESTION`: the cheapest charger has an existing reservation.
+- `CHARGER_FAILURE`: one charger is unavailable.
+- `UNEXPECTED_LONG_TRIP`: an added long delivery creates a sudden energy deficit.
+- `BATTERY_OVERHEATING`: readiness and battery health are shown independently.
+- `NORMAL_DAY`: vehicles begin with comfortable range margins.
+
+## Core endpoints
+
+### Fleet data
+
+```text
+POST  /api/v1/vehicles
+GET   /api/v1/vehicles
+GET   /api/v1/vehicles/{vin}/latest
+GET   /api/v1/vehicles/{vin}/readiness
+POST  /api/v1/trips
+GET   /api/v1/trips/vehicle/{vin}
+PATCH /api/v1/trips/{trip_id}
+```
+
+### Charging operations
+
+```text
+POST  /api/v1/chargers
+GET   /api/v1/chargers
+POST  /api/v1/depots
+GET   /api/v1/depots
+POST  /api/v1/tariffs
+GET   /api/v1/tariffs
+POST  /api/v1/reservations
+GET   /api/v1/reservations
+PATCH /api/v1/reservations/{reservation_id}
+GET   /api/v1/charging/recommendations/{vin}
+POST  /api/v1/charging/plans/{vin}
+POST  /api/v1/charging/plans/{plan_id}/approve
+POST  /api/v1/charging/plans/{plan_id}/reject
+POST  /api/v1/charging/plans/{plan_id}/cancel
+```
+
+### Simulation and monitoring
+
+```text
+POST /api/v1/simulator/scenarios
+POST /api/v1/simulator/start
+POST /api/v1/simulator/stop
+GET  /api/v1/simulator/status
+GET  /api/v1/fleet/overview
+GET  /api/v1/fleet/vehicles
+GET  /api/v1/alerts
+PATCH /api/v1/alerts/{dedupe_key}
+```
+
+## Tests
+
+```powershell
+python -m unittest discover -v
+python -m compileall app tests
+```
+
+The unit suite covers readiness, distance derivation, health flags, charger pricing versus deadlines, reservation overlap, and simulator battery physics.
+
+## Railway configuration
+
+The existing single-service Railway deployment remains supported. Set:
 
 ```env
 MONGODB_URI=mongodb://...
@@ -53,12 +149,18 @@ KAFKA_SECURITY_PROTOCOL=PLAINTEXT
 KAFKA_SASL_MECHANISM=
 KAFKA_USERNAME=
 KAFKA_PASSWORD=
+
+RESERVE_RANGE_KM=15
+CHARGE_SOON_MARGIN_KM=15
+CHARGING_DEADLINE_BUFFER_MINUTES=20
+SCHEDULER_SLOT_MINUTES=15
+CHARGING_EFFICIENCY=0.92
 ```
 
-For Railway Simple Kafka, `KAFKA_BOOTSTRAP_SERVERS` should reference the Kafka service's private URL:
+For Railway Simple Kafka, `KAFKA_BOOTSTRAP_SERVERS` can reference the broker's private URL:
 
 ```env
 KAFKA_BOOTSTRAP_SERVERS=${{kafka-broker.KAFKA_URL}}
 ```
 
-If your Railway Kafka service exposes SASL credentials, set `KAFKA_SECURITY_PROTOCOL=SASL_SSL` or `SASL_PLAINTEXT` and fill the username/password/mechanism values from Railway.
+Stage 3 will move high-volume ingestion and simulation into independently scalable workers and add authentication, tenant isolation, analytical storage, observability, and the 100,000-events/second load target.

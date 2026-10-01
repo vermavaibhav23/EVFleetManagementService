@@ -3,7 +3,12 @@ from time import perf_counter
 from fastapi import APIRouter, HTTPException
 
 from app.core.config import settings
-from app.core.dependencies import get_connection_errors, get_database, get_kafka_bus, get_redis
+from app.core.dependencies import (
+    get_connection_errors,
+    get_database,
+    get_kafka_bus,
+    get_redis,
+)
 
 router = APIRouter()
 
@@ -43,7 +48,13 @@ async def ready() -> dict[str, object]:
         checks["kafka_consumer"] = errors["kafka_consumer"]
 
     checks["latency_ms"] = round((perf_counter() - started) * 1000, 2)
-    if any(value != "ok" and value != "producer_connected" for value in checks.values() if not isinstance(value, float)):
-        raise HTTPException(status_code=503, detail={"status": "not_ready", "checks": checks})
+    if any(
+        value != "ok" and value != "producer_connected"
+        for value in checks.values()
+        if not isinstance(value, float)
+    ):
+        raise HTTPException(
+            status_code=503, detail={"status": "not_ready", "checks": checks}
+        )
 
     return {"status": "ready", "checks": checks}

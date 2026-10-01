@@ -1,0 +1,126 @@
+const api = "/api/v1";
+
+const byId = (id) => document.getElementById(id);
+const formatTime = (value) => value ? new Date(value).toLocaleString() : "-";
+const number = (value, suffix = "") => value == null ? "-" : `${Number(value).toFixed(1)}${suffix}`;
+
+async function request(path, options = {}) {
+  const response = await fetch(`${api}${path}`, {
+    headers: {"Content-Type": "application/json"},
+    ...options,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.detail || `Request failed (${response.status})`);
+  return payload;
+}
+
+function setMessage(text, error = false) {
+  byId("message").textContent = text;
+  byId("message").classList.toggle("error", error);
+}
+
+async function refresh() {
+  try {
+    const [overview, fleet, alerts, plans, simulator] = await Promise.all([
+      request("/fleet/overview"),
+      request("/fleet/vehicles?limit=100"),
+      request("/alerts?limit=100"),
+      request("/charging/plans?limit=100"),
+      request("/simulator/status"),
+    ]);
+    byId("live-dot").classList.add("online");
+    byId("system-label").textContent = "API connected";
+    byId("metric-vehicles").textContent = overview.vehicles;
+    byId("metric-critical").textContent = overview.critical_alerts;
+    byId("metric-alerts").textContent = overview.open_alerts;
+    byId("metric-plans").textContent = overview.active_charging_plans;
+    byId("metric-chargers").textContent = `${overview.available_chargers} / ${overview.chargers}`;
+    byId("sim-clock").textContent = simulator.running
+      ? `Running · ${formatTime(simulator.simulated_time)} · ${simulator.emitted_events} events`
+      : `Stopped · ${simulator.tracked_vehicles} vehicles loaded`;
+    renderVehicles(fleet.vehicles);
+    renderAlerts(alerts);
+    renderPlans(plans);
+  } catch (error) {
+    byId("live-dot").classList.remove("online");
+    byId("system-label").textContent = "API unavailable";
+    setMessage(String(error.message || error), true);
+  }
+}
+
+function renderVehicles(vehicles) {
+  const priority = {CRITICAL: 0, CHARGE_SOON: 1, UNKNOWN: 2, SAFE: 3};
+  vehicles.sort((a, b) => (priority[a.readiness] ?? 9) - (priority[b.readiness] ?? 9));
+  byId("vehicles-body").innerHTML = vehicles.map((vehicle) => `
+    <tr>
+      <td><strong>${vehicle.name}</strong><br><span class="muted">${vehicle.vin}</span></td>
+      <td>${vehicle.operating_state || "-"}</td>
+      <td>${number(vehicle.soc_pct, "%")}</td>
+      <td>${number(vehicle.current_range_km, " km")}</td>
+      <td>${number(vehicle.post_trip_range_km, " km")}</td>
+      <td>${number(vehicle.range_margin_km, " km")}</td>
+      <td><span class="badge ${vehicle.readiness}">${vehicle.readiness}</span></td>
+      <td>${vehicle.readiness === "CRITICAL" || vehicle.readiness === "CHARGE_SOON"
+        ? `<button class="table-action" onclick="generatePlan('${vehicle.vin}')">Generate plan</button>` : "-"}</td>
+    </tr>`).join("") || `<tr><td colspan="8" class="muted">Seed a scenario to begin.</td></tr>`;
+}
+
+function renderAlerts(alerts) {
+  byId("alerts-body").innerHTML = alerts.map((alert) => `
+    <tr><td><span class="badge ${alert.severity}">${alert.severity}</span></td><td>${alert.vin}</td>
+    <td>${alert.status}</td><td>${alert.message}</td><td>${formatTime(alert.updated_at)}</td></tr>`).join("")
+    || `<tr><td colspan="5" class="muted">No alerts.</td></tr>`;
+}
+
+function renderPlans(plans) {
+  byId("plans-body").innerHTML = plans.map((plan) => `
+    <tr><td>${plan.vin}</td><td>${plan.charger_id} · port ${plan.port_number}</td>
+    <td>${formatTime(plan.start_time)}<br><span class="muted">to ${formatTime(plan.end_time)}</span></td>
+    <td>${number(plan.target_soc_pct, "%")}</td><td>₹${Number(plan.estimated_cost).toFixed(2)}</td>
+    <td><span class="badge ${plan.status}">${plan.status}</span></td>
+    <td>${plan.status === "PROPOSED" ? `<button class="table-action primary" onclick="approvePlan('${plan.plan_id}')">Approve</button>` : "-"}</td></tr>`).join("")
+    || `<tr><td colspan="7" class="muted">No charging plans.</td></tr>`;
+}
+
+async function seedScenario() {
+  try {
+    const result = await request("/simulator/scenarios", {
+      method: "POST",
+      body: JSON.stringify({scenario: byId("scenario").value, vehicle_count: Number(byId("vehicle-count").value), seed: 42}),
+    });
+    setMessage(`Seeded ${result.vehicles_seeded} vehicles. Demo vehicle: ${result.primary_demo_vin}`);
+    await refresh();
+  } catch (error) { setMessage(error.message, true); }
+}
+
+async function startSimulation() {
+  try {
+    await request("/simulator/start", {method: "POST", body: JSON.stringify({tick_seconds: 1, time_scale: 60})});
+    setMessage("Simulation started at 60× time.");
+    await refresh();
+  } catch (error) { setMessage(error.message, true); }
+}
+
+async function stopSimulation() {
+  try { await request("/simulator/stop", {method: "POST"}); setMessage("Simulation stopped."); await refresh(); }
+  catch (error) { setMessage(error.message, true); }
+}
+
+async function generatePlan(vin) {
+  try { const plan = await request(`/charging/plans/${vin}`, {method: "POST"}); setMessage(`Plan ${plan.plan_id} proposed for ${vin}.`); await refresh(); }
+  catch (error) { setMessage(error.message, true); }
+}
+
+async function approvePlan(planId) {
+  try { await request(`/charging/plans/${planId}/approve`, {method: "POST"}); setMessage("Plan approved and charger reserved."); await refresh(); }
+  catch (error) { setMessage(error.message, true); }
+}
+
+byId("seed-button").addEventListener("click", seedScenario);
+byId("start-button").addEventListener("click", startSimulation);
+byId("stop-button").addEventListener("click", stopSimulation);
+byId("refresh-button").addEventListener("click", refresh);
+window.generatePlan = generatePlan;
+window.approvePlan = approvePlan;
+refresh();
+setInterval(refresh, 5000);

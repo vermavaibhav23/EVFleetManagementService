@@ -1,0 +1,84 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f4f6f7;
+  color: #172026;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; }
+button, input, select { font: inherit; letter-spacing: 0; }
+
+.topbar {
+  min-height: 88px;
+  padding: 20px clamp(18px, 4vw, 56px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #132b32;
+  color: #fff;
+  border-bottom: 4px solid #e4b63f;
+}
+
+h1, h2, p { margin: 0; }
+h1 { font-size: 26px; font-weight: 680; }
+h2 { font-size: 18px; font-weight: 680; }
+.eyebrow { color: #75929a; font-size: 11px; font-weight: 700; text-transform: uppercase; margin-bottom: 4px; }
+.topbar .eyebrow { color: #a9c3c9; }
+.system-state { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+#live-dot { width: 9px; height: 9px; border-radius: 50%; background: #d6584d; }
+#live-dot.online { background: #42b883; }
+
+main { max-width: 1480px; margin: 0 auto; padding: 24px clamp(14px, 3vw, 44px) 56px; }
+.control-band {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-bottom: 22px;
+  border-bottom: 1px solid #cbd4d7;
+}
+label { display: grid; gap: 5px; color: #4f646b; font-size: 12px; font-weight: 650; }
+select, input { height: 38px; border: 1px solid #aebdc1; border-radius: 4px; background: #fff; padding: 0 10px; color: #172026; }
+select { min-width: 250px; }
+input { width: 100px; }
+button { height: 38px; border: 1px solid #8da0a6; border-radius: 4px; background: #fff; color: #20363d; padding: 0 14px; font-weight: 650; cursor: pointer; }
+button:hover { background: #eaf0f1; }
+button.primary { background: #16766f; border-color: #16766f; color: #fff; }
+button.primary:hover { background: #105f59; }
+button.danger { color: #9d3029; border-color: #d7a29e; }
+#sim-clock { margin-left: auto; min-width: 220px; text-align: right; color: #60747a; font-size: 13px; align-self: center; }
+
+.metrics { display: grid; grid-template-columns: repeat(5, minmax(130px, 1fr)); border-bottom: 1px solid #cbd4d7; }
+.metrics div { padding: 20px 18px; border-right: 1px solid #cbd4d7; }
+.metrics div:first-child { padding-left: 0; }
+.metrics div:last-child { border-right: 0; }
+.metrics span { display: block; color: #60747a; font-size: 12px; }
+.metrics strong { display: block; margin-top: 4px; font-size: 24px; font-weight: 690; }
+
+#message { min-height: 24px; padding: 12px 0 0; color: #426168; font-size: 13px; }
+#message.error { color: #a32f27; }
+.workspace { padding-top: 26px; }
+.section-heading { display: flex; align-items: end; justify-content: space-between; margin-bottom: 10px; }
+.icon-button { width: 38px; padding: 0; font-size: 20px; }
+.table-wrap { overflow-x: auto; border-top: 2px solid #5f767d; background: #fff; }
+table { width: 100%; border-collapse: collapse; min-width: 850px; table-layout: fixed; }
+th, td { padding: 11px 12px; text-align: left; border-bottom: 1px solid #e0e6e8; font-size: 13px; overflow-wrap: anywhere; }
+th { color: #52686f; background: #edf1f2; font-size: 11px; text-transform: uppercase; }
+tbody tr:hover { background: #f7f9f9; }
+.badge { display: inline-block; min-width: 76px; padding: 4px 7px; border-radius: 3px; text-align: center; font-size: 11px; font-weight: 750; }
+.badge.CRITICAL, .badge.critical { color: #9d3029; background: #fbe8e6; }
+.badge.CHARGE_SOON, .badge.warning { color: #805a08; background: #fff2cd; }
+.badge.SAFE, .badge.COMPLETED { color: #126249; background: #def4e9; }
+.badge.UNKNOWN, .badge.PROPOSED { color: #52686f; background: #e9eff1; }
+.badge.APPROVED, .badge.CHARGING, .badge.ACTION_SCHEDULED { color: #185a75; background: #dceff7; }
+.table-action { height: 30px; padding: 0 9px; font-size: 12px; }
+.muted { color: #77898f; }
+
+@media (max-width: 850px) {
+  .topbar { align-items: flex-start; }
+  .metrics { grid-template-columns: repeat(2, 1fr); }
+  .metrics div, .metrics div:first-child { padding: 14px 10px; border-bottom: 1px solid #cbd4d7; }
+  #sim-clock { width: 100%; margin-left: 0; text-align: left; }
+  select { min-width: min(100%, 280px); }
+}

@@ -1,4 +1,5 @@
 import json
+from contextlib import suppress
 from typing import Any
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
@@ -11,12 +12,19 @@ class KafkaBus:
         self._producer = AIOKafkaProducer(**settings.kafka_config)
 
     async def start(self) -> None:
-        await self._producer.start()
+        try:
+            await self._producer.start()
+        except Exception:
+            with suppress(Exception):
+                await self._producer.stop()
+            raise
 
     async def stop(self) -> None:
         await self._producer.stop()
 
-    async def publish(self, topic: str, payload: dict[str, Any], key: str | None = None) -> None:
+    async def publish(
+        self, topic: str, payload: dict[str, Any], key: str | None = None
+    ) -> None:
         await self._producer.send_and_wait(
             topic,
             json.dumps(payload, default=str).encode("utf-8"),
@@ -33,4 +41,3 @@ def build_consumer(topic: str) -> AIOKafkaConsumer:
         value_deserializer=lambda value: json.loads(value.decode("utf-8")),
         **settings.kafka_config,
     )
-

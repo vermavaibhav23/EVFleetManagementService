@@ -1,10 +1,11 @@
 import asyncio
 from contextlib import suppress
-from datetime import UTC, datetime
 
 from app.core.config import settings
 from app.core.dependencies import get_database, get_kafka_bus
 from app.core.kafka import build_consumer
+from app.models.telemetry import TelemetryEvent
+from app.services.fleet_readiness import process_telemetry_for_operations
 
 
 class AlertConsumer:
@@ -31,20 +32,7 @@ class AlertConsumer:
     async def _consume(self) -> None:
         assert self._consumer is not None
         async for message in self._consumer:
-            event = message.value
-            if float(event.get("soc_pct", 100)) > settings.low_soc_alert_threshold:
-                continue
-
-            alert = {
-                "vin": event["vin"],
-                "type": "LOW_SOC",
-                "severity": "critical" if float(event.get("soc_pct", 100)) <= 10 else "warning",
-                "message": f"Vehicle battery is at {event.get('soc_pct')}%.",
-                "telemetry_ts": event.get("ts"),
-                "created_at": datetime.now(UTC),
-            }
-
-            db = get_database()
-            await db.alerts.insert_one(alert)
-            await get_kafka_bus().publish(settings.kafka_alerts_topic, alert, key=event["vin"])
-
+            event = TelemetryEvent(**message.value)
+            await process_telemetry_for_operations(
+                get_database(), event, get_kafka_bus()
+            )

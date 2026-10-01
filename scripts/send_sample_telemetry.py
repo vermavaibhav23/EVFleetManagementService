@@ -19,11 +19,12 @@ async def main() -> None:
         "dtc": [],
     }
     async with httpx.AsyncClient() as client:
-        response = await client.post("http://localhost:8000/api/v1/telemetry", json=payload)
+        response = await client.post(
+            "http://localhost:8000/api/v1/telemetry", json=payload
+        )
         response.raise_for_status()
         print(response.json())
 
 
 if __name__ == "__main__":
     asyncio.run(main())
-

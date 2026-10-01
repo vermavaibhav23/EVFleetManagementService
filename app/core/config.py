@@ -5,7 +5,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
 
     app_name: str = "EV Fleet Charging Management"
     app_env: str = "development"
@@ -27,6 +29,11 @@ class Settings(BaseSettings):
     kafka_password: str | None = None
 
     low_soc_alert_threshold: int = Field(default=20, ge=0, le=100)
+    reserve_range_km: float = Field(default=15, ge=0, le=200)
+    charge_soon_margin_km: float = Field(default=15, ge=0, le=200)
+    charging_deadline_buffer_minutes: int = Field(default=20, ge=0, le=240)
+    scheduler_slot_minutes: int = Field(default=15, ge=5, le=60)
+    charging_efficiency: float = Field(default=0.92, gt=0, le=1)
 
     @property
     def kafka_config(self) -> dict[str, str]:
@@ -52,4 +59,3 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
-

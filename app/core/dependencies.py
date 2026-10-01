@@ -6,7 +6,6 @@ from redis.asyncio import Redis
 from app.core.config import settings
 from app.core.kafka import KafkaBus
 
-
 mongo_client: AsyncIOMotorClient | None = None
 redis_client: Redis | None = None
 kafka_bus: KafkaBus | None = None
@@ -19,12 +18,26 @@ async def connect_clients() -> None:
     connection_errors.clear()
 
     try:
-        mongo_client = AsyncIOMotorClient(settings.mongodb_uri, serverSelectionTimeoutMS=5000)
+        mongo_client = AsyncIOMotorClient(
+            settings.mongodb_uri, serverSelectionTimeoutMS=5000
+        )
         await mongo_client.admin.command("ping")
         db = get_database()
+        await db.telemetry.create_index("event_id", unique=True, sparse=True)
         await db.telemetry.create_index([("vin", 1), ("ts", -1)])
         await db.telemetry.create_index([("ts", -1)])
+        await db.vehicles.create_index("vin", unique=True)
+        await db.trips.create_index("trip_id", unique=True)
+        await db.trips.create_index([("vin", 1), ("departure_time", 1)])
+        await db.depots.create_index("depot_id", unique=True)
         await db.chargers.create_index("charger_id", unique=True)
+        await db.tariffs.create_index("tariff_id", unique=True)
+        await db.reservations.create_index("reservation_id", unique=True)
+        await db.reservations.create_index(
+            [("charger_id", 1), ("port_number", 1), ("start_time", 1), ("end_time", 1)]
+        )
+        await db.charging_plans.create_index("plan_id", unique=True)
+        await db.alerts.create_index("dedupe_key", unique=True, sparse=True)
         await db.alerts.create_index([("vin", 1), ("created_at", -1)])
     except Exception as exc:
         mongo_client = None

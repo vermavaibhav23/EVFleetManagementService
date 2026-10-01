@@ -1,0 +1,36 @@
+from datetime import UTC, datetime
+from enum import StrEnum
+
+from pydantic import BaseModel, Field, field_validator
+
+
+class TripStatus(StrEnum):
+    PLANNED = "PLANNED"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
+
+
+class Trip(BaseModel):
+    trip_id: str = Field(min_length=1, max_length=80)
+    vin: str = Field(min_length=11, max_length=17)
+    origin: str = Field(min_length=1, max_length=150)
+    destination: str = Field(min_length=1, max_length=150)
+    departure_time: datetime
+    distance_km: float = Field(gt=0)
+    service_duration_minutes: int = Field(default=20, ge=0, le=1440)
+    status: TripStatus = TripStatus.PLANNED
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @field_validator("departure_time")
+    @classmethod
+    def departure_must_include_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("departure_time must include a timezone")
+        return value
+
+
+class TripUpdate(BaseModel):
+    departure_time: datetime | None = None
+    distance_km: float | None = Field(default=None, gt=0)
+    status: TripStatus | None = None
