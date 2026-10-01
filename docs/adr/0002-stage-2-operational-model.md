@@ -21,4 +21,4 @@ The application remains a single Railway-friendly FastAPI deployment for Stage 2
 - Fleet managers see understandable range and margin values without sacrificing energy correctness.
 - The complete workflow can be tested manually with deterministic scenarios.
 - MongoDB remains suitable for the Stage 2 operational scale.
-- The in-process simulator is intentionally limited to 1,000 vehicles; Stage 3 will use distributed producers for the 100,000-events/second target.
+- The in-process simulator accepts up to 1,000 vehicles; this is an input limit, not measured capacity. The historical 100,000-events/second target remains unvalidated. See `../demo-audit.md` for measured deployment results and the architecture still needed for scale.
