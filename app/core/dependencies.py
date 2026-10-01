@@ -1,3 +1,4 @@
+from datetime import UTC
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
@@ -19,7 +20,10 @@ async def connect_clients() -> None:
 
     try:
         mongo_client = AsyncIOMotorClient(
-            settings.mongodb_uri, serverSelectionTimeoutMS=5000
+            settings.mongodb_uri,
+            serverSelectionTimeoutMS=5000,
+            tz_aware=True,
+            tzinfo=UTC,
         )
         await mongo_client.admin.command("ping")
         db = get_database()

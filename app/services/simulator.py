@@ -85,6 +85,7 @@ async def seed_scenario(
     await db.alerts.delete_many(simulation_filter)
     await db.charging_plans.delete_many(simulation_filter)
     await db.reservations.delete_many(simulation_filter)
+    await db.vehicles.delete_many(simulation_filter)
 
     depot = Depot(
         depot_id=depot_id,
