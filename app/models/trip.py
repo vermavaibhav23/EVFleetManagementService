@@ -25,6 +25,7 @@ class Trip(BaseModel):
     distance_km: float = Field(gt=0)
     service_duration_minutes: int = Field(default=20, ge=0, le=1440)
     status: TripStatus = TripStatus.PLANNED
+    simulation_enabled: bool = True
     created_at: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @field_validator("departure_time")

@@ -28,6 +28,7 @@ async def main(args):
                 "BATTERY_OVERHEATING",
                 "UNEXPECTED_LONG_TRIP",
                 "NORMAL_DAY",
+                "UNREACHABLE_CHARGER",
             ]:
                 result = {"scenario": scenario}
                 result["seed"] = await req(
@@ -47,11 +48,17 @@ async def main(args):
                         break
                     assert perf_counter() - start < 120
                     await asyncio.sleep(1)
+                await req("POST", "/simulator/stop")
                 result["event"] = event
+                result["manager"] = await req("GET", "/fleet/manager")
                 r = await c.post(f"/charging/plans/{VIN}")
                 result["plan_status"] = r.status_code
                 result["plan_response"] = r.json()
-                if scenario in ["NORMAL_DAY", "BATTERY_OVERHEATING"]:
+                if scenario in [
+                    "NORMAL_DAY",
+                    "BATTERY_OVERHEATING",
+                    "UNREACHABLE_CHARGER",
+                ]:
                     assert r.status_code == 422, r.text
                     if scenario == "BATTERY_OVERHEATING":
                         assert event["battery_temperature_c"] >= 45
@@ -76,6 +83,11 @@ async def main(args):
                             )["status"]
                             == "FAULTY"
                         )
+                    await req(
+                        "POST",
+                        "/simulator/start",
+                        json={"tick_seconds": 1, "time_scale": 60},
+                    )
                     start = perf_counter()
                     states = set()
                     while True:

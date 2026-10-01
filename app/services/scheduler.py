@@ -15,7 +15,7 @@ from app.models.telemetry import TelemetryEvent
 from app.models.trip import Trip, TripStatus
 from app.models.vehicle import Vehicle
 from app.services.energy import charging_seconds
-from app.services.pricing import charging_cost, price_at
+from app.services.pricing import charging_cost, price_at, tariffs_for_charger
 from app.services.reservations import has_reservation_conflict, intervals_overlap
 
 
@@ -100,11 +100,18 @@ def create_recommendation(
     )
     deadline = trip.departure_time - timedelta(minutes=deadline_buffer_minutes)
     candidates: list[CandidateCharger] = []
+    exclusions: list[dict[str, str]] = []
 
     for charger in chargers:
-        if charger.status != ChargerStatus.AVAILABLE:
+
+        def exclude(reason: str) -> None:
+            exclusions.append({"charger_id": charger.charger_id, "reason": reason})
+
+        if charger.status not in {ChargerStatus.AVAILABLE, ChargerStatus.OCCUPIED}:
+            exclude("Faulty or offline station")
             continue
         if charger.connector_type.casefold() != vehicle.connector_type.casefold():
+            exclude("Incompatible connector")
             continue
 
         travel_distance = haversine_km(
@@ -112,6 +119,9 @@ def create_recommendation(
         )
         travel_energy = travel_distance * vehicle.consumption_kwh_per_km
         if travel_energy >= readiness.available_energy_kwh:
+            exclude(
+                f"Unreachable: {travel_distance:.1f} km away; available range {readiness.current_range_km:.1f} km"
+            )
             continue
 
         delivery_km = (
@@ -125,6 +135,7 @@ def create_recommendation(
             delivery_km + desired_margin_km
         ) * vehicle.consumption_kwh_per_km
         if desired_energy > effective_capacity:
+            exclude("Delivery plus reserve exceeds battery capacity from this station")
             continue
         target_soc = math.ceil(desired_energy / effective_capacity * 1000) / 10
         desired_energy = target_soc / 100 * effective_capacity
@@ -160,8 +171,10 @@ def create_recommendation(
         duration += timedelta(minutes=1)
         latest_start = ready_deadline - duration
         if latest_start < earliest_start:
+            exclude("Travel and charging cannot meet the buffered delivery deadline")
             continue
 
+        candidate_count = len(candidates)
         slot = earliest_start
         while slot <= latest_start:
             end = slot + duration
@@ -192,9 +205,9 @@ def create_recommendation(
                 ):
                     continue
 
-                depot_tariffs = [
-                    tariff for tariff in tariffs if tariff.depot_id == charger.depot_id
-                ]
+                depot_tariffs = tariffs_for_charger(
+                    tariffs, charger.charger_id, charger.depot_id
+                )
                 electricity_cost = charging_cost(
                     slot,
                     end,
@@ -234,15 +247,23 @@ def create_recommendation(
                             2,
                         ),
                         deadline_margin_minutes=round(deadline_margin, 1),
+                        travel_minutes=round(travel_minutes, 1),
+                        target_soc_pct=round(target_soc, 1),
+                        remaining_delivery_km=round(delivery_km, 3),
                     )
                 )
             slot += timedelta(minutes=slot_minutes)
+        if len(candidates) == candidate_count:
+            exclude(
+                "Reservation or depot power conflicts leave no slot before the buffered deadline"
+            )
 
     if not candidates:
         return ChargingRecommendation(
             vin=vehicle.vin,
             readiness=readiness,
-            reason="No compatible free charger can make the vehicle ready before its buffered deadline.",
+            reason="No evaluated charger has a feasible slot before the buffered delivery deadline. Review the exclusions; assistance or delivery rescheduling may be needed.",
+            exclusions=exclusions,
         )
 
     if emergency_diversion:
@@ -256,7 +277,12 @@ def create_recommendation(
                 -candidate.deadline_margin_minutes,
             )
         )
-    selected = candidates[0]
+    # Keep the best evaluated slot at each distinct station, not three adjacent slots.
+    distinct: dict[str, CandidateCharger] = {}
+    for candidate in candidates:
+        distinct.setdefault(candidate.charger_id, candidate)
+    options = list(distinct.values())[:3]
+    selected = options[0]
     charger = next(item for item in chargers if item.charger_id == selected.charger_id)
     delivery_km = (
         haversine_km(
@@ -280,16 +306,21 @@ def create_recommendation(
     available_after_travel = max(0, readiness.available_energy_kwh - travel_energy)
     energy_required = max(0, desired_energy - available_after_travel)
     target_soc = min(100, desired_energy / effective_capacity * 100)
-    if emergency_diversion:
-        reason = (
-            f"{charger.name} port {selected.port_number} is the earliest reliable "
-            f"emergency option and starts after {selected.wait_minutes:.0f} minutes of waiting."
-        )
-    else:
-        reason = (
-            f"{charger.name} port {selected.port_number} is the lowest-cost reliable option. "
-            f"It leaves {selected.deadline_margin_minutes:.0f} minutes before the safety-buffered deadline."
-        )
+    policy = (
+        "earliest charging start, then weighted score"
+        if emergency_diversion
+        else "lowest weighted score"
+    )
+    reason = (
+        f"Recommended among evaluated feasible options: {charger.name}, port {selected.port_number}. "
+        f"Selected by {policy}. Travel {selected.travel_distance_km:.1f} km "
+        f"({selected.travel_minutes:.1f} min), wait {selected.wait_minutes:.1f} min, "
+        f"charge {selected.charging_minutes:.1f} min for INR {selected.electricity_cost:.2f}. "
+        f"Delivery margin is {selected.deadline_margin_minutes:.1f} min beyond the "
+        f"{deadline_buffer_minutes}-minute safety buffer. Score combines electricity, "
+        "travel energy, waiting (INR 0.25/min), and a penalty below 30 minutes of buffered margin. "
+        f"Target charge covers the delivery plus {reserve_range_km:g} km reserve and {charge_soon_margin_km:g} km extra margin."
+    )
     plan = ChargingPlan(
         vin=vehicle.vin,
         simulation_run_id=telemetry.simulation_run_id,
@@ -315,8 +346,14 @@ def create_recommendation(
         estimated_arrival_time=now
         + timedelta(hours=selected.travel_distance_km / average_travel_speed_kmh),
         reason=reason,
-        alternatives=candidates[1:4],
+        alternatives=options[1:],
+        evaluated_options=options,
+        exclusions=exclusions,
     )
     return ChargingRecommendation(
-        vin=vehicle.vin, readiness=readiness, plan=plan, reason=reason
+        vin=vehicle.vin,
+        readiness=readiness,
+        plan=plan,
+        reason=reason,
+        exclusions=exclusions,
     )

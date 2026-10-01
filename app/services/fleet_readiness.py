@@ -13,7 +13,11 @@ from app.services.readiness import assess_readiness
 async def find_next_trip(db: Any, vin: str, now: datetime | None = None) -> Trip | None:
     now = now or datetime.now(UTC)
     doc = await db.trips.find_one(
-        {"vin": vin, "status": TripStatus.IN_PROGRESS.value},
+        {
+            "vin": vin,
+            "status": TripStatus.IN_PROGRESS.value,
+            "simulation_enabled": {"$ne": False},
+        },
         sort=[("departure_time", 1)],
     )
     if doc is None:
@@ -21,6 +25,7 @@ async def find_next_trip(db: Any, vin: str, now: datetime | None = None) -> Trip
             {
                 "vin": vin,
                 "status": TripStatus.PLANNED.value,
+                "simulation_enabled": {"$ne": False},
             },
             sort=[("departure_time", 1)],
         )

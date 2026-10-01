@@ -1,13 +1,22 @@
 import asyncio
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 
 from app.core.dependencies import get_database
 from app.models.telemetry import TelemetryEvent
+from app.services.coordination import serialized
 from app.services.fleet_readiness import evaluate_vehicle_readiness
 
 router = APIRouter()
+
+
+@router.get("/manager")
+@serialized
+async def manager_snapshot(request: Request):
+    from app.services.manager_view import build_manager_snapshot
+
+    return await build_manager_snapshot(get_database(), request.app.state.simulator)
 
 
 @router.get("/overview")

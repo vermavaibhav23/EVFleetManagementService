@@ -145,7 +145,9 @@ async def seed_scenario(
     kafka: Any,
 ) -> dict[str, object]:
     rng = random.Random(request.seed)
-    now = datetime.now(UTC).replace(second=0, microsecond=0)
+    now = datetime.now(UTC).replace(
+        hour=3, minute=30, second=0, microsecond=0
+    )  # 09:00 IST demo day
     depot_id = "SIM-DEPOT-01"
 
     run_id = str(uuid4())
@@ -161,7 +163,7 @@ async def seed_scenario(
 
     depot = Depot(
         depot_id=depot_id,
-        name="Simulation Depot",
+        name="Central Fleet Depot",
         lat=12.9716,
         lon=77.5946,
         power_limit_kw=180,
@@ -177,8 +179,8 @@ async def seed_scenario(
             charger_id="SIM-CHARGER-FAST",
             name="North Hub Fast Charger",
             depot_id=depot_id,
-            lat=13.0060,
-            lon=77.6000,
+            lat=13.0600,
+            lon=77.6350,
             available_kw=90,
             price_per_kwh=10.8,
             connector_type="CCS2",
@@ -188,8 +190,8 @@ async def seed_scenario(
             charger_id="SIM-CHARGER-CHEAP",
             name="Solar Canopy Charger",
             depot_id=depot_id,
-            lat=12.9830,
-            lon=77.6410,
+            lat=12.9350,
+            lon=77.6900,
             available_kw=60,
             price_per_kwh=7.2,
             connector_type="CCS2",
@@ -199,8 +201,8 @@ async def seed_scenario(
             charger_id="SIM-CHARGER-SLOW",
             name="Overflow Charger",
             depot_id=depot_id,
-            lat=12.9440,
-            lon=77.5670,
+            lat=12.9900,
+            lon=77.5600,
             available_kw=30,
             price_per_kwh=8.5,
             connector_type="CCS2",
@@ -239,6 +241,26 @@ async def seed_scenario(
             price_per_kwh=8.5,
         ),
     ]
+    tariffs.extend(
+        [
+            Tariff(
+                tariff_id="SIM-TARIFF-CHEAP-DAY",
+                depot_id=depot_id,
+                charger_id="SIM-CHARGER-CHEAP",
+                start_time="10:00",
+                end_time="18:00",
+                price_per_kwh=5.4,
+            ),
+            Tariff(
+                tariff_id="SIM-TARIFF-CHEAP-NIGHT",
+                depot_id=depot_id,
+                charger_id="SIM-CHARGER-CHEAP",
+                start_time="18:00",
+                end_time="10:00",
+                price_per_kwh=6.4,
+            ),
+        ]
+    )
     for tariff in tariffs:
         await db.tariffs.update_one(
             {"tariff_id": tariff.tariff_id},
@@ -265,7 +287,7 @@ async def seed_scenario(
         vin = f"SIM{index + 1:014d}"
         vehicle = Vehicle(
             vin=vin,
-            name=f"Simulation Van {index + 1:03d}",
+            name=f"Fleet Van {index + 1:03d}",
             depot_id=depot_id,
             battery_capacity_kwh=75,
             usable_capacity_kwh=70,
@@ -280,7 +302,7 @@ async def seed_scenario(
         }:
             distance_km = 95
         if index == 0 and request.scenario == SimulationScenario.UNEXPECTED_LONG_TRIP:
-            distance_km = 55
+            distance_km = 140
         destination_lat, destination_lon = point_at_distance(
             depot.lat,
             depot.lon,
@@ -290,7 +312,7 @@ async def seed_scenario(
         trip = Trip(
             trip_id=f"SIM-TRIP-{index + 1:04d}",
             vin=vin,
-            origin="Simulation Depot",
+            origin="Central Fleet Depot",
             destination=f"Customer {index + 1:03d}",
             origin_lat=depot.lat,
             origin_lon=depot.lon,
@@ -316,6 +338,8 @@ async def seed_scenario(
             if index == 0 and request.scenario == SimulationScenario.BATTERY_OVERHEATING
             else 31
         )
+        if index == 0 and request.scenario == SimulationScenario.UNREACHABLE_CHARGER:
+            soc_pct = 0
         telemetry = TelemetryEvent(
             simulation_run_id=run_id,
             vin=vin,
@@ -339,6 +363,31 @@ async def seed_scenario(
                 1,
             ),
         )
+        if index == 0 and request.scenario == SimulationScenario.UNEXPECTED_LONG_TRIP:
+            # Load at the incident checkpoint, ready to explain without waiting.
+            trip.status = TripStatus.IN_PROGRESS
+            trip.destination = "Urgent extended delivery"
+            telemetry.operating_state = OperatingState.DRIVING
+        if index == 0 and request.scenario == SimulationScenario.UNREACHABLE_CHARGER:
+            telemetry.lat, telemetry.lon = point_at_distance(
+                depot.lat, depot.lon, 80, 220
+            )
+            trip.origin = "Remote delivery checkpoint"
+            trip.origin_lat, trip.origin_lon = telemetry.lat, telemetry.lon
+            trip.distance_km = haversine_km(
+                telemetry.lat, telemetry.lon, trip.destination_lat, trip.destination_lon
+            )
+            trip.status = TripStatus.IN_PROGRESS
+            telemetry.route_remaining_km = trip.distance_km
+            telemetry.operating_state = OperatingState.STRANDED
+        telemetry.navigation_phase = "DELIVERY"
+        telemetry.navigation_target = trip.destination
+        telemetry.destination_lat, telemetry.destination_lon = (
+            trip.destination_lat,
+            trip.destination_lon,
+        )
+        telemetry.distance_to_destination_km = trip.distance_km
+        telemetry.eta_minutes = trip.distance_km / 35 * 60
         seed_records.append((vehicle, trip, telemetry))
         vehicles.append(vin)
 
@@ -355,6 +404,45 @@ async def seed_scenario(
             {"$set": trip.model_dump(mode="python")},
             upsert=True,
         )
+        # Stored, connected daily itinerary. Only the first leg is executed by this demo.
+        next_lat, next_lon = point_at_distance(
+            trip.destination_lat, trip.destination_lon, 12, 120
+        )
+        for leg, origin, destination, a, b, departure, deadline in [
+            (
+                2,
+                trip.destination,
+                f"Collection hub {vehicle.vin[-3:]}",
+                (trip.destination_lat, trip.destination_lon),
+                (next_lat, next_lon),
+                now + timedelta(hours=6.5),
+                now + timedelta(hours=7.5),
+            ),
+            (
+                3,
+                f"Collection hub {vehicle.vin[-3:]}",
+                depot.name,
+                (next_lat, next_lon),
+                (depot.lat, depot.lon),
+                now + timedelta(hours=8),
+                now + timedelta(hours=13),
+            ),
+        ]:
+            scheduled = Trip(
+                trip_id=f"{trip.trip_id}-LEG-{leg}",
+                vin=vehicle.vin,
+                origin=origin,
+                destination=destination,
+                origin_lat=a[0],
+                origin_lon=a[1],
+                destination_lat=b[0],
+                destination_lon=b[1],
+                departure_time=departure,
+                delivery_deadline=deadline,
+                distance_km=haversine_km(*a, *b),
+                simulation_enabled=False,
+            )
+            await db.trips.insert_one(scheduled.model_dump(mode="python"))
         await store_telemetry(telemetry, db, redis, kafka)
 
     await asyncio.gather(
@@ -424,10 +512,7 @@ class SimulatorManager:
         self._scenario = config.get("scenario")
         latest_telemetry_time = await self._load_states()
         if self._simulated_time is None:
-            self._simulated_time = max(
-                datetime.now(UTC),
-                latest_telemetry_time or datetime.min.replace(tzinfo=UTC),
-            )
+            self._simulated_time = latest_telemetry_time or datetime.now(UTC)
         if not self._states:
             from fastapi import HTTPException
 
@@ -576,25 +661,6 @@ class SimulatorManager:
     ) -> None:
         assert self._simulated_time is not None
         now = self._simulated_time
-        if (
-            self._scenario == "UNEXPECTED_LONG_TRIP"
-            and state.vehicle.vin == "SIM00000000000001"
-            and state.sequence == 4
-        ):
-            destination = point_at_distance(12.9716, 77.5946, 140, 25)
-            state.route_remaining_km = haversine_km(state.lat, state.lon, *destination)
-            await self._db.trips.update_one(
-                {"trip_id": state.trip_id},
-                {
-                    "$set": {
-                        "distance_km": 140,
-                        "destination_lat": destination[0],
-                        "destination_lon": destination[1],
-                        "destination": "Urgent extended delivery",
-                        "status": "IN_PROGRESS",
-                    }
-                },
-            )
         plan = await self._db.charging_plans.find_one(
             {"vin": state.vehicle.vin, "status": {"$in": ["APPROVED", "CHARGING"]}},
             sort=[("created_at", -1)],
@@ -798,10 +864,14 @@ class SimulatorManager:
                         "$in": [TripStatus.IN_PROGRESS.value, TripStatus.PLANNED.value]
                     },
                     "departure_time": {"$lte": now},
+                    "simulation_enabled": {"$ne": False},
                 },
                 sort=[("departure_time", 1)],
             )
-            if trip_doc:
+            if trip_doc and state.battery_temperature_c >= 45:
+                operating_state = OperatingState.HEALTH_HOLD
+                navigation_phase = "HEALTH_HOLD"
+            elif trip_doc:
                 trip = Trip(
                     **{key: value for key, value in trip_doc.items() if key != "_id"}
                 )
@@ -884,6 +954,21 @@ class SimulatorManager:
         }:
             operating_state = OperatingState.STRANDED
             speed_kmh = 0.0
+        # A diversion changes the straight-line distance back to the customer.
+        # Keep readiness and displayed delivery distance on the same geometry.
+        if plan and state.trip_id:
+            delivery = await self._db.trips.find_one({"trip_id": state.trip_id})
+            if (
+                delivery
+                and delivery.get("destination_lat") is not None
+                and delivery.get("destination_lon") is not None
+            ):
+                state.route_remaining_km = haversine_km(
+                    state.lat,
+                    state.lon,
+                    delivery["destination_lat"],
+                    delivery["destination_lon"],
+                )
         state.sequence += 1
         effective_capacity = state.vehicle.usable_capacity_kwh * state.soh_pct / 100
         remaining_range = (

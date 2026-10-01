@@ -4,6 +4,18 @@ from zoneinfo import ZoneInfo
 from app.models.tariff import Tariff
 
 
+def tariffs_for_charger(
+    tariffs: list[Tariff], charger_id: str, depot_id: str
+) -> list[Tariff]:
+    """Station-specific demo rates override the shared depot schedule."""
+    specific = [
+        t for t in tariffs if t.charger_id == charger_id and t.depot_id == depot_id
+    ]
+    return specific or [
+        t for t in tariffs if t.depot_id == depot_id and t.charger_id is None
+    ]
+
+
 def _minute_of_day(value: datetime) -> int:
     return value.hour * 60 + value.minute
 

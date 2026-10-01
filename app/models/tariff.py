@@ -20,6 +20,7 @@ def _validate_clock(value: str) -> str:
 class Tariff(BaseModel):
     tariff_id: str = Field(min_length=1, max_length=80)
     depot_id: str = Field(min_length=1, max_length=50)
+    charger_id: str | None = None
     start_time: str
     end_time: str
     price_per_kwh: float = Field(ge=0)

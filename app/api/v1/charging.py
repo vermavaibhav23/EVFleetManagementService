@@ -43,7 +43,11 @@ async def _load_recommendation(
         )
 
     chargers: list[Charger] = []
-    charger_query = {"depot_id": vehicle.depot_id} if vin.startswith("SIM") else {}
+    charger_query = (
+        {"depot_id": vehicle.depot_id, "charger_id": {"$regex": "^SIM-CHARGER-"}}
+        if vin.startswith("SIM")
+        else {}
+    )
     async for doc in db.chargers.find(charger_query):
         doc.pop("_id", None)
         chargers.append(Charger(**doc))
@@ -55,7 +59,9 @@ async def _load_recommendation(
         if doc.get("plan_id") != ignore_plan_id or ignore_plan_id is None:
             reservations.append(Reservation(**doc))
     tariffs: list[Tariff] = []
-    async for doc in db.tariffs.find({}):
+    async for doc in db.tariffs.find(
+        {"tariff_id": {"$regex": "^SIM-"}} if vin.startswith("SIM") else {}
+    ):
         doc.pop("_id", None)
         tariffs.append(Tariff(**doc))
     depot_power_limits = {
@@ -145,6 +151,32 @@ async def approve_plan(plan_id: str) -> ChargingPlan:
     if recommendation.plan is None:
         raise HTTPException(422, recommendation.reason)
     refreshed = recommendation.plan.model_dump(mode="python")
+    reviewed_fields = (
+        "charger_id",
+        "port_number",
+        "start_time",
+        "end_time",
+        "target_soc_pct",
+        "estimated_cost",
+        "simulation_run_id",
+        "trip_id",
+        "delivery_deadline",
+    )
+
+    def normalized(value):
+        # MongoDB stores datetimes at millisecond precision.
+        if isinstance(value, datetime):
+            return value.replace(microsecond=value.microsecond // 1000 * 1000)
+        return value
+
+    if any(
+        normalized(plan_doc.get(key)) != normalized(refreshed.get(key))
+        for key in reviewed_fields
+    ):
+        raise HTTPException(
+            409,
+            "This recommendation is stale. Pause the simulation, reject this proposal, and compare fresh options. No reservation was made and no alternative was substituted.",
+        )
     refreshed["plan_id"] = plan_id
     refreshed["created_at"] = plan_doc["created_at"]
     plan_doc = refreshed

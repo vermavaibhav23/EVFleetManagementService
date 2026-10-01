@@ -2,6 +2,12 @@
 
 Hackathon demonstration of a connected EV fleet platform. The service converts live battery telemetry and assigned trips into distance-based readiness, actionable alerts, reservation-aware charger recommendations, and approved charging plans.
 
+## Manager portal
+
+Open `/portal` for the four-tab Fleetwise manager interface: **Overview**, **Vehicles**, **Chargers**, and **Plans & Decisions**. Start with **Low battery before delivery**, **10 vehicles**, and **Load / reset**. Review Van 001, compare distinct charging stations, approve the recommendation, then press **Start** to watch the complete diversion-to-delivery journey.
+
+All tabs use one coherent operational snapshot. The single map keeps station coordinates fixed; charger prices come from scheduler tariffs; three connected stored trips distinguish the active delivery from later schedule-only legs. Seven paused presets include a deterministic unreachable-charger emergency. Alternative approvals remain intentionally comparison-only. See [the manager demonstration guide](docs/manager-demo.md) for scenarios, limits, and verification commands. The older audit below remains historical context.
+
 ## Stage 2 capabilities
 
 - Persistent vehicles, daily trips, chargers, tariffs, reservations, alerts, and charging plans.
@@ -14,7 +20,7 @@ Hackathon demonstration of a connected EV fleet platform. The service converts l
 - Charger selection that checks connector compatibility, reachability, port reservations, waiting time, tariffs, charging duration, and the next departure deadline.
 - Proposed-plan approval that atomically creates a charger-port reservation.
 - Deterministic simulator with realistic battery decrease while driving and increase while charging.
-- Six reproducible demo scenarios and an accelerated simulation clock.
+- Seven reproducible demo scenarios and an accelerated simulation clock.
 - Manual fleet portal at `/portal` and interactive OpenAPI documentation at `/docs`.
 
 ## Architecture
@@ -65,8 +71,8 @@ Open:
 ## Fastest manual demo
 
 1. Open `/portal`.
-2. Select `LOW_BATTERY_BEFORE_TRIP` and seed 10 vehicles.
-3. The first vehicle appears as `CRITICAL`; generate a plan from its row.
+2. Select **Low battery before delivery** and load 10 vehicles.
+3. Van 001 appears as **Charging required**; click **Compare charging options**.
 4. Review the charger, charging window, target SoC, cost, and explanation.
 5. Approve the plan. This creates a confirmed port reservation.
 6. Start the simulator. One real second advances one simulated minute.
@@ -83,6 +89,7 @@ Other scenarios:
 - `UNEXPECTED_LONG_TRIP`: an added long delivery creates a sudden energy deficit.
 - `BATTERY_OVERHEATING`: readiness and battery health are shown independently.
 - `NORMAL_DAY`: vehicles begin with comfortable range margins.
+- `UNREACHABLE_CHARGER`: a remote vehicle has no reachable healthy compatible charger and stays stranded.
 
 ## Core endpoints
 

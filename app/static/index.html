@@ -1,104 +1,251 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>EV Fleet Operations</title>
-  <link rel="stylesheet" href="/static/styles.css">
-</head>
-<body>
-  <header class="topbar">
-    <div>
-      <p class="eyebrow">Connected fleet operations</p>
-      <h1>EV Fleet Control</h1>
-    </div>
-    <div class="system-state"><span id="live-dot"></span><span id="system-label">Connecting</span></div>
-  </header>
-
-  <main>
-    <section class="control-band" aria-label="Simulation controls">
-      <label>Scenario
-        <select id="scenario">
-          <option>LOW_BATTERY_BEFORE_TRIP</option>
-          <option>CHARGER_CONGESTION</option>
-          <option>CHARGER_FAILURE</option>
-          <option>UNEXPECTED_LONG_TRIP</option>
-          <option>BATTERY_OVERHEATING</option>
-          <option>NORMAL_DAY</option>
-        </select>
-      </label>
-      <label>Vehicles
-        <input id="vehicle-count" type="number" min="1" max="1000" value="10">
-      </label>
-      <button id="seed-button">Seed scenario</button>
-      <button id="start-button" class="primary">Start simulation</button>
-      <button id="stop-button" class="danger">Stop</button>
-      <span id="sim-clock">Simulator stopped</span>
-    </section>
-
-    <section class="metrics" aria-label="Fleet summary">
-      <div><span>Vehicles</span><strong id="metric-vehicles">0</strong></div>
-      <div><span>Critical alerts</span><strong id="metric-critical">0</strong></div>
-      <div><span>Open alerts</span><strong id="metric-alerts">0</strong></div>
-      <div><span>Active plans</span><strong id="metric-plans">0</strong></div>
-      <div><span>Chargers available</span><strong id="metric-chargers">0 / 0</strong></div>
-    </section>
-
-    <p id="message" role="status"></p>
-
-    <section class="workspace map-workspace">
-      <div class="section-heading">
-        <div><p class="eyebrow">Movement</p><h2>Live fleet paths</h2></div>
-        <div class="map-legend" aria-label="Map legend">
-          <span><i class="legend-vehicle"></i>Vehicle</span>
-          <span><i class="legend-charger"></i>Charger</span>
-          <span><i class="legend-route"></i>Active path</span>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#103d36" />
+    <title>Fleetwise · EV Fleet Operations</title>
+    <link rel="stylesheet" href="/static/styles.css?v=manager-1" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to fleet workspace</a>
+    <header class="topbar">
+      <a class="brand" href="/portal" aria-label="Fleetwise home"
+        ><span class="brand-mark">ϟ</span
+        ><span>fleetwise<span class="brand-sub">EV OPERATIONS</span></span></a
+      >
+      <nav aria-label="Main navigation" class="tabs">
+        <button data-tab="overview" class="tab active" aria-current="page">
+          Overview
+        </button>
+        <button data-tab="vehicles" class="tab">Vehicles</button>
+        <button data-tab="chargers" class="tab">Chargers</button>
+        <button data-tab="plans" class="tab">Plans &amp; Decisions</button>
+      </nav>
+      <div class="system-state">
+        <span id="live-dot"></span><span id="system-label">Connecting…</span>
+      </div>
+    </header>
+    <main id="main">
+      <section class="control-band" aria-label="Global demo controls">
+        <span class="demo-label">DEMO STUDIO</span>
+        <label
+          >Scenario<select id="scenario">
+            <option value="LOW_BATTERY_BEFORE_TRIP">
+              Low battery before delivery
+            </option>
+            <option value="CHARGER_CONGESTION">Charger congestion</option>
+            <option value="CHARGER_FAILURE">Charger failure</option>
+            <option value="UNEXPECTED_LONG_TRIP">
+              Unexpected long delivery
+            </option>
+            <option value="BATTERY_OVERHEATING">Battery overheating</option>
+            <option value="UNREACHABLE_CHARGER">
+              Unreachable charger emergency
+            </option>
+            <option value="NORMAL_DAY">Normal day</option>
+          </select></label
+        >
+        <label
+          >Fleet size<input
+            id="vehicle-count"
+            type="number"
+            min="10"
+            max="100"
+            value="10"
+        /></label>
+        <button id="seed-button">Load / reset</button
+        ><span class="control-divider"></span>
+        <button id="start-button" class="primary">▶ Start</button
+        ><button id="stop-button">Ⅱ Pause</button>
+        <div id="sim-clock" class="clock">Loading simulation clock…</div>
+      </section>
+      <div id="message" class="message" role="status" aria-live="polite"></div>
+      <section class="page-heading">
+        <div>
+          <p class="eyebrow" id="page-eyebrow">FLEET OPERATIONS / OVERVIEW</p>
+          <h1 id="page-title">Keep every delivery moving.</h1>
+          <p id="page-description">
+            A clear view of your fleet, and the next decision that matters.
+          </p>
         </div>
-      </div>
-      <p class="map-help">Geographic overview · tap or focus markers for names. Short leader lines separate clustered markers without changing distances.</p>
-      <div class="map-shell">
-        <svg id="fleet-map" viewBox="0 0 1000 420" role="img" aria-label="Live vehicle and charger paths"></svg>
-        <p id="map-empty" class="map-empty">Seed a scenario to view fleet movement.</p>
-      </div>
-      <h3>Depot and nearby chargers</h3>
-      <div class="map-shell"><svg id="depot-map" viewBox="0 0 1000 420" role="img" aria-label="Depot detail and charger locations"></svg></div>
-      <ul id="map-key" class="map-key"></ul>
-      <p class="map-help">Blue diamond: depot · gold square: charger · green circle: vehicle · small ring: destination · green path: delivery · amber path: charger</p>
-    </section>
-
-    <section class="workspace">
-      <div class="section-heading">
-        <div><p class="eyebrow">Readiness</p><h2>Fleet risk queue</h2><p id="fleet-count" class="map-help"></p></div>
-        <button id="refresh-button" class="icon-button" title="Refresh data" aria-label="Refresh data">↻</button>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Vehicle</th><th>State</th><th>Navigation</th><th>SoC</th><th>Current range</th><th>After trip</th><th>Safe margin</th><th>Readiness</th><th>Action</th></tr></thead>
-          <tbody id="vehicles-body"><tr><td colspan="9">Loading fleet…</td></tr></tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="workspace">
-      <div class="section-heading"><div><p class="eyebrow">Operations</p><h2>Alerts</h2></div></div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Severity</th><th>Vehicle</th><th>Status</th><th>Message</th><th>Updated</th></tr></thead>
-          <tbody id="alerts-body"></tbody>
-        </table>
-      </div>
-    </section>
-
-    <section id="plans-section" class="workspace">
-      <div class="section-heading"><div><p class="eyebrow">Charging</p><h2>Plans and reservations</h2></div></div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Vehicle</th><th>Charger</th><th>Journey</th><th>Window</th><th>Target</th><th>Cost</th><th>Status</th><th>Action</th></tr></thead>
-          <tbody id="plans-body"></tbody>
-        </table>
-      </div>
-    </section>
-  </main>
-  <script src="/static/app.js"></script>
-</body>
+        <button id="refresh-button" class="subtle">↻ Refresh</button>
+      </section>
+      <section
+        id="scenario-guide"
+        class="scenario-guide"
+        aria-label="Active demonstration"
+      ></section>
+      <section id="overview-panel" data-panel="overview">
+        <div id="metrics" class="metrics" aria-label="Fleet summary"></div>
+        <div class="overview-grid">
+          <section class="workspace queue">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">NEXT ACTIONS</p>
+                <h2>
+                  Attention queue
+                  <span id="attention-count" class="count"></span>
+                </h2>
+              </div>
+            </div>
+            <label class="search-field"
+              ><span class="sr-only">Search vehicles</span
+              ><input
+                id="vehicle-search"
+                type="search"
+                placeholder="Search name or vehicle ID"
+            /></label>
+            <label class="filter-field"
+              ><span class="sr-only">Readiness filter</span
+              ><select id="readiness-filter">
+                <option value="all">All readiness states</option>
+                <option value="attention">Needs attention</option>
+                <option value="NORMAL">Normal</option>
+                <option value="NEEDS_CHARGING">Charging required</option>
+                <option value="EMERGENCY">Energy emergency</option>
+                <option value="BLOCKED">Charging blocked</option>
+                <option value="COMPLETE">Delivery complete</option>
+              </select></label
+            >
+            <div id="attention-list" class="attention-list">
+              <p class="empty">Loading fleet…</p>
+            </div>
+            <p id="fleet-count" class="footnote"></p>
+          </section>
+          <section class="workspace map-workspace">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">LIVE POSITION</p>
+                <h2>Fleet map</h2>
+              </div>
+              <span class="badge neutral">Straight-line demo</span>
+            </div>
+            <div class="map-tools">
+              <button data-map="fit">Fit fleet</button
+              ><button data-map="vehicle">Focus selected</button
+              ><button data-map="depot">Focus depot</button>
+              <div class="zoom-tools">
+                <button data-map="in" aria-label="Zoom in">+</button
+                ><button data-map="out" aria-label="Zoom out">−</button>
+              </div>
+            </div>
+            <div class="map-shell">
+              <svg
+                id="fleet-map"
+                viewBox="0 0 900 450"
+                role="img"
+                aria-label="Fleet positions and selected vehicle route"
+              ></svg>
+              <div id="map-empty" class="map-empty">
+                Load a scenario to see your fleet.
+              </div>
+            </div>
+            <div id="map-selection" class="map-selection"></div>
+            <div class="map-legend">
+              <span><i class="key vehicle"></i>Vehicle</span
+              ><span><i class="key depot"></i>Depot</span
+              ><span><i class="key charger"></i>Charger</span
+              ><span><i class="key destination"></i>Customer</span
+              ><span><i class="line-key"></i>Delivery</span
+              ><span><i class="line-key proposed"></i>Proposed</span
+              ><span><i class="line-key approved"></i>Approved</span>
+            </div>
+            <p class="footnote">
+              True coordinates · north up · routes are geodesic distances, not
+              roads. Cluster counts share a location; zoom or use the queue to
+              select a vehicle.
+            </p>
+          </section>
+          <aside
+            id="selected-detail"
+            class="workspace detail-panel"
+            aria-label="Selected vehicle decision criteria"
+          >
+            <p class="empty">Select a vehicle to inspect its readiness.</p>
+          </aside>
+        </div>
+        <section class="workspace alert-section">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">WHAT NEEDS YOUR ATTENTION</p>
+              <h2>Alerts &amp; next steps</h2>
+            </div>
+          </div>
+          <div id="alerts-list"></div>
+        </section>
+      </section>
+      <section id="vehicles-panel" data-panel="vehicles" hidden>
+        <div class="two-column">
+          <section class="workspace">
+            <div class="section-heading">
+              <h2>Your fleet</h2>
+              <span id="vehicle-total" class="badge neutral"></span>
+            </div>
+            <label class="search-field"
+              ><span class="sr-only">Search vehicle directory</span
+              ><input
+                id="directory-search"
+                type="search"
+                placeholder="Search vehicle name or ID"
+            /></label>
+            <div id="vehicle-directory" class="directory"></div>
+          </section>
+          <section id="vehicle-profile" class="workspace"></section>
+        </div>
+      </section>
+      <section id="chargers-panel" data-panel="chargers" hidden>
+        <p class="section-note">
+          Port counts use the simulation clock. Future reservations are listed
+          separately. Prices are the same tariffs used to calculate charging
+          recommendations.
+        </p>
+        <div id="charger-cards" class="charger-grid"></div>
+      </section>
+      <section id="plans-panel" data-panel="plans" hidden>
+        <div class="workspace decision-header">
+          <div>
+            <p class="eyebrow">SELECTED VEHICLE</p>
+            <h2 id="decision-title">Select a vehicle</h2>
+            <p id="decision-subtitle"></p>
+          </div>
+          <div id="decision-actions" class="actions"></div>
+        </div>
+        <div id="option-cards" class="option-grid"></div>
+        <div id="decision-reasoning"></div>
+        <section class="workspace history">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">DECISION LOG</p>
+              <h2>Plans &amp; outcomes</h2>
+            </div>
+            <span class="badge neutral">Current demo run</span>
+          </div>
+          <p class="section-note">
+            Saved across page reloads. Loading or resetting a demo clears its
+            decision history. Other fleet records are preserved.
+          </p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Vehicle / station</th>
+                  <th>Decision</th>
+                  <th>Charging window</th>
+                  <th>Target / cost</th>
+                  <th>Outcome &amp; action</th>
+                </tr>
+              </thead>
+              <tbody id="plans-body"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+      <footer>
+        <span>Fleetwise <span class="muted">/ EV fleet management</span></span
+        ><span id="freshness">Waiting for first snapshot</span>
+      </footer>
+    </main>
+    <script src="/static/app.js?v=manager-1"></script>
+  </body>
 </html>

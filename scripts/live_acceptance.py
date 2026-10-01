@@ -73,6 +73,7 @@ async def main(args):
             assert (moving["lat"], moving["lon"]) != (initial["lat"], initial["lon"])
             assert moving["route_remaining_km"] < initial["route_remaining_km"]
             evidence["movement"] = {"initial": initial, "moving": moving}
+            await request("POST", "/simulator/stop")
             plan = await request("POST", f"/charging/plans/{VIN}")
             repeated = await request("POST", f"/charging/plans/{VIN}")
             assert plan["plan_id"] == repeated["plan_id"]
@@ -86,6 +87,9 @@ async def main(args):
                 approved["charger_id"],
                 approved["target_soc_pct"],
                 flush=True,
+            )
+            await request(
+                "POST", "/simulator/start", json={"tick_seconds": 1, "time_scale": 60}
             )
             start = perf_counter()
             seen = set()
@@ -176,6 +180,16 @@ async def main(args):
                 ]
             )
             evidence["stop_verified"] = later
+            view = await request("GET", "/fleet/manager")
+            focus = next(v for v in view["vehicles"] if v["vin"] == VIN)
+            assert focus["manager_readiness"] == "COMPLETE"
+            assert focus["current_trip"] is None
+            assert len(focus["itinerary"]) == 3
+            station = next(
+                c for c in view["chargers"] if c["charger_id"] == approved["charger_id"]
+            )
+            assert station["occupied_ports"] == 0
+            evidence["manager_outcome"] = {"vehicle": focus, "charger": station}
             evidence["health_after"] = await request("GET", "/health/ready")
             evidence["passed"] = True
             print("Full live journey PASS", flush=True)

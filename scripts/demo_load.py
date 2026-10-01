@@ -41,7 +41,7 @@ async def main(args):
                     status, health, fleet = await asyncio.gather(
                         call("GET", "/simulator/status"),
                         call("GET", "/health/ready"),
-                        call("GET", "/fleet/vehicles?limit=200"),
+                        call("GET", "/fleet/manager"),
                     )
                     latencies.append(perf_counter() - sample_start)
                     assert status["running"] and not status["error"], status
@@ -81,6 +81,12 @@ async def main(args):
                         latencies[min(len(latencies) - 1, int(len(latencies) * 0.95))],
                         3,
                     ),
+                    "effective_vehicle_tick_seconds": round(
+                        elapsed
+                        * count
+                        / max(1, final["emitted_events"] - initial["emitted_events"]),
+                        3,
+                    ),
                     "max_consumer_lag": max(s["lag"] for s in samples),
                     "consumer_lag_after_stop": drained["consumer"]["lag"],
                     "drain_seconds": round(perf_counter() - drain_started, 2),
@@ -110,5 +116,5 @@ if __name__ == "__main__":
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--seconds", type=int, default=60)
-    parser.add_argument("--vehicles", type=int, nargs="+", default=[10, 50])
+    parser.add_argument("--vehicles", type=int, nargs="+", default=[10, 100])
     asyncio.run(main(parser.parse_args()))

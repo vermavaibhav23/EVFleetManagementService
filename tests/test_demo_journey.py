@@ -267,8 +267,19 @@ class DemoJourneyTests(unittest.IsolatedAsyncioTestCase):
             )
         )
         self.assertTrue(
-            all(r.status_code == 200 for r in results), [r.text for r in results]
+            all(r.status_code in {200, 409} for r in results), [r.text for r in results]
         )
+        self.assertTrue(any(r.status_code == 200 for r in results))
+        # A concurrent reservation invalidates the reviewed option; re-review explicitly.
+        for proposed, result in zip(plans, results):
+            if result.status_code == 409:
+                old = proposed.json()
+                await self.client.post(f"/charging/plans/{old['plan_id']}/reject")
+                fresh = (await self.client.post(f"/charging/plans/{old['vin']}")).json()
+                retried = await self.client.post(
+                    f"/charging/plans/{fresh['plan_id']}/approve"
+                )
+                self.assertEqual(200, retried.status_code, retried.text)
         reservations = await self.db.reservations.find({}).to_list(None)
         for i, first in enumerate(reservations):
             for second in reservations[i + 1 :]:
@@ -370,6 +381,7 @@ class DemoJourneyTests(unittest.IsolatedAsyncioTestCase):
             if scenario in {
                 SimulationScenario.NORMAL_DAY,
                 SimulationScenario.BATTERY_OVERHEATING,
+                SimulationScenario.UNREACHABLE_CHARGER,
             }:
                 self.assertEqual(422, response.status_code, response.text)
             else:
@@ -391,7 +403,19 @@ class DemoJourneyTests(unittest.IsolatedAsyncioTestCase):
         for _ in range(6):
             await self.manager._tick()
         plan = await self.plan()
-        self.assertGreater(plan["remaining_delivery_km"], 130)
+        charger = await self.db.chargers.find_one({"charger_id": plan["charger_id"]})
+        trip = await self.db.trips.find_one({"trip_id": plan["trip_id"]})
+        self.assertAlmostEqual(
+            plan["remaining_delivery_km"],
+            haversine_km(
+                charger["lat"],
+                charger["lon"],
+                trip["destination_lat"],
+                trip["destination_lon"],
+            ),
+            places=2,
+        )
+        self.assertGreater(plan["remaining_delivery_km"], 120)
         approval = await self.client.post(f"/charging/plans/{plan['plan_id']}/approve")
         self.assertEqual(200, approval.status_code, approval.text)
 
@@ -441,8 +465,12 @@ class DemoJourneyTests(unittest.IsolatedAsyncioTestCase):
             {"charger_id": plan["charger_id"]}, {"$set": {"status": "FAULTY"}}
         )
         response = await self.client.post(f"/charging/plans/{plan['plan_id']}/approve")
-        self.assertEqual(200, response.status_code, response.text)
-        self.assertNotEqual(plan["charger_id"], response.json()["charger_id"])
+        self.assertEqual(409, response.status_code, response.text)
+        self.assertEqual(
+            0, await self.db.reservations.count_documents({"plan_id": plan["plan_id"]})
+        )
+        stored = await self.db.charging_plans.find_one({"plan_id": plan["plan_id"]})
+        self.assertEqual(plan["charger_id"], stored["charger_id"])
 
     async def test_confirmed_reservation_blocks_physical_charging(self):
         plan = await self.plan()
@@ -528,7 +556,7 @@ class DemoJourneyTests(unittest.IsolatedAsyncioTestCase):
         charger.pop("_id")
         charger.update(
             charger_id="LEGACY",
-            depot_id="OTHER",
+            depot_id="SIM-DEPOT-01",
             price_per_kwh=0,
             lat=12.9716,
             lon=77.5946,
@@ -564,3 +592,160 @@ class DemoJourneyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, legacy["free_ports"])
         overview = await self.client.get("/fleet/overview")
         self.assertEqual(200, overview.status_code, overview.text)
+
+    async def test_manager_projection_is_coherent_and_tariffs_match_scheduler(self):
+        from app.models.tariff import Tariff
+        from app.services.pricing import price_at, tariffs_for_charger
+
+        response = await self.client.get("/fleet/manager")
+        self.assertEqual(200, response.status_code, response.text)
+        view = response.json()
+        self.assertEqual(10, len(view["vehicles"]))
+        self.assertFalse(view["simulator"]["running"])
+        self.assertEqual("NEEDS_CHARGING", view["vehicles"][0]["manager_readiness"])
+        self.assertEqual(3, len(view["chargers"]))
+        tariffs = [Tariff(**t) async for t in self.db.tariffs.find({})]
+        clock = datetime.fromisoformat(view["simulator"]["simulated_time"])
+        for station in view["chargers"]:
+            schedule = tariffs_for_charger(
+                tariffs, station["charger_id"], station["depot_id"]
+            )
+            self.assertEqual(
+                price_at(clock, schedule, station["price_per_kwh"]),
+                station["current_price_per_kwh"],
+            )
+            self.assertEqual(24, len(station["hourly_prices"]))
+        plan = await self.plan()
+        options = plan["evaluated_options"]
+        self.assertEqual(len(options), len({o["charger_id"] for o in options}))
+        self.assertLessEqual(len(options), 3)
+        self.assertEqual(plan["charger_id"], options[0]["charger_id"])
+        self.assertEqual(plan["estimated_cost"], options[0]["electricity_cost"])
+        for option in options:
+            self.assertGreater(option["target_soc_pct"], 20)
+            self.assertAlmostEqual(
+                option["travel_distance_km"] / 35 * 60,
+                option["travel_minutes"],
+                delta=0.1,
+            )
+
+    async def test_unreachable_emergency_stays_stranded_and_has_no_plan(self):
+        await self.seed(SimulationScenario.UNREACHABLE_CHARGER)
+        first = await self.latest()
+        view = (await self.client.get("/fleet/manager")).json()
+        focus = view["vehicles"][0]
+        self.assertEqual("EMERGENCY", focus["manager_readiness"])
+        self.assertEqual([], focus["reachable_charger_ids"])
+        self.assertIn("No roadside assistance", focus["explanation"])
+        response = await self.client.post(f"/charging/plans/{self.vin}")
+        self.assertEqual(422, response.status_code)
+        for _ in range(3):
+            await self.manager._tick()
+        last = await self.latest()
+        self.assertEqual("STRANDED", last["operating_state"])
+        self.assertEqual((first["lat"], first["lon"]), (last["lat"], last["lon"]))
+
+    async def test_queue_and_deadline_do_not_create_false_energy_emergency(self):
+        await self.seed(SimulationScenario.CHARGER_CONGESTION)
+        await self.db.trips.update_one(
+            {"trip_id": "SIM-TRIP-0001"},
+            {
+                "$set": {
+                    "delivery_deadline": self.manager._simulated_time
+                    + timedelta(minutes=1)
+                }
+            },
+        )
+        view = (await self.client.get("/fleet/manager")).json()
+        self.assertEqual("NEEDS_CHARGING", view["vehicles"][0]["manager_readiness"])
+        self.assertTrue(view["vehicles"][0]["reachable_charger_ids"])
+        self.assertLess(view["vehicles"][0]["deadline_margin_minutes"], 0)
+        self.assertEqual(
+            422, (await self.client.post(f"/charging/plans/{self.vin}")).status_code
+        )
+
+    async def test_daily_itinerary_connected_and_schedule_only_not_executed(self):
+        trips = (await self.client.get(f"/trips/vehicle/{self.vin}")).json()
+        self.assertEqual(3, len(trips))
+        for a, b in zip(trips, trips[1:]):
+            self.assertEqual(a["destination"], b["origin"])
+            self.assertEqual(
+                (a["destination_lat"], a["destination_lon"]),
+                (b["origin_lat"], b["origin_lon"]),
+            )
+            self.assertLess(a["delivery_deadline"], b["departure_time"])
+        for trip in trips:
+            self.assertAlmostEqual(
+                trip["distance_km"],
+                haversine_km(
+                    trip["origin_lat"],
+                    trip["origin_lon"],
+                    trip["destination_lat"],
+                    trip["destination_lon"],
+                ),
+                places=4,
+            )
+        await self.db.trips.update_one(
+            {"trip_id": trips[0]["trip_id"]}, {"$set": {"status": "COMPLETED"}}
+        )
+        state = self.manager._states[self.vin]
+        state.arrived = True
+        state.trip_id = None
+        self.manager._simulated_time += timedelta(hours=10)
+        await self.manager._tick()
+        self.assertEqual("AT_CUSTOMER", (await self.latest())["operating_state"])
+        view = (await self.client.get("/fleet/manager")).json()
+        self.assertEqual("COMPLETE", view["vehicles"][0]["manager_readiness"])
+        self.assertEqual(
+            "PLANNED",
+            (await self.db.trips.find_one({"trip_id": trips[1]["trip_id"]}))["status"],
+        )
+
+    async def test_reset_preserves_non_demo_data_and_hides_legacy_resources(self):
+        await self.db.vehicles.insert_one({"vin": "REAL00000000001", "active": True})
+        await self.db.chargers.insert_one(
+            {"charger_id": "REAL-CHARGER", "depot_id": "REAL-DEPOT"}
+        )
+        await self.db.trips.insert_one(
+            {"vin": "REAL00000000001", "trip_id": "REAL-TRIP"}
+        )
+        old_run = (await self.client.get("/fleet/manager")).json()["run_id"]
+        await self.client.post(
+            "/simulator/scenarios", json={"scenario": "NORMAL_DAY", "vehicle_count": 10}
+        )
+        self.assertIsNotNone(
+            await self.db.vehicles.find_one({"vin": "REAL00000000001"})
+        )
+        self.assertIsNotNone(await self.db.trips.find_one({"trip_id": "REAL-TRIP"}))
+        view = (await self.client.get("/fleet/manager")).json()
+        self.assertNotEqual(old_run, view["run_id"])
+        self.assertEqual(10, len(view["vehicles"]))
+        self.assertEqual(3, len(view["chargers"]))
+        self.assertTrue(
+            all(v["simulation_run_id"] == view["run_id"] for v in view["vehicles"])
+        )
+
+    async def test_health_hold_does_not_drive_or_offer_charging(self):
+        await self.seed(SimulationScenario.BATTERY_OVERHEATING)
+        before = await self.latest()
+        await self.manager._tick()
+        after = await self.latest()
+        self.assertEqual("HEALTH_HOLD", after["operating_state"])
+        self.assertEqual(before["soc_pct"], after["soc_pct"])
+        view = (await self.client.get("/fleet/manager")).json()
+        self.assertEqual("BLOCKED", view["vehicles"][0]["manager_readiness"])
+
+    async def test_paused_start_uses_seed_clock_not_wall_clock(self):
+        before = await self.latest()
+        await self.manager.start(self.db, self.redis, self.kafka, 60, 1)
+        self.assertEqual(before["ts"], self.manager._simulated_time)
+        await self.manager.stop()
+
+    async def test_100_vehicle_snapshot_shares_run_and_itinerary(self):
+        await self.seed(SimulationScenario.NORMAL_DAY, count=100)
+        view = (await self.client.get("/fleet/manager")).json()
+        self.assertEqual(100, len(view["vehicles"]))
+        self.assertTrue(all(len(v["itinerary"]) == 3 for v in view["vehicles"]))
+        self.assertTrue(
+            all(v["simulation_run_id"] == view["run_id"] for v in view["vehicles"])
+        )

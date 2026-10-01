@@ -42,6 +42,9 @@ class CandidateCharger(BaseModel):
     electricity_cost: float
     total_score: float
     deadline_margin_minutes: float
+    travel_minutes: float = 0
+    target_soc_pct: float = 0
+    remaining_delivery_km: float = 0
 
 
 class ChargingPlanStatus(StrEnum):
@@ -79,6 +82,8 @@ class ChargingPlan(BaseModel):
     grid_energy_kwh: float = 0
     average_price_per_kwh: float = 0
     alternatives: list[CandidateCharger] = Field(default_factory=list)
+    evaluated_options: list[CandidateCharger] = Field(default_factory=list)
+    exclusions: list[dict[str, str]] = Field(default_factory=list)
     created_at: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -87,3 +92,4 @@ class ChargingRecommendation(BaseModel):
     readiness: ReadinessAssessment
     plan: ChargingPlan | None = None
     reason: str
+    exclusions: list[dict[str, str]] = Field(default_factory=list)
