@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from app.models.charger import Charger
 from app.models.reservation import Reservation
 from app.models.telemetry import TelemetryEvent
-from app.models.trip import Trip
+from app.models.trip import Trip, TripStatus
 from app.models.vehicle import Vehicle
 from app.services.readiness import assess_readiness
 from app.services.scheduler import create_recommendation
@@ -119,6 +119,28 @@ class SchedulerTests(unittest.TestCase):
         )
         self.assertIsNotNone(recommendation.plan)
         self.assertEqual("EXPENSIVE", recommendation.plan.charger_id)
+
+    def test_in_progress_trip_gets_immediate_emergency_plan(self) -> None:
+        self.trip.status = TripStatus.IN_PROGRESS
+        self.trip.departure_time = self.now - timedelta(minutes=10)
+        self.telemetry.trip_id = self.trip.trip_id
+        self.telemetry.route_remaining_km = 90
+        readiness = assess_readiness(self.vehicle, self.telemetry, self.trip)
+
+        recommendation = create_recommendation(
+            self.vehicle,
+            self.telemetry,
+            self.trip,
+            readiness,
+            [self.charger("NEARBY", 12)],
+            [],
+            [],
+            now=self.now,
+        )
+
+        self.assertIsNotNone(recommendation.plan)
+        self.assertIn("emergency", recommendation.reason)
+        self.assertGreaterEqual(recommendation.plan.start_time, self.now)
 
 
 if __name__ == "__main__":

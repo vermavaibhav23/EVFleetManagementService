@@ -12,7 +12,7 @@ from app.models.charging import (
 from app.models.reservation import Reservation
 from app.models.tariff import Tariff
 from app.models.telemetry import TelemetryEvent
-from app.models.trip import Trip
+from app.models.trip import Trip, TripStatus
 from app.models.vehicle import Vehicle
 from app.services.pricing import charging_cost, price_at
 from app.services.reservations import has_reservation_conflict, intervals_overlap
@@ -91,8 +91,12 @@ def create_recommendation(
         * vehicle.consumption_kwh_per_km,
     )
 
-    deadline = trip.departure_time.astimezone(UTC) - timedelta(
-        minutes=deadline_buffer_minutes
+    emergency_diversion = trip.status == TripStatus.IN_PROGRESS
+    deadline = (
+        now + timedelta(hours=4)
+        if emergency_diversion
+        else trip.departure_time.astimezone(UTC)
+        - timedelta(minutes=deadline_buffer_minutes)
     )
     candidates: list[CandidateCharger] = []
 
@@ -123,7 +127,11 @@ def create_recommendation(
         if desired_energy / effective_capacity > 0.8:
             charging_hours *= 1.1
         duration = timedelta(hours=charging_hours)
-        latest_start = deadline - duration
+        latest_start = (
+            earliest_start + timedelta(minutes=30)
+            if emergency_diversion
+            else deadline - duration
+        )
         if latest_start < earliest_start:
             continue
 
@@ -207,22 +215,33 @@ def create_recommendation(
             reason="No compatible free charger can make the vehicle ready before its buffered deadline.",
         )
 
-    candidates.sort(
-        key=lambda candidate: (
-            candidate.total_score,
-            -candidate.deadline_margin_minutes,
+    if emergency_diversion:
+        candidates.sort(
+            key=lambda candidate: (candidate.start_time, candidate.total_score)
         )
-    )
+    else:
+        candidates.sort(
+            key=lambda candidate: (
+                candidate.total_score,
+                -candidate.deadline_margin_minutes,
+            )
+        )
     selected = candidates[0]
     charger = next(item for item in chargers if item.charger_id == selected.charger_id)
     travel_energy = selected.travel_distance_km * vehicle.consumption_kwh_per_km
     available_after_travel = max(0, readiness.available_energy_kwh - travel_energy)
     energy_required = max(0, desired_energy - available_after_travel)
     target_soc = min(100, desired_energy / effective_capacity * 100)
-    reason = (
-        f"{charger.name} port {selected.port_number} is the lowest-cost reliable option. "
-        f"It leaves {selected.deadline_margin_minutes:.0f} minutes before the safety-buffered deadline."
-    )
+    if emergency_diversion:
+        reason = (
+            f"{charger.name} port {selected.port_number} is the earliest reliable "
+            f"emergency option and starts after {selected.wait_minutes:.0f} minutes of waiting."
+        )
+    else:
+        reason = (
+            f"{charger.name} port {selected.port_number} is the lowest-cost reliable option. "
+            f"It leaves {selected.deadline_margin_minutes:.0f} minutes before the safety-buffered deadline."
+        )
     plan = ChargingPlan(
         vin=vehicle.vin,
         trip_id=trip.trip_id,

@@ -70,6 +70,7 @@ async def _load_recommendation(vin: str) -> ChargingRecommendation:
         deadline_buffer_minutes=settings.charging_deadline_buffer_minutes,
         slot_minutes=settings.scheduler_slot_minutes,
         charging_efficiency=settings.charging_efficiency,
+        now=telemetry.ts,
     )
 
 
