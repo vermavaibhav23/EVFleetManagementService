@@ -14,6 +14,7 @@ from app.models.tariff import Tariff
 from app.models.telemetry import OperatingState, TelemetryEvent
 from app.models.trip import Trip, TripStatus
 from app.models.vehicle import Vehicle
+from app.services.reservations import shift_window_to_now
 from app.services.telemetry import store_telemetry
 
 
@@ -423,6 +424,35 @@ class SimulatorManager:
         charger_id = None
         is_plugged_in = False
 
+        if plan and now > plan["end_time"]:
+            start_time, end_time = shift_window_to_now(
+                plan["start_time"], plan["end_time"], now
+            )
+            plan["start_time"] = start_time
+            plan["end_time"] = end_time
+            plan["predicted_ready_time"] = end_time
+            await self._db.charging_plans.update_one(
+                {"plan_id": plan["plan_id"]},
+                {
+                    "$set": {
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "predicted_ready_time": end_time,
+                        "updated_at": datetime.now(UTC),
+                    }
+                },
+            )
+            await self._db.reservations.update_one(
+                {"plan_id": plan["plan_id"]},
+                {
+                    "$set": {
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "updated_at": datetime.now(UTC),
+                    }
+                },
+            )
+
         if plan and plan["start_time"] <= now <= plan["end_time"]:
             operating_state = OperatingState.CHARGING
             power_kw = float(plan["allocated_power_kw"])
@@ -432,6 +462,12 @@ class SimulatorManager:
                 state, elapsed_seconds, power_kw, float(plan["target_soc_pct"])
             )
             state.battery_temperature_c = min(44, state.battery_temperature_c + 0.03)
+            charger = await self._db.chargers.find_one({"charger_id": charger_id})
+            if charger:
+                state.lat, state.lon = float(charger["lat"]), float(charger["lon"])
+        elif plan and now < plan["start_time"]:
+            operating_state = OperatingState.WAITING_TO_CHARGE
+            charger_id = plan["charger_id"]
             charger = await self._db.chargers.find_one({"charger_id": charger_id})
             if charger:
                 state.lat, state.lon = float(charger["lat"]), float(charger["lon"])
@@ -457,17 +493,23 @@ class SimulatorManager:
                     )
                     state.trip_id = trip.trip_id
                     state.route_remaining_km = trip.distance_km
-                operating_state = OperatingState.DRIVING
-                speed_kmh = self._rng.uniform(32, 48)
-                distance = advance_driving_state(state, elapsed_seconds, speed_kmh)
-                power_kw = -(distance * state.vehicle.consumption_kwh_per_km) / (
-                    elapsed_seconds / 3600
-                )
-                state.lat += distance / 111 * 0.7
-                state.lon += distance / 111 * 0.3
-                state.battery_temperature_c = min(
-                    43, state.battery_temperature_c + 0.01
-                )
+                if state.soc_pct <= 0:
+                    operating_state = OperatingState.STRANDED
+                    distance = 0.0
+                else:
+                    operating_state = OperatingState.DRIVING
+                    speed_kmh = self._rng.uniform(32, 48)
+                    distance = advance_driving_state(
+                        state, elapsed_seconds, speed_kmh
+                    )
+                    power_kw = -(distance * state.vehicle.consumption_kwh_per_km) / (
+                        elapsed_seconds / 3600
+                    )
+                    state.lat += distance / 111 * 0.7
+                    state.lon += distance / 111 * 0.3
+                    state.battery_temperature_c = min(
+                        43, state.battery_temperature_c + 0.01
+                    )
                 if (
                     state.route_remaining_km is not None
                     and state.route_remaining_km <= 0.001

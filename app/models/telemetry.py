@@ -12,6 +12,7 @@ class OperatingState(StrEnum):
     WAITING_TO_CHARGE = "WAITING_TO_CHARGE"
     CHARGING = "CHARGING"
     READY = "READY"
+    STRANDED = "STRANDED"
     OFFLINE = "OFFLINE"
 
 

@@ -14,6 +14,7 @@ from app.models.tariff import Tariff
 from app.models.telemetry import TelemetryEvent
 from app.models.vehicle import Vehicle
 from app.services.fleet_readiness import evaluate_vehicle_readiness, find_next_trip
+from app.services.reservations import shift_window_to_now
 from app.services.scheduler import create_recommendation
 
 router = APIRouter()
@@ -133,6 +134,19 @@ async def approve_plan(plan_id: str) -> ChargingPlan:
             status_code=409, detail="Only proposed plans can be approved"
         )
 
+    telemetry_doc = await db.telemetry.find_one(
+        {"vin": plan_doc["vin"]}, sort=[("ts", -1)]
+    )
+    approval_time = (
+        telemetry_doc["ts"] if telemetry_doc and telemetry_doc.get("ts") else datetime.now(UTC)
+    )
+    start_time, end_time = shift_window_to_now(
+        plan_doc["start_time"], plan_doc["end_time"], approval_time
+    )
+    plan_doc["start_time"] = start_time
+    plan_doc["end_time"] = end_time
+    plan_doc["predicted_ready_time"] = end_time
+
     conflict = await db.reservations.find_one(
         {
             "charger_id": plan_doc["charger_id"],
@@ -192,7 +206,15 @@ async def approve_plan(plan_id: str) -> ChargingPlan:
     now = datetime.now(UTC)
     await db.charging_plans.update_one(
         {"plan_id": plan_id},
-        {"$set": {"status": ChargingPlanStatus.APPROVED.value, "updated_at": now}},
+        {
+            "$set": {
+                "status": ChargingPlanStatus.APPROVED.value,
+                "start_time": start_time,
+                "end_time": end_time,
+                "predicted_ready_time": end_time,
+                "updated_at": now,
+            }
+        },
     )
     await db.alerts.update_one(
         {"dedupe_key": f"{plan_doc['vin']}:TRIP_READINESS"},

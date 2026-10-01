@@ -12,6 +12,15 @@ def intervals_overlap(
     return first_start < second_end and first_end > second_start
 
 
+def shift_window_to_now(
+    start_time: datetime, end_time: datetime, now: datetime
+) -> tuple[datetime, datetime]:
+    if now <= start_time:
+        return start_time, end_time
+    duration = end_time - start_time
+    return now, now + duration
+
+
 def has_reservation_conflict(
     reservations: list[Reservation],
     charger_id: str,

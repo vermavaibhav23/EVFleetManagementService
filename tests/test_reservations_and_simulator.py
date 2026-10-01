@@ -3,7 +3,11 @@ from datetime import UTC, datetime, timedelta
 
 from app.models.reservation import Reservation
 from app.models.vehicle import Vehicle
-from app.services.reservations import has_reservation_conflict, intervals_overlap
+from app.services.reservations import (
+    has_reservation_conflict,
+    intervals_overlap,
+    shift_window_to_now,
+)
 from app.services.simulator import (
     SimulatorManager,
     VehicleSimulationState,
@@ -53,6 +57,17 @@ class ReservationTests(unittest.TestCase):
                 start + timedelta(minutes=20),
             )
         )
+
+    def test_late_approval_moves_the_full_window_to_now(self) -> None:
+        start = datetime(2026, 10, 1, 10, 0, tzinfo=UTC)
+        now = start + timedelta(hours=1)
+
+        shifted_start, shifted_end = shift_window_to_now(
+            start, start + timedelta(minutes=30), now
+        )
+
+        self.assertEqual(now, shifted_start)
+        self.assertEqual(now + timedelta(minutes=30), shifted_end)
 
 
 class SimulatorPhysicsTests(unittest.TestCase):
