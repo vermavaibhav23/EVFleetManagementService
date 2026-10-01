@@ -299,7 +299,7 @@ class DemoJourneyTests(unittest.IsolatedAsyncioTestCase):
     async def test_background_failure_visible_and_recoverable(self):
         self.kafka.fail = True
         await self.manager.start(self.db, self.redis, self.kafka, 0.1, 60)
-        await asyncio.sleep(0.15)
+        await asyncio.wait_for(asyncio.shield(self.manager._task), timeout=10)
         self.assertEqual("FAILED", self.manager.status().state)
         self.assertIn("ConnectionError", self.manager.status().error)
         await self.manager.stop()
