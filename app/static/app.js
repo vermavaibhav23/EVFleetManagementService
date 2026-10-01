@@ -193,6 +193,9 @@ let dashboard = null,
   epoch = 0;
 let refreshInFlight = null,
   refreshAgain = false,
+  dashboardController = null,
+  pendingAction = null,
+  refreshFailures = 0,
   selectedVin = null,
   activeTab = "overview";
 let noOptions = null;
@@ -215,7 +218,7 @@ async function request(path, options = {}) {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const detail = payload.detail;
-    throw new Error(
+    const error = new Error(
       typeof detail === "string"
         ? detail
         : Array.isArray(detail)
@@ -224,6 +227,8 @@ async function request(path, options = {}) {
             ? "A service dependency is unavailable. Reconnecting…"
             : `Request failed (${response.status}). Please refresh and try again.`,
     );
+    error.status = response.status;
+    throw error;
   }
   return payload;
 }
@@ -234,7 +239,14 @@ function setMessage(text, error = false) {
 function updateControls() {
   document
     .querySelectorAll("button[data-action]")
-    .forEach((b) => (b.disabled = busy || !connected));
+    .forEach((b) => {
+      // Viewing an existing plan is navigation, not a fleet mutation.
+      b.disabled = b.dataset.action === "view" ? !dashboard : busy || !connected;
+      const pending = pendingAction?.action === b.dataset.action && pendingAction?.id === b.dataset.id;
+      if (!b.dataset.label) b.dataset.label = b.textContent;
+      b.textContent = pending ? pendingAction.label : b.dataset.label;
+      b.setAttribute("aria-busy", String(!!pending));
+    });
   byId("seed-button").disabled = busy || !connected;
   byId("start-button").disabled =
     busy ||
@@ -265,11 +277,13 @@ function refresh(force = false) {
 async function loadDashboard() {
   const version = epoch,
     started = Date.now();
+  const controller = new AbortController();
+  dashboardController = controller;
   try {
-    const [snapshot] = await Promise.all([
-      request("/fleet/manager"),
-      request("/health/ready"),
-    ]);
+    // Dependency probes are for readiness, not a prerequisite for reading a snapshot.
+    const snapshot = await request("/fleet/manager", {
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]),
+    });
     if (version !== epoch || busy) return;
     const changedRun = dashboard?.run_id !== snapshot.run_id;
     if (changedRun || !snapshot.vehicles.some((v) => v.vin === selectedVin)) {
@@ -287,9 +301,10 @@ async function loadDashboard() {
       if (snapshot.variant) byId("scenario-variant").value = snapshot.variant;
       byId("vehicle-count").value = snapshot.vehicles.length || 10;
     }
-    if (!connected && byId("message").classList.contains("error"))
+    if (refreshFailures && byId("message").classList.contains("error"))
       setMessage("Connection restored. Fleet data is current.");
     connected = true;
+    refreshFailures = 0;
     lastLoadMs = Date.now() - started;
     snapshotGapMs = lastSnapshotAt ? Date.now() - lastSnapshotAt : null;
     lastSnapshotAt = Date.now();
@@ -298,9 +313,12 @@ async function loadDashboard() {
     render();
   } catch (error) {
     if (version !== epoch) return;
-    connected = false;
-    byId("live-dot").classList.remove("online");
-    byId("system-label").textContent = "Reconnecting · data may be stale";
+    refreshFailures++;
+    connected = !!dashboard && refreshFailures < 3 && Date.now() - lastSnapshotAt < 30000;
+    byId("live-dot").classList.toggle("online", connected);
+    byId("system-label").textContent = connected
+      ? "Update delayed · showing last snapshot"
+      : "Reconnecting · data may be stale";
     setMessage(
       error.name === "TimeoutError"
         ? "Fleet data took too long to load. Retrying automatically."
@@ -308,6 +326,7 @@ async function loadDashboard() {
       true,
     );
   } finally {
+    if (dashboardController === controller) dashboardController = null;
     updateControls();
   }
 }
@@ -561,10 +580,10 @@ function renderPlans() {
             `<article class="option-card ${i === 0 ? "recommended" : ""}">${badge(i === 0 ? "NORMAL" : "neutral", i === 0 ? "Recommended" : "Alternative")}<h3>${escapeHtml(stationName(o.charger_id))}</h3><p class="price">${number(o.target_soc_pct, "%", 0)} <small>target charge</small></p><dl class="facts">${fact("Energy & cost", `${number(o.grid_energy_kwh, " kWh")} · ${money(o.electricity_cost)}`)}${fact("Average energy price", money(o.average_price_per_kwh) + " / kWh")}${fact("Travel / wait", `${number(o.travel_minutes, " min")} / ${number(o.wait_minutes, " min")}`)}${fact("Charging", number(o.charging_minutes, " min"))}${fact("Delivery ETA", formatTime(o.delivery_eta) + " IST")}${fact("Traffic buffer", "20 min protected")}${fact("Stops covered now", String(o.covered_stops ?? 0))}</dl><p class="short-reason">${i === 0 ? "Preserves reserve; follows the approved deadline policy." : escapeHtml(optionReason(o, options[0]))}</p>${i === 0 && plan.status === "PROPOSED" ? actionButton("approve", plan.plan_id, "Approve plan", true) : i === 0 ? badge(plan.status) : ""}</article>`,
         )
         .join("")
-    : `<div class="workspace empty" style="grid-column:1/-1">${escapeHtml(noOptions?.vin === v?.vin && noOptions?.run_id === dashboard.run_id ? noOptions.reason : v?.explanation || "Select a vehicle.")}</div>`;
+    : `<div class="workspace empty" style="grid-column:1/-1">${escapeHtml(noOptions && noOptions.vin === v?.vin && noOptions.run_id === dashboard.run_id ? noOptions.reason : v?.explanation || "Select a vehicle.")}</div>`;
   const exclusions =
     plan?.exclusions ||
-    (noOptions?.vin === v?.vin && noOptions?.run_id === dashboard.run_id
+    (noOptions && noOptions.vin === v?.vin && noOptions.run_id === dashboard.run_id
       ? noOptions.exclusions
       : []) ||
     [];
@@ -807,22 +826,38 @@ function renderMap() {
     ? `<strong>${escapeHtml(v.name)}</strong> · ${human(v.operating_state)} · ${number(v.soc_pct, "%")} · ${number(v.delivery_remaining_km, " km to next stop")}`
     : "Select a vehicle.";
 }
-async function perform(operation, message) {
+function applyPlan(plan) {
+  if (!dashboard || !plan?.plan_id) return;
+  dashboard.plans = [plan, ...dashboard.plans.filter((p) => p.plan_id !== plan.plan_id)];
+  render();
+}
+async function perform(operation, message, action = null) {
   if (busy) return;
   busy = true;
   epoch++;
+  pendingAction = action;
+  // Do not queue the result refresh behind an obsolete, slow snapshot.
+  dashboardController?.abort();
   updateControls();
-  setMessage("Updating fleet…");
+  setMessage(action?.label || "Updating fleet…");
   try {
-    await operation();
+    const result = await operation();
+    if (dashboard && typeof result?.running === "boolean") {
+      dashboard.simulator = result;
+      render();
+    }
     setMessage(message);
   } catch (error) {
-    setMessage(error.message, true);
+    setMessage(error.name === "TimeoutError"
+      ? "The request is taking longer than expected. Checking the latest status before you retry."
+      : error.message, true);
   } finally {
     busy = false;
+    pendingAction = null;
     epoch++;
-    await refresh(true);
     updateControls();
+    // The operation's response is already available; reconcile in the background.
+    void refresh(true);
   }
 }
 async function compare(vin, replacePlanId) {
@@ -830,28 +865,31 @@ async function compare(vin, replacePlanId) {
   switchTab("plans");
   await perform(async () => {
     if (replacePlanId)
-      await request(
+      applyPlan(await request(
         `/charging/plans/${encodeURIComponent(replacePlanId)}/reject`,
         { method: "POST" },
-      );
+      ));
     noOptions = null;
     try {
-      await request(`/charging/plans/${encodeURIComponent(vin)}`, {
+      applyPlan(await request(`/charging/plans/${encodeURIComponent(vin)}`, {
         method: "POST",
-      });
+      }));
     } catch (error) {
-      const evaluation = await request(
-        `/charging/recommendations/${encodeURIComponent(vin)}`,
-      );
+      if (error.status !== 422) throw error;
+      const [evaluation, decision] = await Promise.all([
+        request(`/charging/recommendations/${encodeURIComponent(vin)}`),
+        request(`/charging/manager-decisions/${encodeURIComponent(vin)}`),
+      ]);
       noOptions = { ...evaluation, run_id: dashboard.run_id };
       decisionPreview = {
-        ...(await request(
-          `/charging/manager-decisions/${encodeURIComponent(vin)}`,
-        )),
+        ...decision,
         vin,
       };
+      render();
     }
-  }, "Review ready. Vehicles awaiting a decision remain safely held.");
+  }, "Review ready. Vehicles awaiting a decision remain safely held.", {
+    action: replacePlanId ? "replace" : "compare", id: replacePlanId || vin, label: "Finding options…",
+  });
 }
 byId("seed-button").addEventListener("click", () => {
   const count = Number(byId("vehicle-count").value),
@@ -941,8 +979,13 @@ document.addEventListener("click", async (event) => {
     return;
   }
   const button = event.target.closest("button[data-action]");
-  if (!button || busy || !connected) return;
+  if (!button) return;
   const { action, id } = button.dataset;
+  if (action === "view") {
+    selectVehicle(id, "plans");
+    return;
+  }
+  if (busy || !connected) return;
   if (action === "manager") {
     selectedVin = id;
     switchTab("plans");
@@ -953,7 +996,8 @@ document.addEventListener("click", async (event) => {
         )),
         vin: id,
       };
-    }, "Review the consequences before choosing.");
+      render();
+    }, "Review the consequences before choosing.", {action, id, label: "Loading choices…"});
     return;
   }
   if (["accept-delay", "deliver-now"].includes(action)) {
@@ -975,16 +1019,13 @@ document.addEventListener("click", async (event) => {
         );
         decisionPreview = null;
         noOptions = null;
-
+        render();
       },
       action === "accept-delay"
         ? "Charging and delay approved. The vehicle can continue."
         : "Priority delivery approved. Recovery requested.",
+      {action, id, label: "Approving…"},
     );
-    return;
-  }
-  if (action === "view") {
-    selectVehicle(id, "plans");
     return;
   }
   if (action === "compare") {
@@ -996,13 +1037,14 @@ document.addEventListener("click", async (event) => {
     return;
   }
   await perform(
-    () =>
-      request(`/charging/plans/${encodeURIComponent(id)}/${action}`, {
+    async () =>
+      applyPlan(await request(`/charging/plans/${encodeURIComponent(id)}/${action}`, {
         method: "POST",
-      }),
+      })),
     action === "approve"
       ? (dashboard.simulator.running ? "Charging approved. The vehicle will follow its booked route." : "Charging approved. Press Start to watch the journey.")
       : `Decision ${action === "reject" ? "rejected" : "cancelled"}. Any associated reservation was released.`,
+    {action, id, label: action === "approve" ? "Approving…" : "Updating plan…"},
   );
 });
 document.addEventListener("keydown", (event) => {

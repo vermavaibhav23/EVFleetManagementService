@@ -817,19 +817,24 @@ class SimulatorManager:
         from app.services.simulation_events import apply_events
 
         await apply_events(self._db, self._simulated_time)
-        self._planning_chargers = [
-            Charger(**d) async for d in self._db.chargers.find({})
-        ]
-        self._planning_reservations = [
-            Reservation(**d)
-            async for d in self._db.reservations.find(
-                {"status": {"$in": [x.value for x in ACTIVE_RESERVATION_STATUSES]}}
-            )
-        ]
-        self._planning_tariffs = [Tariff(**d) async for d in self._db.tariffs.find({})]
-        self._planning_limits = {
-            d["depot_id"]: d["power_limit_kw"] async for d in self._db.depots.find({})
-        }
+
+        async def collect(cursor):
+            return [doc async for doc in cursor]
+
+        chargers, reservations, tariffs, depots = await asyncio.gather(
+            collect(self._db.chargers.find({})),
+            collect(
+                self._db.reservations.find(
+                    {"status": {"$in": [x.value for x in ACTIVE_RESERVATION_STATUSES]}}
+                )
+            ),
+            collect(self._db.tariffs.find({})),
+            collect(self._db.depots.find({})),
+        )
+        self._planning_chargers = [Charger(**d) for d in chargers]
+        self._planning_reservations = [Reservation(**d) for d in reservations]
+        self._planning_tariffs = [Tariff(**d) for d in tariffs]
+        self._planning_limits = {d["depot_id"]: d["power_limit_kw"] for d in depots}
         results = await asyncio.gather(
             *(
                 self._advance_vehicle(state, elapsed_simulated_seconds)
@@ -864,13 +869,20 @@ class SimulatorManager:
             )
             lock = self._charger_locks.setdefault(key, asyncio.Lock())
             async with lock:
-                await self._advance_vehicle_unlocked(state, elapsed_seconds)
+                event = await self._advance_vehicle_unlocked(state, elapsed_seconds)
         else:
-            await self._advance_vehicle_unlocked(state, elapsed_seconds)
+            event = await self._advance_vehicle_unlocked(state, elapsed_seconds)
+        # Physical port/power transitions above remain serialized per depot.
+        # Persist independent vehicles concurrently, without making the next car
+        # wait for this one's readiness queries, Redis write and broker ACK.
+        # The enclosing tick still drains every publication before releasing the
+        # global mutation lock, so pause, reset and approval remain coherent.
+        await store_telemetry(event, self._db, self._redis, self._kafka)
+        self._emitted_events += 1
 
     async def _advance_vehicle_unlocked(
         self, state: VehicleSimulationState, elapsed_seconds: float
-    ) -> None:
+    ) -> TelemetryEvent:
         assert self._simulated_time is not None
         now = self._simulated_time
         journey_trip_id = (
@@ -1533,5 +1545,4 @@ class SimulatorManager:
             if operating_state == OperatingState.AWAITING_DECISION
             else None
         )
-        await store_telemetry(event, self._db, self._redis, self._kafka)
-        self._emitted_events += 1
+        return event

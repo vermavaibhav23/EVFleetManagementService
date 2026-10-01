@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
@@ -19,7 +20,8 @@ from app.models.telemetry import TelemetryEvent
 from app.models.trip import Trip
 from app.models.vehicle import Vehicle
 from app.services.coordination import serialized
-from app.services.fleet_readiness import evaluate_vehicle_readiness, find_next_trip
+from app.services.fleet_readiness import find_next_trip
+from app.services.readiness import assess_readiness
 from app.services.scheduler import create_recommendation, escape_km, haversine_km
 
 router = APIRouter()
@@ -32,9 +34,9 @@ async def _load_recommendation(
     reviewed_plan=None,
 ) -> ChargingRecommendation:
     db = get_database()
-    vehicle_doc = await db.vehicles.find_one({"vin": vin})
-    telemetry_doc = await db.telemetry.find_one(
-        {"vin": vin}, sort=[("ts", -1), ("seq", -1)]
+    vehicle_doc, telemetry_doc = await asyncio.gather(
+        db.vehicles.find_one({"vin": vin}),
+        db.telemetry.find_one({"vin": vin}, sort=[("ts", -1), ("seq", -1)]),
     )
     if vehicle_doc is None or telemetry_doc is None:
         raise HTTPException(status_code=404, detail="Vehicle or telemetry not found")
@@ -43,48 +45,60 @@ async def _load_recommendation(
     telemetry_doc.pop("ingested_at", None)
     vehicle = Vehicle(**vehicle_doc)
     telemetry = TelemetryEvent(**telemetry_doc)
-    trip = await find_next_trip(db, vin, telemetry.ts)
-    if trip and allow_delay:
-        trip = trip.model_copy(update={"accepted_delay": True})
-    readiness = await evaluate_vehicle_readiness(db, vin, telemetry)
-    if readiness is None:
-        raise HTTPException(
-            status_code=404, detail="Unable to evaluate vehicle readiness"
-        )
-
-    chargers: list[Charger] = []
     charger_query = (
         {"depot_id": vehicle.depot_id, "charger_id": {"$regex": "^SIM-CHARGER-"}}
         if vin.startswith("SIM")
         else {}
     )
-    async for doc in db.chargers.find(charger_query):
-        doc.pop("_id", None)
-        chargers.append(Charger(**doc))
-    reservations: list[Reservation] = []
-    async for doc in db.reservations.find(
-        {"status": {"$in": [status.value for status in ACTIVE_RESERVATION_STATUSES]}}
-    ):
-        doc.pop("_id", None)
-        if doc.get("plan_id") != ignore_plan_id or ignore_plan_id is None:
-            reservations.append(Reservation(**doc))
-    tariffs: list[Tariff] = []
-    async for doc in db.tariffs.find(
-        {"tariff_id": {"$regex": "^SIM-"}} if vin.startswith("SIM") else {}
-    ):
-        doc.pop("_id", None)
-        tariffs.append(Tariff(**doc))
-    depot_power_limits = {
-        doc["depot_id"]: float(doc["power_limit_kw"])
-        async for doc in db.depots.find({})
-    }
 
-    future_trips = [
-        Trip(**d)
-        async for d in db.trips.find(
-            {"vin": vin, "status": "PLANNED", "simulation_enabled": {"$ne": False}}
-        ).sort("departure_time", 1)
+    async def collect(cursor):
+        return [doc async for doc in cursor]
+
+    (
+        trip,
+        charger_docs,
+        reservation_docs,
+        tariff_docs,
+        depot_docs,
+        future_docs,
+    ) = await asyncio.gather(
+        find_next_trip(db, vin, telemetry.ts),
+        collect(db.chargers.find(charger_query)),
+        collect(
+            db.reservations.find(
+                {"status": {"$in": [s.value for s in ACTIVE_RESERVATION_STATUSES]}}
+            )
+        ),
+        collect(
+            db.tariffs.find(
+                {"tariff_id": {"$regex": "^SIM-"}} if vin.startswith("SIM") else {}
+            )
+        ),
+        collect(db.depots.find({})),
+        collect(
+            db.trips.find(
+                {"vin": vin, "status": "PLANNED", "simulation_enabled": {"$ne": False}}
+            ).sort("departure_time", 1)
+        ),
+    )
+    readiness = assess_readiness(
+        vehicle,
+        telemetry,
+        trip,
+        reserve_range_km=settings.reserve_range_km,
+        charge_soon_margin_km=settings.charge_soon_margin_km,
+    )
+    if trip and allow_delay:
+        trip = trip.model_copy(update={"accepted_delay": True})
+    chargers = [Charger(**d) for d in charger_docs]
+    reservations = [
+        Reservation(**d)
+        for d in reservation_docs
+        if ignore_plan_id is None or d.get("plan_id") != ignore_plan_id
     ]
+    tariffs = [Tariff(**d) for d in tariff_docs]
+    depot_power_limits = {d["depot_id"]: float(d["power_limit_kw"]) for d in depot_docs}
+    future_trips = [Trip(**d) for d in future_docs]
     if allow_delay:
         future_trips = [
             t.model_copy(update={"accepted_delay": True}) for t in future_trips

@@ -124,6 +124,49 @@ class DemoJourneyTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(response.status_code, (200, 201), response.text)
         return response.json()
 
+    async def test_slow_publication_does_not_serialize_depot_telemetry(self):
+        await self.seed(SimulationScenario.CHARGER_CONGESTION)
+        planned = {
+            p["vin"]
+            async for p in self.db.charging_plans.find(
+                {"status": {"$in": ["APPROVED", "CHARGING"]}}
+            )
+        }
+        self.assertGreaterEqual(len(planned), 2)
+        entered = set()
+        overlap = asyncio.Event()
+        release = asyncio.Event()
+        publish = self.kafka.publish
+
+        async def blocked_publication(topic, payload, key=None):
+            if key in planned:
+                entered.add(key)
+                if len(entered) >= 2:
+                    overlap.set()
+                await release.wait()
+            await publish(topic, payload, key=key)
+
+        with patch.object(self.kafka, "publish", side_effect=blocked_publication):
+            tick = asyncio.create_task(self.manager._tick())
+            pause = None
+            try:
+                # Two planned cars in the same depot reach publication together.
+                # A blocked broker must not keep the physical depot lock occupied.
+                await asyncio.wait_for(overlap.wait(), 5)
+                pause = asyncio.create_task(self.manager.stop())
+                await asyncio.sleep(0)
+                self.assertFalse(pause.done())
+            finally:
+                release.set()
+                await tick
+                if pause:
+                    await pause
+        self.assertEqual(len(self.manager._states), self.manager._emitted_events)
+        for vin in planned:
+            event = await self.latest(vin)
+            self.assertEqual(event["seq"], self.manager._states[vin].sequence)
+            self.assertTrue(event["published"])
+
     async def test_complete_journey_and_port_release(self):
         await self.manager._tick()
         self.assertEqual("AWAITING_DECISION", (await self.latest())["operating_state"])

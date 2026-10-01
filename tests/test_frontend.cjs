@@ -10,12 +10,17 @@ const source = fs.readFileSync(
 
 function harness(fetch) {
   const nodes = new Map();
+  const actions = [];
+  const listeners = {};
   const node = (id) => {
     if (!nodes.has(id))
       nodes.set(id, {
         innerHTML: "",
         textContent: "",
         disabled: false,
+        dataset: {},
+        setAttribute() {},
+        removeAttribute() {},
         classList: {
           add() {},
           remove() {},
@@ -34,17 +39,18 @@ function harness(fetch) {
   const context = vm.createContext({
     document: {
       getElementById: node,
-      querySelectorAll: () => [],
-      addEventListener() {},
+      querySelectorAll: (selector) => selector === "button[data-action]" ? actions : [],
+      addEventListener(name, callback) { listeners[name] = callback; },
     },
     fetch,
     AbortSignal,
+    AbortController,
     setInterval() {},
     setTimeout() {},
     console,
   });
   vm.runInContext(source, context);
-  return { context, node, run: (s) => vm.runInContext(s, context) };
+  return { context, node, actions, listeners, run: (s) => vm.runInContext(s, context) };
 }
 const overview = {
   vehicles: 0,
@@ -79,13 +85,13 @@ test("simultaneous forced refreshes coalesce into one ordered follow-up", async 
         calls.push(() => resolve({ ok: true, json: async () => payload(url) })),
       ),
   );
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 1);
   const first = h.run("refresh(true)");
   const second = h.run("refresh(true)");
   assert.equal(first, second);
   calls.splice(0).forEach((resolve) => resolve());
   await new Promise(setImmediate);
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 1);
   calls.splice(0).forEach((resolve) => resolve());
   await first;
   assert.equal(h.node("system-label").textContent, "Fleet connected");
@@ -268,4 +274,117 @@ test("journey shows observed interruption without claiming skipped charging, the
   const emergency=h.run(`renderJourney({vin:'A',manager_readiness:'EMERGENCY',operating_state:'STRANDED'})`);
   assert.match(emergency,/Energy Emergency/);
   assert.ok(!emergency.includes('class="upcoming"'));
+});
+
+test("fleet refresh does not depend on a slow or failing readiness probe", async () => {
+  const calls = [];
+  const h = harness(async (url) => {
+    calls.push(url);
+    if (url.includes('/health')) throw new Error('Kafka probe unavailable');
+    return {ok:true,json:async()=>payload(url)};
+  });
+  await h.run('refreshInFlight');
+  assert.equal(h.run('connected'), true);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /fleet\/manager/);
+});
+
+test("one missed refresh preserves recent data; sustained failures disable mutations only", async () => {
+  let fail = false;
+  const h = harness(async (url) => {
+    if (fail) throw new Error('Temporary network failure');
+    return {ok:true,json:async()=>payload(url)};
+  });
+  await h.run('refreshInFlight');
+  const view = h.node('view-test');
+  view.dataset = {action:'view',id:'A'};
+  const approve = h.node('approve-test');
+  approve.dataset = {action:'approve',id:'P'};
+  h.actions.push(view, approve);
+  fail = true;
+  await h.run('refresh(true)');
+  assert.equal(h.run('connected'), true);
+  assert.equal(approve.disabled, false);
+  await h.run('refresh(true)');
+  await h.run('refresh(true)');
+  assert.equal(approve.disabled, true);
+  assert.equal(view.disabled, false);
+  fail = false;
+  await h.run('refresh(true)');
+  assert.equal(approve.disabled, false);
+});
+
+test("View plan remains navigable while an approval is pending or offline", async () => {
+  const h = harness(() => new Promise(() => {}));
+  h.run(`dashboard={vehicles:[{vin:'A',name:'Van A',itinerary:[]},{vin:'B',name:'Van B',itinerary:[]}],plans:[],chargers:[],depots:[],alerts:[],simulator:{running:true}};selectedVin='A';busy=true;connected=false`);
+  const view=h.node('view-test');view.dataset={action:'view',id:'B'};
+  const approve=h.node('approve-test');approve.dataset={action:'approve',id:'P'};
+  h.actions.push(view,approve);
+  h.run('updateControls()');
+  assert.equal(view.disabled,false);
+  assert.equal(approve.disabled,true);
+  await h.listeners.click({target:{closest:selector=>selector==='button[data-action]'?view:null}});
+  assert.equal(h.run('selectedVin'),'B');
+  assert.equal(h.run('activeTab'),'plans');
+});
+
+test("approval is submitted once and rendered before a slow follow-up snapshot", async () => {
+  let reads=0, approvals=0, resolveApproval;
+  const h=harness(async url=>{
+    if(url.endsWith('/approve')) {
+      approvals++;
+      return new Promise(resolve=>{resolveApproval=()=>resolve({ok:true,json:async()=>({plan_id:'P',vin:'A',status:'APPROVED'})});});
+    }
+    if(++reads>1) return new Promise(()=>{});
+    return {ok:true,json:async()=>({...payload(url),vehicles:[{vin:'A',name:'Van',itinerary:[]}],plans:[{plan_id:'P',vin:'A',status:'PROPOSED'}]})};
+  });
+  await h.run('refreshInFlight');
+  const button=h.node('approve-test');button.dataset={action:'approve',id:'P'};button.textContent='Approve plan';
+  h.actions.push(button);
+  const event={target:{closest:selector=>selector==='button[data-action]'?button:null}};
+  const action=h.listeners.click(event);
+  assert.equal(button.textContent,'Approving…');
+  assert.equal(button.disabled,true);
+  await h.listeners.click(event);
+  assert.equal(approvals,1);
+  resolveApproval();
+  await action;
+  assert.equal(h.run("dashboard.plans[0].status"),'APPROVED');
+  assert.equal(h.run('busy'),false);
+  assert.equal(button.disabled,false);
+  assert.ok(h.run('refreshInFlight'));
+});
+
+test("starting an action aborts an old snapshot without flashing disconnected", async () => {
+  let reads=0, aborted=false, finishAction;
+  const h=harness(async(url,options)=>{
+    if(++reads===1)return{ok:true,json:async()=>payload(url)};
+    return new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>{
+      aborted=true;reject(new Error('Aborted'));
+    }));
+  });
+  await h.run('refreshInFlight');
+  h.run('refresh()');
+  h.context.operation=()=>new Promise(resolve=>{finishAction=resolve;});
+  const action=h.run("perform(operation,'Done')");
+  await new Promise(setImmediate);
+  assert.equal(aborted,true);
+  assert.equal(h.run('connected'),true);
+  finishAction();await action;
+  assert.equal(h.run('busy'),false);
+});
+
+test("failed plan request does not trigger expensive fallback calculations", async () => {
+  const calls=[];
+  const h=harness(async url=>{
+    calls.push(url);
+    return url.includes('/charging/')
+      ? {ok:false,status:503,json:async()=>({detail:'Service temporarily unavailable'})}
+      : {ok:true,json:async()=>payload(url)};
+  });
+  await h.run('refreshInFlight');
+  await h.run("compare('A')");
+  assert.equal(calls.filter(url=>url.includes('/charging/')).length,1);
+  assert.match(h.node('message').textContent,/Service temporarily unavailable/);
+  assert.equal(h.run('busy'),false);
 });
