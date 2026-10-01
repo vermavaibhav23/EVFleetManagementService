@@ -60,55 +60,59 @@ const priority = {
   COMPLETE: 6,
 };
 const scenarios = {
-  LOW_BATTERY_BEFORE_TRIP: {
-    name: "Low battery before delivery",
-    description: "Van 001 cannot finish its delivery with the safety reserve.",
-    action: "Compare options and approve a diversion.",
-    result: "Watch it reach a charger, charge, release the port, then deliver.",
+  NORMAL_DAY: {
+    name: "Normal Operations",
+    group: "Normal Operations",
+    description: "Enough energy for the full timetable.",
   },
   CHARGER_CONGESTION: {
-    name: "Charger congestion",
-    description:
-      "Solar Canopy has a seeded 75-minute reservation; Van 001 needs energy.",
-    action: "Compare the reserved station with the available alternatives.",
-    result: "The chosen vehicle waits for its booked window before charging.",
+    name: "Busy Chargers",
+    group: "Charger Scenarios",
+    description: "The cheaper station has a longer queue.",
   },
   CHARGER_FAILURE: {
-    name: "Charger failure",
-    description: "Solar Canopy is faulty. Van 001 has a low battery.",
-    action: "Review the excluded station and approve a healthy alternative.",
-    result: "The diversion goes to a working charger.",
+    name: "Charger Offline",
+    group: "Charger Scenarios",
+    description: "A nearby station is unavailable.",
   },
-  UNEXPECTED_LONG_TRIP: {
-    name: "Unexpected long delivery",
-    description:
-      "Loaded at the incident checkpoint: Van 001 now has a 140 km assignment.",
-    action: "Review the new energy shortfall and approve a diversion.",
-    result: "Charging covers the extended delivery plus reserve.",
+  NONFINAL_RELAXED: {
+    name: "Time to Charge Ahead",
+    group: "Non-final Deliveries",
+    description: "Time now can protect the later deliveries.",
   },
-  BATTERY_OVERHEATING: {
-    name: "Battery overheating",
-    description: "Van 001 has a 48°C battery; normal charging is blocked.",
-    action: "Inspect the health warning and hold the vehicle for inspection.",
-    result:
-      "No charging plan is offered. Inspection and repair are not simulated.",
+  NONFINAL_TIGHT: {
+    name: "Tight Next Deadline",
+    group: "Non-final Deliveries",
+    description: "A short charge now; another stop later.",
   },
-  UNREACHABLE_CHARGER: {
-    name: "Unreachable charger emergency",
-    description: "Van 001 is stranded at a remote checkpoint with 0% battery.",
-    action: "Inspect the assistance-required message.",
-    result:
-      "It stays at its actual location. No impossible plan or assistance dispatch is simulated.",
+  NONFINAL_PRIORITY: {
+    name: "Priority Delivery",
+    group: "Non-final Deliveries",
+    description: "Deliver now or charge and accept a delay.",
   },
-  NORMAL_DAY: {
-    name: "Normal day",
-    description:
-      "The fleet begins with enough energy for its active deliveries.",
-    action: "Start the simulation and inspect a vehicle’s daily itinerary.",
-    result:
-      "Vehicles reach their customers. Later scheduled legs are not executed.",
+  NONFINAL_CONFLICT: {
+    name: "Timetable Conflict",
+    group: "Non-final Deliveries",
+    description: "The current deadline needs a manager decision.",
+  },
+  FINAL_RELAXED: {
+    name: "Time to Top Up",
+    group: "Final Delivery",
+    description: "Top up while the final deadline allows it.",
+  },
+  FINAL_TIGHT: {
+    name: "Deadline First",
+    group: "Final Delivery",
+    description: "Keep enough time for the final delivery.",
+  },
+  FINAL_PRIORITY: {
+    name: "Priority Final Stop",
+    group: "Final Delivery",
+    description: "Review the low-reserve arrival before dispatch.",
   },
 };
+let decisionPreview = null;
+
 let dashboard = null,
   connected = false,
   busy = false,
@@ -199,6 +203,7 @@ async function loadDashboard() {
         snapshot.primary_demo_vin || snapshot.vehicles[0]?.vin || null;
       viewport = null;
       noOptions = null;
+      decisionPreview = null;
     }
     dashboard = snapshot;
     if (changedRun) {
@@ -251,9 +256,7 @@ function readinessBadge(v) {
   );
 }
 function focusBadge(v) {
-  return v.vin === dashboard?.primary_demo_vin
-    ? '<span class="badge focus">Demo focus</span>'
-    : "";
+  return v.vin === dashboard?.primary_demo_vin ? "" : "";
 }
 function actionButton(action, id, label, primary = false) {
   return `<button class="${primary ? "primary" : ""}" data-action="${action}" data-id="${escapeHtml(id)}">${escapeHtml(label)}</button>`;
@@ -278,28 +281,12 @@ function switchTab(tab) {
     if (el.dataset.tab === tab) el.setAttribute("aria-current", "page");
     else el.removeAttribute("aria-current");
   });
-  const headings = {
-    overview: [
-      "Keep every delivery moving.",
-      "A clear view of your fleet, and the next decision that matters.",
-    ],
-    vehicles: [
-      "Every vehicle. The whole picture.",
-      "Battery health, active delivery, and the planned day ahead.",
-    ],
-    chargers: [
-      "The right stop starts here.",
-      "Know your charging network, available ports, and the cost of energy.",
-    ],
-    plans: [
-      "Make the next move with confidence.",
-      "Compare feasible options, understand the trade-offs, and decide.",
-    ],
-  };
-  byId("page-title").textContent = headings[tab][0];
-  byId("page-description").textContent = headings[tab][1];
-  byId("page-eyebrow").textContent =
-    `FLEET OPERATIONS / ${tab === "plans" ? "PLANS & DECISIONS" : tab.toUpperCase()}`;
+  byId("page-title").textContent = {
+    overview: "Overview",
+    vehicles: "Vehicles",
+    chargers: "Chargers",
+    plans: "Plans & Decisions",
+  }[tab];
   render();
 }
 function render() {
@@ -308,11 +295,11 @@ function render() {
     demo = scenarios[dashboard.scenario];
   byId("sim-clock").textContent =
     sim.error ||
-    `${sim.running ? `Running · ${sim.time_scale}×` : "Paused · ready to present"} · ${formatDate(sim.simulated_time)}, ${formatTime(sim.simulated_time)} IST`;
+    `${sim.running ? `Running · ${sim.time_scale}×` : "Paused"} · ${formatDate(sim.simulated_time)}, ${formatTime(sim.simulated_time)} IST`;
   byId("sim-clock").classList.toggle("error", !!sim.error);
   byId("scenario-guide").innerHTML = demo
-    ? `<span class="guide-icon">◇</span><div><strong>${escapeHtml(demo.name)}</strong><p>${escapeHtml(demo.description)} ${escapeHtml(demo.action)}</p><p><b>Expected:</b> ${escapeHtml(demo.result)}</p></div><button data-select="${escapeHtml(dashboard.primary_demo_vin)}" data-select-tab="overview">Show demo focus ↗</button>`
-    : "<p>Load a demonstration using the controls above.</p>";
+    ? `<span class="badge neutral">Scenario</span><strong>${escapeHtml(demo.name)}</strong><span class="muted">${escapeHtml(demo.description)}</span><button data-select="${escapeHtml(dashboard.primary_demo_vin)}" data-select-tab="overview">Van 001 ↗</button>`
+    : "";
   byId("freshness").textContent =
     `${dashboard.vehicles.length} vehicles · ${sim.running ? "Live simulation" : "Telemetry frozen while paused"} · snapshot ${(lastLoadMs / 1000).toFixed(2)}s${snapshotGapMs ? ` · received every ${(snapshotGapMs / 1000).toFixed(1)}s` : ""}`;
   if (activeTab === "overview") {
@@ -414,48 +401,21 @@ function renderSelected() {
   const v = selected();
   if (!v) {
     byId("selected-detail").innerHTML =
-      '<p class="empty">Select a vehicle to see its next step.</p>';
+      '<p class="empty">Select a vehicle.</p>';
     return;
   }
   const plan = currentPlan(),
-    isBlocked = ["BLOCKED", "EMERGENCY"].includes(v.manager_readiness);
-  const action = plan
-    ? actionButton("view", v.vin, "Review decision →", true)
+    trips = v.itinerary || [],
+    done = trips.filter((t) => t.status === "COMPLETED").length;
+  const actions = plan
+    ? actionButton("view", v.vin, "Review plan", true)
     : v.manager_readiness === "NEEDS_CHARGING"
-      ? actionButton(
-          "compare",
-          v.vin,
-          dashboard.simulator.running
-            ? "Compare & pause →"
-            : "Compare charging options →",
-          true,
-        )
+      ? actionButton("compare", v.vin, "Review options", true)
       : "";
-  const stages = [
-    "Review",
-    "Approved",
-    "Divert",
-    "Charge",
-    "Resume",
-    "Delivered",
-  ];
-  const stage =
-    v.manager_readiness === "COMPLETE"
-      ? 5
-      : v.operating_state === "RESUMING_TRIP"
-        ? 4
-        : v.operating_state === "CHARGING"
-          ? 3
-          : ["EN_ROUTE_TO_CHARGER", "WAITING_FOR_CHARGER"].includes(
-                v.operating_state,
-              )
-            ? 2
-            : plan?.status === "APPROVED"
-              ? 1
-              : 0;
   byId("selected-detail").innerHTML =
-    `<p class="eyebrow">SELECTED VEHICLE</p><div class="detail-title"><h2>${escapeHtml(v.name)}</h2></div><p class="detail-id">${escapeHtml(v.vin)}</p><div>${focusBadge(v)} ${readinessBadge(v)}</div><div class="battery-readout"><strong>${number(v.soc_pct, "", 0)}</strong><span>% battery</span></div><div class="battery-bar ${v.soc_pct < 30 ? "low" : ""}"><i style="width:${Math.min(100, Math.max(0, v.soc_pct || 0))}%"></i></div><div class="detail-body"><div class="reason-box ${escapeHtml(v.manager_readiness)}">${escapeHtml(v.explanation)}</div><dl class="facts">${fact("Operational state", human(v.operating_state))}${fact("Delivery remaining", number(v.delivery_remaining_km, " km"))}${fact("Available range", number(v.current_range_km, " km"))}${fact("Safety reserve", number(v.reserve_range_km, " km", 0))}${fact("Range after reserve", number(v.range_margin_km, " km"))}${fact("Battery temperature", number(v.battery_temperature_c, "°C"))}${fact("Telemetry (simulation)", formatTime(v.telemetry_time) + " IST")}${fact("Telemetry lag", number(v.telemetry_lag_seconds, " sim seconds", 0))}</dl>${v.deadline_margin_minutes != null ? `<p class="footnote">${v.deadline_margin_minutes < 20 ? "⚠ Deadline risk: " : "Deadline check: "}${number(v.deadline_margin_minutes, " min")} direct-drive margin, before charging or waiting. Options include those delays.</p>` : ""}${!isBlocked ? `<div class="lifecycle">${stages.map((s, i) => `<span class="${i <= stage ? "done" : ""}">${s}</span>`).join("")}</div>` : ""}${action}<button class="detail-link" data-select="${escapeHtml(v.vin)}" data-select-tab="vehicles">Vehicle details &amp; itinerary ↗</button></div>`;
+    `<h2>${escapeHtml(v.name)}</h2><div class="status-row">${readinessBadge(v)} ${badge(v.operating_state)}</div><div class="battery-readout"><strong>${number(v.soc_pct, "", 0)}</strong><span>% battery</span></div><div class="battery-bar ${v.soc_pct < 25 ? "low" : ""}"><i style="width:${v.soc_pct || 0}%"></i></div><div class="detail-body"><dl class="facts">${fact("Next stop", v.current_trip?.destination || "Timetable complete")}${fact("Distance", number(v.delivery_remaining_km, " km"))}${fact("Deadline", formatDate(v.current_trip?.delivery_deadline) + " · " + formatTime(v.current_trip?.delivery_deadline) + " IST")}${fact("Stops completed", `${done} / ${trips.length}`)}</dl><p class="short-reason">${escapeHtml(v.explanation)}</p>${actions}${!plan && ["NEEDS_CHARGING", "EMERGENCY"].includes(v.manager_readiness) ? actionButton("manager", v.vin, "Manager choices") : ""}<details><summary>Battery & route details</summary><dl class="facts">${fact("Available range", number(v.current_range_km, " km"))}${fact("Reserve", number(v.reserve_range_km, " km"))}${fact("Battery temperature", number(v.battery_temperature_c, "Â°C"))}${fact("Updated", formatTime(v.telemetry_time) + " IST")}</dl></details><button class="detail-link" data-select="${escapeHtml(v.vin)}" data-select-tab="vehicles">View timetable →</button></div>`;
 }
+
 function renderVehicleProfile() {
   const vs = dashboard.vehicles.filter((v) =>
     (v.name + v.vin).toLowerCase().includes(directorySearch.toLowerCase()),
@@ -466,175 +426,122 @@ function renderVehicleProfile() {
     '<p class="empty">No matching vehicles.</p>';
   const v = selected();
   if (!v) {
-    byId("vehicle-profile").innerHTML =
-      '<p class="empty">Choose a vehicle.</p>';
+    byId("vehicle-profile").innerHTML = "Select a vehicle.";
     return;
   }
-  const depot = dashboard.depots.find((d) => d.depot_id === v.depot_id);
   byId("vehicle-profile").innerHTML =
-    `<div class="profile-heading"><span class="vehicle-monogram">${escapeHtml(v.vin.slice(-3))}</span><div><p class="eyebrow">VEHICLE PROFILE</p><h2>${escapeHtml(v.name)}</h2><small>${escapeHtml(v.vin)}</small></div></div><dl class="facts specs">${fact("Battery capacity", number(v.battery_capacity_kwh, " kWh"))}${fact("Usable capacity", number(v.usable_capacity_kwh, " kWh"))}${fact("State of charge", number(v.soc_pct, "%"))}${fact("Battery health", number(v.soh_pct, "% SoH"))}${fact("Connector", v.connector_type)}${fact("Consumption", number(v.consumption_kwh_per_km, " kWh/km", 3))}${fact("Max charging power", number(v.max_charge_power_kw, " kW", 0))}${fact("Assigned depot", depot?.name || v.depot_id)}</dl><div>${readinessBadge(v)} ${badge(v.operating_state)} ${focusBadge(v)}</div><div class="reason-box ${escapeHtml(v.manager_readiness)}">${escapeHtml(v.explanation)}</div><div class="section-heading"><h2>Today’s delivery itinerary</h2><span class="badge neutral">${formatDate(v.itinerary?.[0]?.departure_time)} · IST</span></div><p class="section-note">Stored, ordered delivery assignments with connected stops. The active leg is simulated; later legs are schedule-only. This is not full-day fleet optimization.</p><ol class="itinerary">${
+    `<div class="profile-heading"><span class="vehicle-monogram">${escapeHtml(v.vin.slice(-3))}</span><div><h2>${escapeHtml(v.name)}</h2><p>${number(v.soc_pct, "%")} battery · ${human(v.operating_state)}</p></div></div><div class="section-heading"><h2>Timetable</h2><span>${formatDate(v.itinerary?.[0]?.departure_time)} · IST</span></div><ol class="itinerary">${
       (v.itinerary || [])
         .map((t) => {
           const current = t.trip_id === v.current_trip?.trip_id,
             done = t.status === "COMPLETED";
-          return `<li class="${done ? "completed" : current ? "current" : ""}">${badge(done ? "COMPLETE" : current ? "APPROVED" : "neutral", done ? "Completed" : current ? "Current delivery" : "Upcoming · schedule only")}<h3>${escapeHtml(t.origin)} → ${escapeHtml(t.destination)}</h3><p>Departure ${formatTime(t.departure_time)} · Deadline ${formatTime(t.delivery_deadline)} IST · ${number(t.distance_km, " km")} · ${t.service_duration_minutes} min service</p><p>${current ? `${number(v.delivery_remaining_km, " km remaining")} · ${human(v.operating_state)}` : done ? "Arrived at customer." : "Planned after the preceding stop."}</p></li>`;
+          return `<li class="${done ? "completed" : current ? "current" : ""}">${badge(done ? "COMPLETE" : current ? "APPROVED" : "neutral", done ? "Delivered" : current ? "Next stop" : "Upcoming")}<h3>${escapeHtml(t.destination)}</h3><p>${escapeHtml(t.origin)} → ${escapeHtml(t.destination)} · ${number(t.distance_km, " km")}</p><p>Earliest departure ${formatTime(t.departure_time)} · Due ${formatDate(t.delivery_deadline)}, ${formatTime(t.delivery_deadline)}${t.completed_at ? " · Arrived " + formatTime(t.completed_at) : ""} IST</p>${t.accepted_delay ? '<span class="badge NEEDS_CHARGING">Delay accepted</span>' : ""}${t.reserve_exception ? '<span class="badge EMERGENCY">Reserve exception · recovery requested</span>' : ""}${t.transfer_from_vin ? '<span class="badge neutral">Reassigned · package handover required</span>' : ""}</li>`;
         })
-        .join("") || "<li>No deliveries are scheduled.</li>"
-    }</ol><button data-select="${escapeHtml(v.vin)}" data-select-tab="plans">Review charging decisions →</button>`;
-}
-function renderChargers() {
-  const clock = dashboard.simulator.simulated_time;
-  byId("charger-cards").innerHTML =
-    dashboard.chargers
-      .map((c) => {
-        const max = Math.max(...c.hourly_prices.map((p) => p.price_per_kwh), 1);
-        const hour = Number(
-          new Date(clock).toLocaleString("en-GB", {
-            hour: "2-digit",
-            hour12: false,
-            timeZone: c.timezone,
-          }),
-        );
-        const active = c.reservations
-          .filter((r) =>
-            ["CONFIRMED", "VEHICLE_EN_ROUTE", "OCCUPIED"].includes(r.status),
-          )
-          .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
-        const shared = dashboard.chargers
-          .filter(
-            (s) =>
-              s.depot_id === c.depot_id &&
-              s.tariff_scope === "Shared depot tariff",
-          )
-          .map((s) => s.name)
-          .join(" & ");
-        return `<article class="workspace charger-card"><div class="station-top"><span class="station-icon">ϟ</span>${badge(c.status, c.status === "AVAILABLE" ? "✓ Healthy" : human(c.status))}</div><h2>${escapeHtml(c.name)}</h2><p class="footnote">${escapeHtml(c.charger_id)} · ${number(c.lat, "° N", 4)}, ${number(c.lon, "° E", 4)}</p><dl class="facts">${fact("Connector", c.connector_type)}${fact("Station power", number(c.available_kw, " kW", 0))}</dl><div class="port-summary"><div><strong>${c.free_ports}</strong>Free now</div><div><strong>${c.occupied_ports}</strong>Occupied</div><div><strong>${c.reserved_ports}</strong>Reserved now</div><div><strong>${c.port_count}</strong>Total ports</div></div><p class="eyebrow">CURRENT ELECTRICITY PRICE</p><p class="price">${money(c.current_price_per_kwh)} <small>INR / kWh</small></p><p class="footnote">${escapeHtml(c.tariff_scope)} · ${escapeHtml(c.timezone)}</p><div class="tariff-chart" role="img" aria-label="24 hour electricity prices; exact tariff windows in the table below">${c.hourly_prices.map((p) => `<div class="tariff-bar ${p.hour === hour ? "current" : ""}" style="height:${(p.price_per_kwh / max) * 100}%" title="${p.hour}:00 — INR ${p.price_per_kwh}/kWh"></div>`).join("")}</div><div class="chart-axis"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div><table class="tariff-table"><tbody>${c.tariffs.map((t) => `<tr><td>${escapeHtml(t.start_time)}–${escapeHtml(t.end_time)}${t.start_time > t.end_time ? " (+1 day)" : ""}</td><td>${money(t.price_per_kwh)} / kWh</td></tr>`).join("") || `<tr><td>All day · base rate</td><td>${money(c.price_per_kwh)} / kWh</td></tr>`}</tbody></table><p class="footnote">${escapeHtml(c.tariff_scope === "Shared depot tariff" ? `Shared by ${shared}. These stations use the same electricity schedule.` : "Explicit demo discount for Solar Canopy; the scheduler uses this same station-specific schedule.")}</p><h3 style="margin-top:22px">Reservation windows</h3>${active.map((r) => `<div class="reservation-window"><strong>Port ${r.port_number} · ${escapeHtml(r.reservation_id === "SIM-CONGESTION-RESERVATION" ? "Seeded congestion example" : dashboard.vehicles.find((v) => v.vin === r.vin)?.name || r.vin)}</strong><br>${formatTime(r.start_time)}–${formatTime(r.end_time)} IST · ${escapeHtml(human(r.status))}</div>`).join("") || '<p class="footnote">No active or upcoming reservations.</p>'}</article>`;
-      })
-      .join("") ||
-    '<div class="workspace empty">No chargers are available in this fleet.</div>';
-}
-function optionTradeoffs(option, options) {
-  const advantages = [],
-    disadvantages = [];
-  const alternatives = options.filter((o) => o !== option);
-  if (!alternatives.length)
-    return [
-      "The only evaluated feasible station.",
-      "No other station meets the current constraints.",
-    ];
-  const cheapest = Math.min(...options.map((o) => o.electricity_cost)),
-    fastest = Math.min(
-      ...options.map(
-        (o) => o.travel_minutes + o.wait_minutes + o.charging_minutes,
-      ),
-    ),
-    shortest = Math.min(...options.map((o) => o.travel_distance_km));
-  if (option.electricity_cost === cheapest) {
-    const delta =
-      Math.min(...alternatives.map((o) => o.electricity_cost)) -
-      option.electricity_cost;
-    advantages.push(
-      delta > 0
-        ? `Saves ${money(delta)} versus the next cheapest station.`
-        : "Tied for the lowest charging cost.",
-    );
-  }
-  if (
-    option.travel_minutes + option.wait_minutes + option.charging_minutes ===
-    fastest
-  )
-    advantages.push("Earliest charging completion of these stations.");
-  if (option.travel_distance_km === shortest)
-    advantages.push("Shortest journey to a charger.");
-  if (option.electricity_cost > cheapest)
-    disadvantages.push(
-      `${money(option.electricity_cost - cheapest)} more than the cheapest station.`,
-    );
-  if (option.travel_distance_km > shortest)
-    disadvantages.push(
-      `${number(option.travel_distance_km - shortest, " km")} farther than the nearest option.`,
-    );
-  if (option.wait_minutes > 0)
-    disadvantages.push(
-      `${number(option.wait_minutes, " min")} waiting before charging.`,
-    );
-  return [
-    advantages.join(" ") ||
-      `${number(option.deadline_margin_minutes, " min")} beyond the safety buffer.`,
-    disadvantages.slice(0, 2).join(" ") ||
-      "No measured cost or travel disadvantage among these options.",
-  ];
-}
-function renderPlans() {
-  const v = selected(),
-    plan = currentPlan();
-  byId("decision-title").textContent = v?.name || "Select a vehicle";
-  byId("decision-subtitle").textContent = v
-    ? `${labels[v.manager_readiness]} · ${number(v.soc_pct, "%")} battery · ${number(v.delivery_remaining_km, " km remaining")}`
-    : "Choose a vehicle from Overview or Vehicles.";
-  byId("decision-actions").innerHTML = v
-    ? plan?.status === "PROPOSED"
-      ? actionButton("replace", plan.plan_id, "Refresh proposal") +
-        actionButton("reject", plan.plan_id, "Reject proposal")
-      : !plan && v.manager_readiness === "NEEDS_CHARGING"
-        ? actionButton(
-            "compare",
-            v.vin,
-            dashboard.simulator.running
-              ? "Compare & pause"
-              : "Compare charging options",
-            true,
-          )
-        : ""
-    : "";
-  const options = plan?.evaluated_options || [];
-  const excluded =
-    noOptions?.vin === selectedVin && noOptions.run_id === dashboard.run_id
-      ? noOptions
-      : null;
-  byId("option-cards").innerHTML = options.length
-    ? options
-        .map((o, i) => {
-          const [advantage, disadvantage] = optionTradeoffs(o, options);
-          return `<article class="option-card ${i === 0 ? "recommended" : ""}">${i === 0 ? badge("NORMAL", "✓ Recommended among evaluated feasible options") : badge("neutral", `Alternative ${i} · comparison only`)}<h3>${escapeHtml(stationName(o.charger_id))}</h3><small>Port ${o.port_number} · ${number(o.allocated_power_kw, " kW", 0)} allocated</small><p class="price">${money(o.electricity_cost)} <small>INR estimated</small></p><dl class="facts">${fact("Travel to charger", `${number(o.travel_distance_km, " km")} · ${number(o.travel_minutes, " min")}`)}${fact("Waiting time", number(o.wait_minutes, " min"))}${fact("Charging duration", number(o.charging_minutes, " min"))}${fact("Target SoC", number(o.target_soc_pct, "%"))}${fact("Charge window (IST)", `${formatTime(o.start_time)}–${formatTime(o.end_time)}`)}${fact("Buffered deadline margin", number(o.deadline_margin_minutes, " min"))}</dl><p class="tradeoff"><strong>ADVANTAGE</strong>${escapeHtml(advantage)}</p><p class="tradeoff cons"><strong>TRADE-OFF</strong>${escapeHtml(disadvantage)}</p>${i === 0 ? (plan.status === "PROPOSED" ? actionButton("approve", plan.plan_id, "Approve this diversion →", true) : `<p class="comparison-only">${escapeHtml(human(plan.status))} · ${plan.status === "APPROVED" ? "Start to watch the diversion" : "Vehicle is charging"}</p>`) : '<p class="comparison-only">Comparison only · no alternative approval</p>'}</article>`;
-        })
-        .join("")
-    : `<div class="workspace empty" style="grid-column:1/-1">${escapeHtml(v ? (["BLOCKED", "EMERGENCY", "COMPLETE", "NO_DELIVERY"].includes(v.manager_readiness) ? v.explanation : v.manager_readiness === "NORMAL" ? "This delivery has sufficient energy. No charging decision is needed." : "Compare charging options to create a proposal for review.") : "Select a vehicle to begin.")}</div>`;
-  byId("decision-reasoning").innerHTML = plan
-    ? `<div class="reasoning"><h3>Why this recommendation?</h3><p>${escapeHtml(plan.reason)}</p><p>Calculated from the reviewed telemetry. Charging estimates include grid energy, taper, and the configured efficiency. Margin is after the 20-minute delivery safety buffer. ${options.length < 3 ? `Only ${options.length} distinct feasible station${options.length === 1 ? " is" : "s are"} available.` : "Three distinct feasible stations are shown."} Approval revalidates the reviewed option; changed conditions require a fresh review.</p>${plan.exclusions?.length ? `<h3>Why other stations were excluded</h3><ul class="exclusions">${plan.exclusions.map((e) => `<li><strong>${escapeHtml(stationName(e.charger_id))}:</strong> ${escapeHtml(e.reason)}</li>`).join("")}</ul>` : ""}<p>${plan.status === "APPROVED" ? "Next: press Start. The vehicle travels to its assigned charger, waits for its port window, charges, releases the port, then resumes the delivery." : "Algorithm-based explanation · no external AI agent."}</p></div>`
-    : excluded
-      ? `<div class="reasoning"><h3>No feasible charging option</h3><p>${escapeHtml(excluded.reason)}</p><ul class="exclusions">${(excluded.exclusions || []).map((e) => `<li><strong>${escapeHtml(stationName(e.charger_id))}:</strong> ${escapeHtml(e.reason)}</li>`).join("")}</ul></div>`
-      : "";
-  const expanded = new Set(
-    [...byId("plans-body").querySelectorAll("details[open]")].map(
-      (d) => d.dataset.plan,
-    ),
-  );
-  byId("plans-body").innerHTML =
-    dashboard.plans
-      .map((p) => {
-        const vehicle = dashboard.vehicles.find((v) => v.vin === p.vin);
-        const outcome =
-          p.status === "COMPLETED"
-            ? vehicle?.operating_state === "AT_CUSTOMER"
-              ? "Charged · port released · delivered"
-              : "Charging completed · port released; delivery continues"
-            : p.status === "CHARGING"
-              ? "At the assigned charger; energy increasing"
-              : p.status === "APPROVED"
-                ? "Reserved; awaiting or executing diversion"
-                : p.status === "PROPOSED"
-                  ? "Awaiting manager decision"
-                  : p.status === "CANCELLED"
-                    ? "Cancelled · reservation released"
-                    : "Rejected · no diversion";
-        return `<tr><td><strong>${escapeHtml(vehicle?.name || p.vin)}</strong><small>${escapeHtml(stationName(p.charger_id))} · port ${p.port_number}</small></td><td>${badge(p.status)}</td><td>${formatTime(p.start_time)}–${formatTime(p.end_time)} IST<small>Delivery deadline ${formatTime(p.delivery_deadline)}</small></td><td>${number(p.target_soc_pct, "%")}<small>${money(p.estimated_cost)} INR</small></td><td>${escapeHtml(outcome)}<br>${actionButton("view", p.vin, "View vehicle")}${["PROPOSED", "APPROVED", "CHARGING"].includes(p.status) ? actionButton("cancel", p.plan_id, "Cancel plan") : ""}<details data-plan="${escapeHtml(p.plan_id)}" ${expanded.has(p.plan_id) ? "open" : ""}><summary>Decision explanation</summary>${escapeHtml(p.reason)}</details></td></tr>`;
-      })
-      .join("") ||
-    '<tr><td colspan="5">No decisions yet. Select a vehicle needing energy, then compare charging options.</td></tr>';
+        .join("") || "<li>Available for reassignment.</li>"
+    }</ol><details><summary>Vehicle specifications</summary><dl class="facts">${fact("Usable battery", number(v.usable_capacity_kwh, " kWh"))}${fact("Connector", v.connector_type)}${fact("Charging limit", number(v.max_charge_power_kw, " kW"))}${fact("Consumption", number(v.consumption_kwh_per_km, " kWh/km", 2))}</dl></details>`;
 }
 
-// One camera and one SVG. Coordinates never move to separate station icons.
+function renderChargers() {
+  const clock = dashboard.simulator.simulated_time;
+  byId("charger-cards").innerHTML = dashboard.chargers
+    .map((c) => {
+      const active = c.reservations
+        .filter((r) =>
+          ["CONFIRMED", "VEHICLE_EN_ROUTE", "OCCUPIED"].includes(r.status),
+        )
+        .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+      const wait = c.next_available_at
+        ? Math.max(0, (new Date(c.next_available_at) - new Date(clock)) / 60000)
+        : null;
+      return `<article class="workspace charger-card"><div class="station-top"><span class="station-icon">ϟ</span>${badge(c.status, c.status === "AVAILABLE" ? "Online" : "Offline")}</div><h2>${escapeHtml(c.name)}</h2><p>${c.connector_type} · ${number(c.available_kw, " kW", 0)} per port</p><div class="port-summary"><div><strong>${c.occupied_ports}/${c.port_count}</strong>Charging</div><div><strong>${c.waiting_count || 0}</strong>Waiting</div><div><strong>${c.free_ports}</strong>Free</div></div><p class="price">${money(c.current_price_per_kwh)} <small>/ kWh</small></p><p>Next availability: <strong>${wait === null ? "Offline" : wait === 0 ? "Now" : number(wait, " min", 0)}</strong></p><div class="station-queue">${active.map((r) => `<button class="reservation-window" data-select="${escapeHtml(r.vin)}" data-select-tab="overview"><strong>Port ${r.port_number} · ${escapeHtml(dashboard.vehicles.find((v) => v.vin === r.vin)?.name || r.vin)}</strong><span>${human(r.status === "OCCUPIED" ? "CHARGING" : dashboard.vehicles.find((v) => v.vin === r.vin)?.operating_state === "WAITING_FOR_CHARGER" ? "WAITING_FOR_CHARGER" : "RESERVED")} · ${formatTime(r.start_time)}–${formatTime(r.end_time)}</span></button>`).join("") || '<p class="muted">No queue or bookings.</p>'}</div><details><summary>Price schedule · IST</summary><table class="tariff-table"><tbody>${c.tariffs.map((t) => `<tr><td>${t.start_time}–${t.end_time}</td><td>${money(t.price_per_kwh)} / kWh</td></tr>`).join("")}</tbody></table></details></article>`;
+    })
+    .join("");
+}
+
+function renderPlans() {
+  const v = selected(),
+    plan = currentPlan(),
+    options = plan?.evaluated_options || [];
+  byId("decision-title").textContent = v?.name || "Select a vehicle";
+  byId("decision-subtitle").textContent = v
+    ? `${number(v.soc_pct, "%")} battery · ${v.current_trip?.destination || "Timetable complete"}`
+    : "";
+  byId("decision-actions").innerHTML = v
+    ? plan?.status === "PROPOSED"
+      ? actionButton("replace", plan.plan_id, "Refresh") +
+        actionButton("reject", plan.plan_id, "Dismiss")
+      : !plan && ["NEEDS_CHARGING", "EMERGENCY"].includes(v.manager_readiness)
+        ? actionButton("compare", v.vin, "Compare chargers", true) +
+          actionButton("manager", v.vin, "Manager choices")
+        : ""
+    : "";
+  byId("option-cards").innerHTML = options.length
+    ? options
+        .map(
+          (o, i) =>
+            `<article class="option-card ${i === 0 ? "recommended" : ""}">${badge(i === 0 ? "NORMAL" : "neutral", i === 0 ? "Recommended" : "Alternative")}<h3>${escapeHtml(stationName(o.charger_id))}</h3><p class="price">${number(o.target_soc_pct, "%", 0)} <small>target charge</small></p><dl class="facts">${fact("Energy & cost", `${number(o.grid_energy_kwh, " kWh")} · ${money(o.electricity_cost)}`)}${fact("Average energy price", money(o.average_price_per_kwh) + " / kWh")}${fact("Travel / wait", `${number(o.travel_minutes, " min")} / ${number(o.wait_minutes, " min")}`)}${fact("Charging", number(o.charging_minutes, " min"))}${fact("Delivery ETA", formatTime(o.delivery_eta) + " IST")}${fact("Traffic buffer", "20 min protected")}${fact("Stops covered now", String(o.covered_stops ?? 0))}</dl><p class="short-reason">${i === 0 ? "Fits the timetable and preserves reserve." : escapeHtml(optionReason(o, options[0]))}</p>${i === 0 && plan.status === "PROPOSED" ? actionButton("approve", plan.plan_id, "Approve plan", true) : i === 0 ? badge(plan.status) : ""}</article>`,
+        )
+        .join("")
+    : `<div class="workspace empty" style="grid-column:1/-1">${escapeHtml(noOptions?.vin === v?.vin && noOptions?.run_id === dashboard.run_id ? noOptions.reason : v?.explanation || "Select a vehicle.")}</div>`;
+  const exclusions =
+    plan?.exclusions ||
+    (noOptions?.vin === v?.vin && noOptions?.run_id === dashboard.run_id
+      ? noOptions.exclusions
+      : []) ||
+    [];
+  byId("decision-reasoning").innerHTML =
+    (plan
+      ? `<details class="reasoning"><summary>Why this plan?</summary><p>${escapeHtml(plan.reason)}</p>${plan.follow_up_stops?.length ? `<h3>Later booked stops</h3><ul>${plan.follow_up_stops.map((s) => `<li>${escapeHtml(stationName(s.charger_id))} · ${formatTime(s.start_time)}–${formatTime(s.end_time)} IST · target ${number(s.target_soc_pct, "%")}</li>`).join("")}</ul>` : ""}</details>`
+      : "") +
+    (exclusions.length
+      ? `<details class="reasoning" ${!plan ? "open" : ""}><summary>Other stations</summary><ul>${exclusions.map((e) => `<li><b>${escapeHtml(stationName(e.charger_id))}:</b> ${escapeHtml(e.reason)}</li>`).join("")}</ul></details>`
+      : "") +
+    renderManagerChoices(v);
+  byId("plans-body").innerHTML =
+    dashboard.plans
+      .map(
+        (p) =>
+          `<tr><td><strong>${escapeHtml(dashboard.vehicles.find((v) => v.vin === p.vin)?.name || p.vin)}</strong><br>${escapeHtml(stationName(p.charger_id))}</td><td>${badge(p.status)}</td><td>${formatTime(p.start_time)}–${formatTime(p.end_time)} IST</td><td>${number(p.target_soc_pct, "%")} · ${money(p.estimated_cost)}</td><td>${p.status === "SCHEDULED" ? "Booked for a later leg" : p.status === "COMPLETED" ? "Charging finished; port released" : escapeHtml(human(p.status))}${["PROPOSED", "APPROVED", "CHARGING"].includes(p.status) ? actionButton(p.status === "PROPOSED" ? "reject" : "cancel", p.plan_id, p.status === "PROPOSED" ? "Dismiss" : "Cancel") : ""}</td></tr>`,
+      )
+      .join("") +
+      (dashboard.manager_decisions || [])
+        .map(
+          (d) =>
+            `<tr><td>${escapeHtml(dashboard.vehicles.find((v) => v.vin === d.vin)?.name || d.vin)}</td><td>${d.choice === "deliver-now" ? "Reserve exception" : "Delay accepted"}</td><td>${formatTime(d.created_at)} IST</td><td>${d.choice === "deliver-now" ? number(d.arrival_soc_pct, "% predicted arrival") : "Original deadline retained"}</td><td>${d.replacement ? "Reassigned to " + escapeHtml(d.replacement.name) + ". " : ""}${d.recovery_status ? "Recovery requested; not yet recovered." : ""}</td></tr>`,
+        )
+        .join("") || '<tr><td colspan="5">No decisions yet.</td></tr>';
+}
+
+function optionReason(o, best) {
+  const parts = [];
+  if (o.average_price_per_kwh > best.average_price_per_kwh)
+    parts.push(
+      `${money(o.average_price_per_kwh - best.average_price_per_kwh)}/kWh higher`,
+    );
+  if (o.wait_minutes > best.wait_minutes)
+    parts.push(
+      `${number(o.wait_minutes - best.wait_minutes, " min")} more waiting`,
+    );
+  if (o.travel_distance_km > best.travel_distance_km)
+    parts.push(
+      `${number(o.travel_distance_km - best.travel_distance_km, " km")} farther`,
+    );
+  return (
+    parts.join(" · ") ||
+    `Also feasible; ${number(o.target_soc_pct, "%")} charge at ${money(o.average_price_per_kwh)}/kWh.`
+  );
+}
+
+function renderManagerChoices(v) {
+  const d = decisionPreview;
+  if (!v || !d || d.vin !== v.vin || d.simulation_run_id !== dashboard.run_id)
+    return "";
+  if ((dashboard.manager_decisions || []).some((x) => x.trip_id === d.trip_id))
+    return "";
+  const delayed = d.delay_plan?.evaluated_options?.[0]?.delivery_eta;
+  return `<section class="workspace manager-choices"><h3>Manager decision</h3><div class="choice-grid"><article><h3>Charge & accept delay</h3><p>Keep the reserve. ${delayed ? "Delivery around " + formatTime(delayed) + " IST." : "No feasible charging continuation available."}</p>${d.delay_available ? actionButton("accept-delay", v.vin, "Accept delay & review charge", true) : ""}</article><article><h3>Deliver priority customer</h3><p>${number(d.arrival_soc_pct, "%")} predicted arrival battery. ${escapeHtml(d.reason)}</p>${d.replacement ? `<p>${d.remaining_deliveries} later stops → ${escapeHtml(d.replacement.name)} after package handover.</p>` : ""}${d.deliver_now_available ? actionButton("deliver-now", v.vin, "Approve reserve exception") : '<span class="badge neutral">Unavailable</span>'}</article></div></section>`;
+}
+
 function mapProjection(camera, width, height) {
   const cos = Math.cos((camera.lat * Math.PI) / 180),
     scale = Math.min(width - 60, height - 60) / camera.spanKm;
@@ -665,6 +572,10 @@ function fitViewport(vehicles, chargers, depots) {
       lat: v.current_trip.destination_lat,
       lon: v.current_trip.destination_lon,
     });
+  for (const van of vehicles)
+    for (const t of van.itinerary || [])
+      if (t.status !== "COMPLETED" && t.destination_lat != null)
+        nodes.push({ lat: t.destination_lat, lon: t.destination_lon });
   if (!nodes.length) return { lat: 12.9716, lon: 77.5946, spanKm: 25 };
   const lats = nodes.map((n) => n.lat),
     lons = nodes.map((n) => n.lon),
@@ -675,112 +586,133 @@ function fitViewport(vehicles, chargers, depots) {
     lon,
     spanKm: Math.max(
       15,
-      (Math.max(...lats) - Math.min(...lats)) * 111.195 * 1.2,
+      (Math.max(...lats) - Math.min(...lats)) * 111.195 * 1.25,
       (Math.max(...lons) - Math.min(...lons)) *
         111.195 *
         Math.cos((lat * Math.PI) / 180) *
-        1.2,
+        1.25,
     ),
   };
 }
 function drawMap(svg, vehicles, chargers, depots) {
   const width = Math.max(300, svg.clientWidth || 900),
-    height = Math.max(280, svg.clientHeight || 450);
+    height = Math.max(280, svg.clientHeight || 500);
   svg.setAttribute?.("viewBox", `0 0 ${width} ${height}`);
   if (!viewport) viewport = fitViewport(vehicles, chargers, depots);
   const { point, scale } = mapProjection(viewport, width, height),
     v = selected(),
     plan = currentPlan();
-  const coord = (lat, lon) => {
-    const p = point(lat, lon);
-    return `${p.x},${p.y}`;
-  };
-  const line = (a, b, kind, label) => {
+  const line = (a, b, kind) => {
     const p = point(a.lat, a.lon),
       q = point(b.lat, b.lon);
-    const mx = Math.max(20, Math.min(width - 130, (p.x + q.x) / 2)),
-      my = Math.max(30, Math.min(height - 30, (p.y + q.y) / 2));
-    return `<line class="map-route ${kind}" x1="${p.x}" y1="${p.y}" x2="${q.x}" y2="${q.y}"/>${label ? `<text class="map-label" x="${mx}" y="${my - 9}">${escapeHtml(label)}</text>` : ""}`;
+    return `<line class="map-route ${kind}" x1="${p.x}" y1="${p.y}" x2="${q.x}" y2="${q.y}"/>`;
   };
-  let routes = "",
-    destination = "";
-  if (v?.lat != null && v.current_trip?.destination_lat != null) {
+  let routes = "";
+  if (v?.current_trip?.destination_lat != null) {
     const target = {
       lat: v.current_trip.destination_lat,
       lon: v.current_trip.destination_lon,
     };
-    routes += line(
-      v,
-      target,
-      "delivery",
-      `${number(v.delivery_remaining_km, " km")} delivery`,
-    );
-    const p = point(target.lat, target.lon);
-    destination = `<g><circle cx="${p.x}" cy="${p.y}" r="7" fill="#f6f8f1" stroke="#7c916c" stroke-width="2"/><text class="map-label" x="${p.x + 11}" y="${p.y - 9}">${escapeHtml(v.current_trip.destination)}</text></g>`;
+    routes += line(v, target, "delivery");
+    let previous = target;
+    for (const t of (v.itinerary || []).filter(
+      (t) => t.status === "PLANNED" && t.trip_id !== v.current_trip.trip_id,
+    )) {
+      const next = { lat: t.destination_lat, lon: t.destination_lon };
+      routes += line(previous, next, "future");
+      previous = next;
+    }
     const c = chargers.find((c) => c.charger_id === plan?.charger_id);
     if (c) {
-      const remainingToStation = geographicDistance(v, c);
-      if (remainingToStation > 0.001)
-        routes += line(
-          v,
-          c,
-          plan.status === "PROPOSED" ? "proposed" : "approved",
-          `${number(remainingToStation, " km")} ${plan.status === "PROPOSED" ? "proposed" : "diversion"}`,
-        );
-      routes += line(c, target, "return", "");
+      routes += line(
+        v,
+        c,
+        plan.status === "PROPOSED" ? "proposed" : "approved",
+      );
+      routes += line(c, target, "return");
     }
   }
-  const depotMarkers = depots
+  const customers = new Map();
+  for (const van of vehicles)
+    for (const t of van.itinerary || []) {
+      if (
+        t.status === "COMPLETED" ||
+        t.destination_lat == null ||
+        t.destination === "Central Depot"
+      )
+        continue;
+      const k = `${t.destination_lat.toFixed(4)},${t.destination_lon.toFixed(4)}`;
+      if (!customers.get(k)?.selected)
+        customers.set(k, {
+          lat: t.destination_lat,
+          lon: t.destination_lon,
+          name: t.destination,
+          selected: van.vin === selectedVin,
+        });
+    }
+  const pins = [...customers.values()]
+    .map((c) => {
+      const p = point(c.lat, c.lon);
+      return `<g><title>${escapeHtml(c.name)}</title><path d="M${p.x} ${p.y - 7}l6 7l-6 7l-6-7Z" fill="${c.selected ? "#8554dc" : "#c5b4e8"}" stroke="white"/>${c.selected ? `<text class="map-label customer-label" text-anchor="${p.x > width * 0.6 ? "end" : "start"}" x="${p.x > width * 0.6 ? p.x - 9 : p.x + 9}" y="${p.y - 8}">${escapeHtml(c.name)}</text>` : ""}</g>`;
+    })
+    .join("");
+  const depotPins = depots
     .map((d) => {
       const p = point(d.lat, d.lon);
-      return `<g><title>${escapeHtml(d.name)}</title><path d="M${p.x},${p.y - 15}l15,15l-15,15l-15,-15Z" fill="#577a8c" stroke="white" stroke-width="2"/><text class="map-label" x="${p.x + 19}" y="${p.y + 18}">Depot</text></g>`;
+      return `<g><title>${escapeHtml(d.name)}</title><path d="M${p.x} ${p.y - 13}l13 13l-13 13l-13-13Z" fill="#335678" stroke="white" stroke-width="2"/><text class="map-label" x="${p.x + 17}" y="${p.y + 20}">Depot</text></g>`;
     })
     .join("");
-  const chargerMarkers = chargers
-    .map((c, i) => {
+  const stationPins = chargers
+    .map((c) => {
       const p = point(c.lat, c.lon);
-      return `<g class="map-pin" tabindex="0" role="button" data-station="${escapeHtml(c.charger_id)}" aria-label="${escapeHtml(c.name)}: ${escapeHtml(c.status)}"><title>${escapeHtml(c.name)} · ${c.free_ports} free ports</title><rect x="${p.x - 8}" y="${p.y - 8}" width="16" height="16" rx="3" fill="${c.status === "FAULTY" ? "#b96451" : "#b38b45"}" stroke="white" stroke-width="2"/><text class="map-label" x="${p.x + 11}" y="${p.y - 10}">C${i + 1}</text></g>`;
+      return `<g class="map-pin" tabindex="0" role="button" data-station="${escapeHtml(c.charger_id)}" aria-label="${escapeHtml(c.name)}"><rect x="${p.x - 12}" y="${p.y - 15}" width="24" height="30" rx="6" fill="${c.status === "FAULTY" ? "#d85658" : "#efb444"}" stroke="white" stroke-width="2"/><text x="${p.x}" y="${p.y + 5}" text-anchor="middle" fill="#593800" font-size="20">ϟ</text><text class="map-label" text-anchor="${p.x > width * 0.6 ? "end" : "start"}" x="${p.x > width * 0.6 ? p.x - 17 : p.x + 17}" y="${p.y - 14}">${escapeHtml(c.name)}</text><text class="map-label station-count" text-anchor="${p.x > width * 0.6 ? "end" : "start"}" x="${p.x > width * 0.6 ? p.x - 17 : p.x + 17}" y="${p.y + 2}">${c.occupied_ports}/${c.port_count} charging · ${c.waiting_count || 0} waiting</text></g>`;
     })
     .join("");
-  const clusters = [];
-  for (const vehicle of vehicles.filter(
-    (n) => n.lat != null && n.vin !== selectedVin,
-  )) {
-    const p = point(vehicle.lat, vehicle.lon),
-      cluster = clusters.find((c) => Math.hypot(c.x - p.x, c.y - p.y) < 17);
-    if (cluster) cluster.members.push(vehicle);
-    else clusters.push({ ...p, members: [vehicle] });
-  }
-  let markers = clusters
-    .map(
-      (c) =>
-        `<g class="map-pin" tabindex="0" role="button" data-select="${escapeHtml(c.members[0].vin)}" aria-label="${escapeHtml(c.members.map((v) => v.name).join(", "))}"><title>${escapeHtml(c.members.map((v) => v.name).join(", "))}</title><circle cx="${c.x}" cy="${c.y}" r="${c.members.length > 1 ? 12 : 6}" fill="#759e7a" stroke="white" stroke-width="2"/>${c.members.length > 1 ? `<text class="marker-code" x="${c.x}" y="${c.y}">${c.members.length}</text>` : ""}</g>`,
-    )
+  const placed = [];
+  const sorted = [...vehicles.filter((v) => v.lat != null)].sort(
+    (a, b) => (a.vin === selectedVin ? 1 : 0) - (b.vin === selectedVin ? 1 : 0),
+  );
+  const markers = sorted
+    .map((van) => {
+      const p = point(van.lat, van.lon);
+      let x = p.x,
+        y = p.y;
+      const atStation = chargers.some((c) => geographicDistance(van, c) < 0.05);
+      if (atStation) y += 35;
+      for (
+        let n = 0;
+        n < 180 &&
+        placed.some((q) => Math.abs(q.x - x) < 31 && Math.abs(q.y - y) < 23);
+        n++
+      ) {
+        const radius = 23 + Math.floor(n / 8) * 19,
+          angle = (n * Math.PI) / 4;
+        x = p.x + Math.cos(angle) * radius;
+        y = p.y + Math.sin(angle) * radius + (atStation ? 35 : 0);
+      }
+      placed.push({ x, y });
+      const charging = van.operating_state === "CHARGING",
+        waiting = van.operating_state === "WAITING_FOR_CHARGER",
+        emergency = ["STRANDED", "RECOVERY_REQUIRED"].includes(
+          van.operating_state,
+        ),
+        focus = van.vin === selectedVin;
+      const fill = charging
+        ? "#17a66a"
+        : waiting
+          ? "#8a939e"
+          : emergency
+            ? "#df5a62"
+            : van.operating_state === "AWAITING_DECISION"
+              ? "#ee964b"
+              : "#338de0";
+      return `<g class="map-pin vehicle-pin ${charging ? "charging-glow" : ""}" tabindex="0" role="button" data-select="${escapeHtml(van.vin)}" aria-label="${escapeHtml(van.name + " " + human(van.operating_state))}"><title>${escapeHtml(van.name)} · ${human(van.operating_state)} · ${number(van.soc_pct, "%")}</title>${Math.hypot(x - p.x, y - p.y) > 2 ? `<line x1="${p.x}" y1="${p.y}" x2="${x}" y2="${y}" stroke="${fill}" stroke-width="1" opacity=".45"/><circle cx="${p.x}" cy="${p.y}" r="2" fill="${fill}"/>` : ""}${focus ? `<rect x="${x - 19}" y="${y - 14}" width="38" height="28" rx="9" fill="none" stroke="#183d61" stroke-width="2"/>` : ""}<rect class="vehicle-body" x="${x - 14}" y="${y - 9}" width="28" height="18" rx="6" fill="${fill}" stroke="white" stroke-width="2"/><rect x="${x - 9}" y="${y - 12}" width="5" height="3" rx="1" fill="#354052"/><rect x="${x + 4}" y="${y + 9}" width="5" height="3" rx="1" fill="#354052"/><text class="marker-code" x="${x}" y="${y}">${escapeHtml(van.vin.slice(-2))}</text></g>`;
+    })
     .join("");
-  if (v?.lat != null) {
-    const p = point(v.lat, v.lon);
-    markers += `<g class="map-pin" tabindex="0" role="button" data-select="${escapeHtml(v.vin)}" aria-label="Selected ${escapeHtml(v.name)}"><title>${escapeHtml(v.name)} · ${number(v.soc_pct, "%")} · ${escapeHtml(labels[v.manager_readiness])}</title><circle class="map-halo" cx="${p.x}" cy="${p.y}" r="23"/><circle cx="${p.x}" cy="${p.y}" r="10" fill="#245b45" stroke="white" stroke-width="2"/><text class="marker-code" x="${p.x}" y="${p.y}">${escapeHtml(v.vin.slice(-2))}</text></g>`;
-  }
-  const clusterLabels = clusters
-    .filter(
-      (c) =>
-        c.members.length > 1 &&
-        v?.lat != null &&
-        Math.hypot(c.x - point(v.lat, v.lon).x, c.y - point(v.lat, v.lon).y) <
-          22,
-    )
-    .map(
-      (c) =>
-        `<text class="map-label" x="${c.x + 26}" y="${c.y - 20}">+${c.members.length} vehicles here</text>`,
-    )
-    .join("");
-  const raw = 100 / scale,
-    base = 10 ** Math.floor(Math.log10(raw)),
-    distance = raw / base >= 5 ? 5 * base : raw / base >= 2 ? 2 * base : base,
-    bar = distance * scale;
-  svg.innerHTML = `<defs><pattern id="grid" width="45" height="45" patternUnits="userSpaceOnUse"><path d="M45 0H0V45" fill="none" stroke="#dfe8dc" stroke-width=".6"/></pattern></defs><rect width="${width}" height="${height}" fill="#f1f5ee"/><rect width="${width}" height="${height}" fill="url(#grid)"/><text class="map-text" x="17" y="22">BENGALURU · DEMO REGION</text><path d="M${width - 25} 39V18l-4 7m4-7l4 7" fill="none" stroke="#7b8d75"/><text class="map-text" x="${width - 29}" y="53">N</text>${routes}${destination}${depotMarkers}${markers}${chargerMarkers}${clusterLabels}<rect x="10" y="${height - 35}" width="${bar + 25}" height="31" rx="4" fill="#f1f5ee" fill-opacity=".92"/><path d="M20 ${height - 16}v5h${bar}v-5" fill="none" stroke="#657e59" stroke-width="1.4"/><text class="map-text" x="20" y="${height - 22}">${number(distance, " km", distance < 1 ? 1 : 0)}</text>`;
-  return coord;
+  const bar = 5 * scale;
+  svg.innerHTML = `<defs><pattern id="grid" width="46" height="46" patternUnits="userSpaceOnUse"><path d="M46 0H0V46" fill="none" stroke="#d6e5ee" stroke-width=".6"/></pattern></defs><rect width="${width}" height="${height}" fill="#f1f7fc"/><rect width="${width}" height="${height}" fill="url(#grid)"/><text class="map-text" x="16" y="22">BENGALURU · SIMULATION</text>${routes}${pins}${depotPins}${stationPins}${markers}<path d="M18 ${height - 20}v5h${bar}v-5" fill="none" stroke="#526b81"/><text class="map-text" x="18" y="${height - 27}">5 km</text>`;
 }
+
 function renderMap() {
   if (!dashboard) return;
   byId("map-empty").hidden =
@@ -793,8 +725,8 @@ function renderMap() {
   );
   const v = selected();
   byId("map-selection").innerHTML = v
-    ? `${focusBadge(v)} <strong>${escapeHtml(v.name)}</strong> · ${number(v.soc_pct, "%")} · ${number(v.delivery_remaining_km, " km delivery remaining")} · ${escapeHtml(labels[v.manager_readiness])}<br><span class="muted">${dashboard.chargers.map((c, i) => `C${i + 1} ${escapeHtml(c.name)}`).join(" · ")}</span>`
-    : "Select a vehicle from the queue.";
+    ? `<strong>${escapeHtml(v.name)}</strong> · ${human(v.operating_state)} · ${number(v.soc_pct, "%")} · ${number(v.delivery_remaining_km, " km to next stop")}`
+    : "Select a vehicle.";
 }
 async function perform(operation, message) {
   if (busy) return;
@@ -835,9 +767,14 @@ async function compare(vin, replacePlanId) {
         `/charging/recommendations/${encodeURIComponent(vin)}`,
       );
       noOptions = { ...evaluation, run_id: dashboard.run_id };
-      throw error;
+      decisionPreview = {
+        ...(await request(
+          `/charging/manager-decisions/${encodeURIComponent(vin)}`,
+        )),
+        vin,
+      };
     }
-  }, "Options ready. Simulation paused for review; approval does not start it.");
+  }, "Review ready. Simulation paused.");
 }
 byId("seed-button").addEventListener("click", () => {
   const count = Number(byId("vehicle-count").value),
@@ -853,7 +790,7 @@ byId("seed-button").addEventListener("click", () => {
     });
     selectedVin = null;
     viewport = null;
-  }, "Demo loaded and paused. Its previous decisions were cleared; other fleet records were preserved.");
+  }, "Scenario loaded · paused.");
 });
 byId("start-button").addEventListener("click", () =>
   perform(
@@ -868,7 +805,7 @@ byId("start-button").addEventListener("click", () =>
 byId("stop-button").addEventListener("click", () =>
   perform(
     () => request("/simulator/stop", { method: "POST" }),
-    "Paused. The simulation clock and telemetry are frozen until Start.",
+    "Simulation paused.",
   ),
 );
 byId("refresh-button").addEventListener("click", () => refresh(true));
@@ -929,6 +866,52 @@ document.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-action]");
   if (!button || busy || !connected) return;
   const { action, id } = button.dataset;
+  if (action === "manager") {
+    selectedVin = id;
+    switchTab("plans");
+    await perform(async () => {
+      if (dashboard.simulator.running)
+        await request("/simulator/stop", { method: "POST" });
+      decisionPreview = {
+        ...(await request(
+          `/charging/manager-decisions/${encodeURIComponent(id)}`,
+        )),
+        vin: id,
+      };
+    }, "Review the consequences before choosing.");
+    return;
+  }
+  if (["accept-delay", "deliver-now"].includes(action)) {
+    const d = decisionPreview;
+    if (!d || d.vin !== id) return;
+    await perform(
+      async () => {
+        if (dashboard.simulator.running)
+          await request("/simulator/stop", { method: "POST" });
+        await request(
+          `/charging/manager-decisions/${encodeURIComponent(id)}/${action}`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              simulation_run_id: d.simulation_run_id,
+              trip_id: d.trip_id,
+              telemetry_sequence: d.telemetry_sequence,
+            }),
+          },
+        );
+        decisionPreview = null;
+        noOptions = null;
+        if (action === "accept-delay")
+          await request(`/charging/plans/${encodeURIComponent(id)}`, {
+            method: "POST",
+          });
+      },
+      action === "accept-delay"
+        ? "Delay accepted. Review the charging plan."
+        : "Reserve exception approved. Recovery requested.",
+    );
+    return;
+  }
   if (action === "view") {
     selectVehicle(id, "plans");
     return;
@@ -999,3 +982,17 @@ refresh();
 setInterval(() => {
   if (!busy) refresh();
 }, 3000);
+
+byId("fleet-map").addEventListener(
+  "wheel",
+  (event) => {
+    if (!viewport) return;
+    event.preventDefault();
+    viewport.spanKm = Math.max(
+      1,
+      Math.min(150, viewport.spanKm * (event.deltaY > 0 ? 1.15 : 1 / 1.15)),
+    );
+    renderMap();
+  },
+  { passive: false },
+);

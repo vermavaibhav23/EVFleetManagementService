@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     reserve_range_km: float = Field(default=15, ge=0, le=200)
     charge_soon_margin_km: float = Field(default=15, ge=0, le=200)
     charging_deadline_buffer_minutes: int = Field(default=20, ge=0, le=240)
-    scheduler_slot_minutes: int = Field(default=15, ge=5, le=60)
+    scheduler_slot_minutes: int = Field(default=1, ge=1, le=60)
     charging_efficiency: float = Field(default=0.92, gt=0, le=1)
 
     @property

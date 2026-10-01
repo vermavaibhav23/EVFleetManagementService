@@ -1498,3 +1498,336 @@ footer .muted {
     transition: none !important;
   }
 }
+
+/* Compact operations workspace */
+.topbar {
+  min-height: 62px;
+  gap: 20px;
+  padding: 0 26px;
+}
+.tab {
+  padding: 21px 15px 18px;
+}
+.page-heading {
+  padding: 12px 0;
+  margin: 0 0 12px;
+  align-items: center;
+}
+h1 {
+  font-size: 22px;
+  letter-spacing: -0.4px;
+  margin: 0;
+}
+.scenario-guide {
+  padding: 10px 14px;
+  gap: 12px;
+  align-items: center;
+  min-height: 0;
+  background: #edf3ff;
+  border-color: #dbe6fb;
+  margin-bottom: 16px;
+}
+.scenario-guide button {
+  margin-left: auto;
+  padding: 6px 10px;
+}
+.scenario-guide p {
+  margin: 0;
+}
+.control-band {
+  padding: 14px 18px;
+  gap: 12px;
+}
+.clock {
+  font-size: 12px;
+}
+.overview-grid {
+  grid-template-columns: 220px minmax(400px, 1fr) 270px;
+  gap: 16px;
+}
+.map-shell {
+  height: 520px;
+}
+.map-shell svg {
+  height: 100%;
+  width: 100%;
+}
+.map-workspace {
+  padding: 18px;
+}
+.detail-panel {
+  padding: 18px;
+}
+.detail-body {
+  padding-top: 14px;
+}
+.detail-id,
+.alert-section {
+  display: none;
+}
+.detail-panel button {
+  margin-top: 8px;
+  width: 100%;
+}
+.status-row {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.facts {
+  font-size: 12px;
+}
+.short-reason {
+  font-size: 12px;
+  color: #5a6c79;
+  line-height: 1.6;
+  margin: 12px 0;
+}
+.metrics {
+  margin-bottom: 16px;
+}
+.metric {
+  padding: 16px;
+}
+.metric strong {
+  font-size: 27px;
+}
+.vehicle-card {
+  padding: 11px;
+}
+.attention-list {
+  max-height: 560px;
+}
+.map-legend {
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.key.driving {
+  background: #338de0;
+}
+.key.charging {
+  background: #17a66a;
+}
+.key.waiting {
+  background: #8a939e;
+}
+.map-route.future {
+  stroke: #9474c9;
+  opacity: 0.28;
+  stroke-dasharray: 4 7;
+  stroke-width: 2;
+}
+.map-label {
+  paint-order: stroke;
+  stroke: #f1f7fc;
+  stroke-width: 4;
+  stroke-linejoin: round;
+  fill: #2c4865;
+  font-size: 11px;
+}
+.station-count {
+  font-size: 10px;
+  fill: #65758a;
+}
+.customer-label {
+  fill: #7951b3;
+  font-size: 10px;
+}
+.vehicle-body {
+  filter: drop-shadow(0 2px 2px #213a5520);
+}
+.charging-glow .vehicle-body {
+  animation: chargePulse 1.5s ease-in-out infinite;
+}
+.badge.WAITING_FOR_CHARGER {
+  color: #535e6b;
+  background: #e5e8ec;
+}
+.badge.CHARGING {
+  background: #dcf8e9;
+  color: #087a46;
+}
+.badge.AWAITING_DECISION {
+  background: #fff0dc;
+  color: #9a560c;
+}
+.badge.RECOVERY_REQUIRED {
+  background: #ffe0e4;
+  color: #ac3445;
+}
+.manager-choices {
+  margin: 16px 0;
+  padding: 22px;
+}
+.choice-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  margin-top: 16px;
+}
+.choice-grid article {
+  padding: 16px;
+  border: 1px solid #dce5ee;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+.choice-grid p {
+  font-size: 13px;
+}
+.reasoning {
+  padding: 16px;
+  margin: 12px 0;
+}
+.reasoning p,
+.reasoning li {
+  font-size: 13px;
+}
+.reasoning summary,
+details summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 5px 0;
+}
+.detail-body details {
+  margin-top: 15px;
+}
+.reservation-window {
+  display: block;
+  text-align: left;
+  width: 100%;
+  border: 0;
+  border-left: 3px solid #83b6da;
+  border-radius: 4px;
+  padding: 10px;
+  background: #f1f6fb;
+  margin-top: 8px;
+}
+.reservation-window span {
+  display: block;
+  font-size: 11px;
+  margin-top: 6px;
+  color: #627888;
+}
+.port-summary {
+  grid-template-columns: repeat(3, 1fr);
+}
+.option-card .price {
+  margin: 16px 0;
+}
+.option-card .facts {
+  font-size: 13px;
+}
+.system-state {
+  margin-left: auto;
+}
+.charger-card details {
+  margin-top: 22px;
+}
+@keyframes chargePulse {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 2px #17a66a80);
+  }
+  50% {
+    filter: drop-shadow(0 0 8px #17d787);
+    fill: #24c77d;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .charging-glow .vehicle-body {
+    animation: none;
+    filter: drop-shadow(0 0 5px #17a66a);
+  }
+}
+@media (max-width: 1200px) {
+  .overview-grid {
+    grid-template-columns: 200px minmax(350px, 1fr);
+  }
+  .detail-panel {
+    grid-column: 1/-1;
+  }
+  .map-shell {
+    height: 500px;
+  }
+  .detail-panel .facts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .detail-panel .battery-readout {
+    float: none;
+  }
+}
+@media (max-width: 760px) {
+  .topbar {
+    padding: 0 10px;
+    gap: 0;
+    flex-wrap: wrap;
+  }
+  .tabs {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .tab {
+    font-size: 12px;
+    padding: 17px 8px;
+  }
+  .system-state {
+    display: none;
+  }
+  .overview-grid {
+    display: flex;
+    flex-direction: column;
+  }
+  .map-workspace {
+    order: 0;
+  }
+  .detail-panel {
+    order: 1;
+  }
+  .queue {
+    order: 2;
+  }
+  .scenario-guide .muted {
+    display: none;
+  }
+  .scenario-guide {
+    flex-wrap: wrap;
+  }
+  .control-band {
+    gap: 8px;
+  }
+  .map-shell {
+    height: 400px;
+  }
+  .choice-grid {
+    grid-template-columns: 1fr;
+  }
+  .attention-list {
+    max-height: 350px;
+  }
+  .map-legend {
+    font-size: 10px;
+  }
+  .page-heading {
+    margin: 0 0 8px;
+  }
+  .metrics {
+    gap: 7px;
+  }
+  .metric {
+    padding: 10px;
+  }
+  .metric strong {
+    font-size: 22px;
+  }
+  .metric-icon {
+    display: none;
+  }
+  .clock {
+    margin-left: 0;
+  }
+  .option-grid {
+    grid-template-columns: 1fr;
+  }
+}

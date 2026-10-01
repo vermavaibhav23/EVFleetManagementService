@@ -45,9 +45,17 @@ class CandidateCharger(BaseModel):
     travel_minutes: float = 0
     target_soc_pct: float = 0
     remaining_delivery_km: float = 0
+    grid_energy_kwh: float = 0
+    average_price_per_kwh: float = 0
+    arrival_soc_pct: float = 0
+    delivery_eta: AwareDatetime | None = None
+    minimum_soc_pct: float = 0
+    covered_stops: int = 0
+    follow_up_stops: list[dict] = Field(default_factory=list)
 
 
 class ChargingPlanStatus(StrEnum):
+    SCHEDULED = "SCHEDULED"
     PROPOSED = "PROPOSED"
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
@@ -81,6 +89,10 @@ class ChargingPlan(BaseModel):
     remaining_delivery_km: float = 0
     grid_energy_kwh: float = 0
     average_price_per_kwh: float = 0
+    minimum_soc_pct: float = 0
+    covered_stops: int = 0
+    follow_up_stops: list[dict] = Field(default_factory=list)
+    accepted_delay: bool = False
     alternatives: list[CandidateCharger] = Field(default_factory=list)
     evaluated_options: list[CandidateCharger] = Field(default_factory=list)
     exclusions: list[dict[str, str]] = Field(default_factory=list)

@@ -4,16 +4,12 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#103d36" />
-    <title>Fleetwise · EV Fleet Operations</title>
-    <link rel="stylesheet" href="/static/styles.css?v=manager-1" />
+    <title>EV Fleet</title>
+    <link rel="stylesheet" href="/static/styles.css?v=timetable-2" />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to fleet workspace</a>
     <header class="topbar">
-      <a class="brand" href="/portal" aria-label="Fleetwise home"
-        ><span class="brand-mark">ϟ</span
-        ><span>fleetwise<span class="brand-sub">EV OPERATIONS</span></span></a
-      >
       <nav aria-label="Main navigation" class="tabs">
         <button data-tab="overview" class="tab active" aria-current="page">
           Overview
@@ -28,22 +24,26 @@
     </header>
     <main id="main">
       <section class="control-band" aria-label="Global demo controls">
-        <span class="demo-label">DEMO STUDIO</span>
         <label
           >Scenario<select id="scenario">
-            <option value="LOW_BATTERY_BEFORE_TRIP">
-              Low battery before delivery
-            </option>
-            <option value="CHARGER_CONGESTION">Charger congestion</option>
-            <option value="CHARGER_FAILURE">Charger failure</option>
-            <option value="UNEXPECTED_LONG_TRIP">
-              Unexpected long delivery
-            </option>
-            <option value="BATTERY_OVERHEATING">Battery overheating</option>
-            <option value="UNREACHABLE_CHARGER">
-              Unreachable charger emergency
-            </option>
-            <option value="NORMAL_DAY">Normal day</option>
+            <optgroup label="Normal Operations">
+              <option value="NORMAL_DAY">Normal Operations</option>
+            </optgroup>
+            <optgroup label="Charger Scenarios">
+              <option value="CHARGER_CONGESTION">Busy Chargers</option>
+              <option value="CHARGER_FAILURE">Charger Offline</option>
+            </optgroup>
+            <optgroup label="Non-final Deliveries">
+              <option value="NONFINAL_RELAXED">Time to Charge Ahead</option>
+              <option value="NONFINAL_TIGHT">Tight Next Deadline</option>
+              <option value="NONFINAL_PRIORITY">Priority Delivery</option>
+              <option value="NONFINAL_CONFLICT">Timetable Conflict</option>
+            </optgroup>
+            <optgroup label="Final Delivery">
+              <option value="FINAL_RELAXED">Time to Top Up</option>
+              <option value="FINAL_TIGHT">Deadline First</option>
+              <option value="FINAL_PRIORITY">Priority Final Stop</option>
+            </optgroup>
           </select></label
         >
         <label
@@ -63,11 +63,7 @@
       <div id="message" class="message" role="status" aria-live="polite"></div>
       <section class="page-heading">
         <div>
-          <p class="eyebrow" id="page-eyebrow">FLEET OPERATIONS / OVERVIEW</p>
-          <h1 id="page-title">Keep every delivery moving.</h1>
-          <p id="page-description">
-            A clear view of your fleet, and the next decision that matters.
-          </p>
+          <h1 id="page-title">Overview</h1>
         </div>
         <button id="refresh-button" class="subtle">↻ Refresh</button>
       </section>
@@ -82,7 +78,6 @@
           <section class="workspace queue">
             <div class="section-heading">
               <div>
-                <p class="eyebrow">NEXT ACTIONS</p>
                 <h2>
                   Attention queue
                   <span id="attention-count" class="count"></span>
@@ -116,19 +111,12 @@
           <section class="workspace map-workspace">
             <div class="section-heading">
               <div>
-                <p class="eyebrow">LIVE POSITION</p>
                 <h2>Fleet map</h2>
               </div>
               <span class="badge neutral">Straight-line demo</span>
             </div>
             <div class="map-tools">
-              <button data-map="fit">Fit fleet</button
-              ><button data-map="vehicle">Focus selected</button
-              ><button data-map="depot">Focus depot</button>
-              <div class="zoom-tools">
-                <button data-map="in" aria-label="Zoom in">+</button
-                ><button data-map="out" aria-label="Zoom out">−</button>
-              </div>
+              <button data-map="fit">Fit fleet</button>
             </div>
             <div class="map-shell">
               <svg
@@ -143,7 +131,9 @@
             </div>
             <div id="map-selection" class="map-selection"></div>
             <div class="map-legend">
-              <span><i class="key vehicle"></i>Vehicle</span
+              <span><i class="key driving"></i>Driving</span
+              ><span><i class="key charging"></i>Charging</span
+              ><span><i class="key waiting"></i>Waiting</span
               ><span><i class="key depot"></i>Depot</span
               ><span><i class="key charger"></i>Charger</span
               ><span><i class="key destination"></i>Customer</span
@@ -152,9 +142,8 @@
               ><span><i class="line-key approved"></i>Approved</span>
             </div>
             <p class="footnote">
-              True coordinates · north up · routes are geodesic distances, not
-              roads. Cluster counts share a location; zoom or use the queue to
-              select a vehicle.
+              Straight-line routes · drag to pan, scroll to zoom · offset
+              markers point to their actual location.
             </p>
           </section>
           <aside
@@ -168,7 +157,6 @@
         <section class="workspace alert-section">
           <div class="section-heading">
             <div>
-              <p class="eyebrow">WHAT NEEDS YOUR ATTENTION</p>
               <h2>Alerts &amp; next steps</h2>
             </div>
           </div>
@@ -195,17 +183,11 @@
         </div>
       </section>
       <section id="chargers-panel" data-panel="chargers" hidden>
-        <p class="section-note">
-          Port counts use the simulation clock. Future reservations are listed
-          separately. Prices are the same tariffs used to calculate charging
-          recommendations.
-        </p>
         <div id="charger-cards" class="charger-grid"></div>
       </section>
       <section id="plans-panel" data-panel="plans" hidden>
         <div class="workspace decision-header">
           <div>
-            <p class="eyebrow">SELECTED VEHICLE</p>
             <h2 id="decision-title">Select a vehicle</h2>
             <p id="decision-subtitle"></p>
           </div>
@@ -216,15 +198,11 @@
         <section class="workspace history">
           <div class="section-heading">
             <div>
-              <p class="eyebrow">DECISION LOG</p>
               <h2>Plans &amp; outcomes</h2>
             </div>
             <span class="badge neutral">Current demo run</span>
           </div>
-          <p class="section-note">
-            Saved across page reloads. Loading or resetting a demo clears its
-            decision history. Other fleet records are preserved.
-          </p>
+
           <div class="table-wrap">
             <table>
               <thead>
@@ -242,10 +220,10 @@
         </section>
       </section>
       <footer>
-        <span>Fleetwise <span class="muted">/ EV fleet management</span></span
+        <span>EV Fleet</span
         ><span id="freshness">Waiting for first snapshot</span>
       </footer>
     </main>
-    <script src="/static/app.js?v=manager-1"></script>
+    <script src="/static/app.js?v=timetable-2"></script>
   </body>
 </html>

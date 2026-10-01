@@ -4,9 +4,11 @@ Hackathon demonstration of a connected EV fleet platform. The service converts l
 
 ## Manager portal
 
-Open `/portal` for the four-tab Fleetwise manager interface: **Overview**, **Vehicles**, **Chargers**, and **Plans & Decisions**. Start with **Low battery before delivery**, **10 vehicles**, and **Load / reset**. Review Van 001, compare distinct charging stations, approve the recommendation, then press **Start** to watch the complete diversion-to-delivery journey.
+Open `/portal` for **Overview**, **Vehicles**, **Chargers**, and **Plans & Decisions**. Choose a grouped **Scenario**, load 10 vehicles, review Van 001 and approve the charging plan or manager decision. Every load starts paused at current IST.
 
-All tabs use one coherent operational snapshot. The single map keeps station coordinates fixed; charger prices come from scheduler tariffs; three connected stored trips distinguish the active delivery from later schedule-only legs. Seven paused presets include a deterministic unreachable-charger emergency. Alternative approvals remain intentionally comparison-only. See [the manager demonstration guide](docs/manager-demo.md) for scenarios, limits, and verification commands. The older audit below remains historical context.
+Ten scenarios are arranged into four compact groups. Non-final cases execute a connected six-stop timetable, including later reserved charging sessions. The planner charges toward full within the protected departure window, preserves reserve by default, and checks continuation through later deliveries. Priority cases offer an explicit reserve exception with recovery requested and feasible package handover/reassignment, or accepting a charging delay while retaining original deadlines.
+
+The city map shows fixed, separated stations, distributed customers, individually selectable cars, green charging pulses and gray waiting vehicles. Port occupancy and queues come from actual simulation sessions. See [the demonstration guide](docs/manager-demo.md) for the full scenario table and limits.
 
 ## Stage 2 capabilities
 
@@ -18,9 +20,9 @@ All tabs use one coherent operational snapshot. The single map keeps station coo
 - Separate battery-health flags for temperature, state of health, and diagnostic trouble codes.
 - Deduplicated `CRITICAL` and `CHARGE_SOON` alerts with an operational lifecycle.
 - Charger selection that checks connector compatibility, reachability, port reservations, waiting time, tariffs, charging duration, and the next departure deadline.
-- Proposed-plan approval that atomically creates a charger-port reservation.
+- Serialized proposed-plan approval that revalidates and reserves current and later charging slots.
 - Deterministic simulator with realistic battery decrease while driving and increase while charging.
-- Seven reproducible demo scenarios and an accelerated simulation clock.
+- Ten grouped demo scenarios and an accelerated simulation clock.
 - Manual fleet portal at `/portal` and interactive OpenAPI documentation at `/docs`.
 
 ## Architecture
@@ -71,8 +73,8 @@ Open:
 ## Fastest manual demo
 
 1. Open `/portal`.
-2. Select **Low battery before delivery** and load 10 vehicles.
-3. Van 001 appears as **Charging required**; click **Compare charging options**.
+2. Select **Time to Charge Ahead** and load 10 vehicles.
+3. Van 001 appears as **Charging required**; click **Review options**.
 4. Review the charger, charging window, target SoC, cost, and explanation.
 5. Approve the plan. This creates a confirmed port reservation.
 6. Start the simulator. One real second advances one simulated minute.
@@ -82,14 +84,7 @@ Open:
 10. The delivery resumes from the charger (`RESUMING_TRIP`) and ends at `AT_CUSTOMER`.
 11. Stop freezes all telemetry; reseeding automatically stops and resets the disposable SIM fleet.
 
-Other scenarios:
-
-- `CHARGER_CONGESTION`: the cheapest charger has an existing reservation.
-- `CHARGER_FAILURE`: one charger is unavailable.
-- `UNEXPECTED_LONG_TRIP`: an added long delivery creates a sudden energy deficit.
-- `BATTERY_OVERHEATING`: readiness and battery health are shown independently.
-- `NORMAL_DAY`: vehicles begin with comfortable range margins.
-- `UNREACHABLE_CHARGER`: a remote vehicle has no reachable healthy compatible charger and stays stranded.
+Scenario groups: **Normal Operations**, **Charger Scenarios** (Busy Chargers / Charger Offline), **Non-final Deliveries** (Time to Charge Ahead / Tight Next Deadline / Priority Delivery / Timetable Conflict), and **Final Delivery** (Time to Top Up / Deadline First / Priority Final Stop).
 
 ## Core endpoints
 

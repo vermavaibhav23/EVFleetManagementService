@@ -12,7 +12,8 @@ from app.models.trip import Trip
 from app.models.vehicle import Vehicle
 from app.services.pricing import price_at, tariffs_for_charger
 from app.services.readiness import assess_readiness
-from app.services.scheduler import haversine_km
+from app.services.scenarios import SCENARIOS
+from app.services.scheduler import escape_km, haversine_km
 
 BLOCKING_FLAGS = {
     "HIGH_BATTERY_TEMPERATURE",
@@ -38,11 +39,17 @@ def manager_readiness(vehicle, event, trip, assessment, chargers):
             "Charging blocked: inspect the battery-health warning before normal charging.",
             reachable,
         )
+    if event.operating_state == "RECOVERY_REQUIRED":
+        return (
+            "EMERGENCY",
+            "Recovery requested. Vehicle remains at the customer awaiting assistance.",
+            reachable,
+        )
     if trip is None:
         if event.operating_state == "AT_CUSTOMER":
             return (
                 "COMPLETE",
-                "Delivery complete. This demonstration does not automatically execute the later itinerary legs.",
+                "Timetable complete.",
                 reachable,
             )
         return "NO_DELIVERY", "No delivery scheduled for execution.", reachable
@@ -157,6 +164,20 @@ async def build_manager_snapshot(db, simulator):
         status, reason, reachable = manager_readiness(
             vehicle, event, trip, assessment, eligible
         )
+        future = [t for t in executable if trip and t.trip_id != trip.trip_id]
+        if trip and not trip.reserve_exception:
+            extra = escape_km(vehicle, trip, future, eligible)
+            if (
+                assessment.range_margin_km is not None
+                and assessment.range_margin_km < extra
+                and status == "NORMAL"
+            ):
+                status = "NEEDS_CHARGING"
+                reason = "Charge before departure to cover this delivery, a reachable continuation and reserve."
+        if event.operating_state == "RECOVERY_REQUIRED" or (
+            trip and trip.reserve_exception
+        ):
+            reason = "Manager approved a reserve exception. Recovery requested; remaining work is handled separately."
         direct_km = (
             haversine_km(
                 event.lat, event.lon, trip.destination_lat, trip.destination_lon
@@ -217,10 +238,38 @@ async def build_manager_snapshot(db, simulator):
             if r["status"] in {"CONFIRMED", "VEHICLE_EN_ROUTE"}
             and r["start_time"] <= clock < r["end_time"]
         } - occupied
+        waiting = [
+            r
+            for r in rows
+            if r.get("charger_id") == charger.charger_id
+            and r.get("operating_state") == "WAITING_FOR_CHARGER"
+        ]
+        active_bookings = [
+            r
+            for r in station_reservations
+            if r["status"] in {"CONFIRMED", "VEHICLE_EN_ROUTE", "OCCUPIED"}
+        ]
+        availability = []
+        for port in range(1, charger.port_count + 1):
+            free_at = clock
+            for r in sorted(
+                [r for r in active_bookings if r["port_number"] == port],
+                key=lambda r: r["start_time"],
+            ):
+                if r["start_time"] <= free_at < r["end_time"]:
+                    free_at = r["end_time"]
+            availability.append(free_at)
         station_rows.append(
             {
                 **charger.model_dump(mode="json"),
                 "occupied_ports": len(occupied),
+                "waiting_count": len(waiting),
+                "waiting_vehicles": [
+                    {"vin": r["vin"], "name": r["name"]} for r in waiting
+                ],
+                "next_available_at": min(availability).isoformat()
+                if availability and charger.status.value not in {"FAULTY", "OFFLINE"}
+                else None,
                 "reserved_ports": len(reserved),
                 "free_ports": max(0, charger.port_count - len(occupied | reserved))
                 if charger.status.value == "AVAILABLE"
@@ -253,6 +302,13 @@ async def build_manager_snapshot(db, simulator):
     return {
         "run_id": config.get("run_id"),
         "scenario": config.get("scenario"),
+        "scenario_catalog": [
+            {"id": s[0], "group": s[1], "name": s[2], "description": s[3]}
+            for s in SCENARIOS
+        ],
+        "manager_decisions": await db.manager_decisions.find(scope, {"_id": 0})
+        .sort("created_at", -1)
+        .to_list(1000),
         "primary_demo_vin": "SIM00000000000001" if demo else None,
         "scope": "Demo fleet" if demo else "Fleet",
         "vehicles": rows,

@@ -120,7 +120,7 @@ test("failed dependency is shown as reconnecting and actions are disabled", asyn
   assert.match(h.node("message").textContent, /dependency/);
 });
 
-test("overlapping vehicles cluster at their physical location without moving chargers", () => {
+test("overlapping cars remain individually selectable with leaders to the unchanged station", () => {
   const h = harness(() => new Promise(() => {}));
   h.run(
     `drawMap(byId('fleet-map'), Array.from({length:10},(_,i)=>({vin:'VIN'+i,lat:12.97,lon:77.59,name:'<script>bad</script>',operating_state:'PARKED',soc_pct:50})),[{charger_id:'C1',name:'Station',lat:12.97,lon:77.59,status:'AVAILABLE'}],[])`,
@@ -129,11 +129,11 @@ test("overlapping vehicles cluster at their physical location without moving cha
   assert.ok(!markup.includes("<script>"));
   assert.ok(markup.includes("&lt;script&gt;"));
   const circle = [...markup.matchAll(/<circle cx="([^"]+)" cy="([^"]+)"/g)];
-  assert.equal(circle.length, 1);
-  assert.match(markup, />10<\/text>/);
+  assert.equal(circle.length, 10);
+  assert.equal((markup.match(/class="map-pin vehicle-pin/g) || []).length, 10);
   assert.ok(
     markup.includes(
-      `x="${+circle[0][1] - 8}" y="${+circle[0][2] - 8}" width="16"`,
+      `x="${+circle[0][1] - 12}" y="${+circle[0][2] - 15}" width="24"`,
     ),
   );
 });
@@ -211,9 +211,10 @@ test("alternatives have no approval controls and reasoning uses numeric differen
   );
   const markup = h.node("option-cards").innerHTML;
   assert.equal((markup.match(/data-action="approve"/g) || []).length, 1);
-  assert.match(markup, /Comparison only/);
+  assert.ok(!markup.includes("Comparison only"));
+  assert.match(markup, /2.0 km farther/);
   assert.match(markup, /50.00/);
-  assert.match(markup, /Recommended among evaluated feasible options/);
+  assert.match(markup, /Recommended/);
 });
 
 test("currency and readiness text remain correctly encoded", () => {
@@ -239,7 +240,7 @@ test("arrived vehicle does not retain an obsolete diversion distance label", () 
     `dashboard={primary_demo_vin:'A',vehicles:[{vin:'A',name:'Van',lat:13,lon:77,soc_pct:30,manager_readiness:'NEEDS_CHARGING',delivery_remaining_km:10,current_trip:{destination_lat:13.1,destination_lon:77.1,destination:'Customer'}}],plans:[{vin:'A',status:'CHARGING',charger_id:'C',travel_distance_km:4.3}]};selectedVin='A';drawMap(byId('fleet-map'),dashboard.vehicles,[{charger_id:'C',name:'Charger',lat:13,lon:77,status:'AVAILABLE'}],[])`,
   );
   assert.ok(!h.node("fleet-map").innerHTML.includes("km diversion"));
-  assert.ok(h.node("fleet-map").innerHTML.includes("C1"));
+  assert.ok(h.node("fleet-map").innerHTML.includes("Charger"));
   assert.equal(h.run("geographicDistance({lat:13,lon:77},{lat:13,lon:77})"), 0);
   assert.ok(h.run("geographicDistance({lat:0,lon:0},{lat:0,lon:1})") > 111);
 });

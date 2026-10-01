@@ -18,6 +18,8 @@ class OperatingState(StrEnum):
     STRANDED = "STRANDED"
     OFFLINE = "OFFLINE"
     HEALTH_HOLD = "HEALTH_HOLD"
+    AWAITING_DECISION = "AWAITING_DECISION"
+    RECOVERY_REQUIRED = "RECOVERY_REQUIRED"
 
 
 class TelemetryEvent(BaseModel):

@@ -1,59 +1,45 @@
-# Manager portal upgrade
+# Manager demonstration
 
-The portal has four manager views: Overview, Vehicles, Chargers, and Plans & Decisions. All read one coherent `/api/v1/fleet/manager` projection of the existing MongoDB records. The simulator, scheduler, Kafka consumer, Redis cache, FastAPI framework, and Railway single-worker configuration remain in place.
+Load a Scenario with 10 vehicles. The fleet is paused at the current time in Asia/Kolkata. Review Van 001, then approve a charging plan or explicit manager decision before starting. Reset only clears disposable SIM records. The same city and physical energy calculations are used across scenarios.
 
-## Present the core workflow
+| Group | Scenario | Initial situation | Decision / outcome |
+|---|---|---|---|
+| Normal Operations | Normal Operations | Energy covers four scheduled legs and reserve | Execute all stops without charging |
+| Charger Scenarios | Busy Chargers | Six cars charging, three waiting; cheap station has long backlog | More expensive North Hub preserves the deadline |
+| Charger Scenarios | Charger Offline | East Solar is faulty; healthy reachable alternatives | Exclude the failed station and recalculate |
+| Non-final Deliveries | Time to Charge Ahead | Six connected stops; time to charge now | Charge to full, cover several stops, book a later session |
+| Non-final Deliveries | Tight Next Deadline | Limited charging time; later charging fits | Partial target, on-time first delivery, later reserved charge |
+| Non-final Deliveries | Priority Delivery | Can reach customer but not a charger afterward | Accept charging delay, or explicit reserve exception plus recovery and reassignment |
+| Non-final Deliveries | Timetable Conflict | Cannot safely dispatch or charge within the deadline | Hold; manager can accept a charging delay |
+| Final Delivery | Time to Top Up | One final stop and ample time | Full charge improves next-shift readiness |
+| Final Delivery | Deadline First | Full charging would threaten the deadline | Maximum partial charge within the protected window |
+| Final Delivery | Priority Final Stop | Direct delivery is possible only below reserve | Explicit manager exception and recovery request, or accept delay |
 
-1. Open `/portal`. Load **Low battery before delivery**, **10** vehicles. Every scenario loads paused at **09:00 Asia/Kolkata** on the demo date. Van 001 is selected and labelled Demo focus.
-2. Read the charging-required explanation, remaining delivery distance, available range, and reserve. Operational state and charging readiness are separate.
-3. Click **Compare charging options**. If running, this pauses the simulation first. Review up to three different stations. Only the recommended option can be approved; alternatives are explicitly comparison-only.
-4. Approve the diversion. Review the reservation in **Chargers**, then press **Start**. The vehicle physically travels to its assigned station, waits for its slot, charges, releases the port, resumes delivery, and reaches its customer.
-5. **Pause** freezes simulation time. **Load / reset** resets disposable SIM runtime records and decisions, leaving non-demo records intact. Decision history persists across browser reloads, but not demo resets.
+## Rules
 
-## Scenario selection
+- Timetable order is fixed. A required depot return is included before the route ends.
+- Deadline minus drive time minus a 20-minute traffic buffer sets the protected departure. Later deadlines and charger bookings can constrain it further.
+- The planner targets up to 100% within that window, using the shared taper/efficiency model. Minimum energy covers the delivery, a reachable continuation and the configured 15 km reserve.
+- Remaining legs and future charging stops are validated. Approval reserves the later sessions too; the simulator activates them at their associated leg after prior service completes.
+- Feasible alternatives compare unit energy price, travel and waiting because different stations can supply different amounts of energy. This prioritizes readiness; it is not a proof of globally cheapest fleet optimization.
+- Both proposal approval and manager exceptions reject stale run/telemetry context. Original deadlines remain unchanged when a delay is accepted.
+- Reassignment selects a standby van with enough energy for collection, all transferred legs and reserve. The van drives to collect packages after the source delivery arrives. Source vehicle recovery is requested in the simulation record, not physically performed or sent to an external service.
+- No charge is gained while driving or waiting. Occupied ports are exclusive. Canceling a parent plan releases its remaining scheduled bookings.
+- Start advances a common simulation clock. Pause freezes it. All schedule, queue and tariff calculations use that clock.
 
-| Scenario | Immediate condition | Manager action | Observable outcome |
-| --- | --- | --- | --- |
-| Low battery before delivery | Van 001 has 20% SoC and a 95 km delivery | Compare, approve, Start | Complete charging and resumed-delivery journey |
-| Charger congestion | Solar Canopy has a labelled 75-minute seeded reservation | Compare available stations and their waiting times | Reserved station remains distinct from free alternatives; approved diversion waits for its slot |
-| Charger failure | Solar Canopy is faulty | Review exclusion and approve a healthy station | Faulty station cannot be selected |
-| Unexpected long delivery | Preconfigured incident checkpoint with a 140 km delivery | Review shortfall and approve | Target SoC covers charger-to-customer distance plus reserve and extra margin |
-| Battery overheating | Van 001 battery is 48°C | Inspect health warning; keep paused for presentation | No normal charging plan; if started, vehicle remains on health hold |
-| Unreachable charger emergency | Van 001 is 80 km southwest of the depot at 0% SoC | Inspect assistance-required message | Vehicle remains stranded at true coordinates; no impossible plan or simulated assistance dispatch |
-| Normal day | Comfortable range for active deliveries | Start and inspect itinerary | Active deliveries complete and do not restart |
+## Display
 
-## Deliberate limits
+Use the single Fit fleet button, scroll to zoom and drag to pan. Station coordinates never move. Overlapping car badges have leader lines to their real locations. Charging is green and pulses; waiting is gray. All active customers are shown; route lines belong only to the selected vehicle. More details are collapsed under Why this plan and battery details.
 
-- Routes are geodesic straight-line simulations, not road routes. The single map keeps station markers at their true coordinates and preserves its viewport. Use Fit fleet, Focus selected, Focus depot, zoom buttons, or drag to pan. Only the selected vehicle has detailed routes.
-- Three connected trips per van form the stored planned itinerary. Only the first leg is executed. Later legs are explicitly schedule-only and excluded from live readiness and execution. There is no full-day fleet optimization.
-- Solar Canopy uses explicit station-specific demo tariffs. North Hub and Overflow share the depot tariff. The manager projection and scheduler call the same tariff selection and pricing functions. Currency is INR; tariff timezone is shown.
-- Energy emergency means a delivery energy deficit with no physically reachable compatible healthy charger. Queues and deadline failures are separate constraints. Health warnings can block charging independently.
-- Scheduler explanations describe the evaluated slots and the existing weighted objective. They do not claim global optimality or an external AI agent.
-- Approval recalculates feasibility. If station, port, timing, target, price, run, trip, or deadline changes, approval returns a conflict with no reservation and no silent alternative substitution. The manager can refresh the proposal and review again. Datetime comparison respects MongoDB millisecond precision.
-- The browser requests a snapshot every three seconds, coalesces overlapping requests, and rejects responses across action/reset epochs. It does not continuously request fleet-wide recommendations. The footer reports observed receipt cadence. A configured one-second tick is not a throughput guarantee.
-- Keep one Railway replica and one Uvicorn worker. This remains the existing unauthenticated disposable hackathon demonstration, not a production security or multi-tenant redesign.
+## Limits
+
+Straight-line geography at a simulated 35 km/h, not a road-routing or traffic feed. Recovery is a request/status only. Candidate search is bounded to the configured chargers and the supplied timetable. Backend health guards remain although overheating and unexpected-route presets are removed from the menu. The demonstration runs a single application process; coordination locks are process-local, and multi-record changes are not a distributed database transaction.
 
 ## Verification
 
-The untouched baseline was 45 Python tests and four frontend tests. The upgrade adds tests for distinct options, exact approval/staleness behavior, physical reachability, deadline classification, blocked vehicles, connected schedule-only itineraries, preservation of non-demo records, coherent 100-vehicle snapshots, UTF-8 labels, and stable single-map coordinates. Existing end-to-end unit coverage still checks movement, charging only after arrival, port assignment and release, resumed delivery, repeat actions, reset, previous-run telemetry rejection, and task failures.
-
-Run:
-
-```text
-python -m pytest -q
+```powershell
+python -m unittest discover -s tests
 node --test tests/test_frontend.cjs
-node --check app/static/app.js
-python -m ruff check app tests scripts
-python -m ruff format --check app tests scripts
-python -m compileall -q app tests scripts
+ruff check app tests
+ruff format --check app tests
 ```
-
-The live verification scripts operate only on disposable SIM data. Run them sequentially, as each resets the shared demo:
-
-```text
-python scripts/live_acceptance.py --base-url https://evfleetmanagementservice-production.up.railway.app --output live-acceptance.json
-python scripts/live_scenarios.py --base-url https://evfleetmanagementservice-production.up.railway.app --output live-scenarios.json
-python scripts/demo_load.py --base-url https://evfleetmanagementservice-production.up.railway.app --vehicles 10 100 --seconds 60 --output load-test.json
-```
-
-Deployment results, measured performance, screenshots, and a five-minute presentation guide are delivered separately so this document does not confuse historical measurements with a future deployment.

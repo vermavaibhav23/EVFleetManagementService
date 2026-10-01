@@ -139,7 +139,7 @@ class SchedulerTests(unittest.TestCase):
         )
 
         self.assertIsNotNone(recommendation.plan)
-        self.assertIn("earliest charging start", recommendation.reason)
+        self.assertIn("unit energy cost", recommendation.reason)
         self.assertGreaterEqual(recommendation.plan.start_time, self.now)
 
 

@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.models.charger import Charger, ChargerStatus
 from app.models.depot import Depot
 from app.models.reservation import ACTIVE_RESERVATION_STATUSES, Reservation
-from app.models.simulator import ScenarioRequest, SimulationScenario, SimulatorStatus
+from app.models.simulator import SimulatorStatus
 from app.models.tariff import Tariff
 from app.models.telemetry import OperatingState, TelemetryEvent
 from app.models.trip import Trip, TripStatus
@@ -138,340 +138,431 @@ def advance_toward_location(
     return distance_km, max(0, remaining_km - distance_km)
 
 
-async def seed_scenario(
-    request: ScenarioRequest,
-    db: Any,
-    redis: Any,
-    kafka: Any,
-) -> dict[str, object]:
-    rng = random.Random(request.seed)
-    now = datetime.now(UTC).replace(
-        hour=3, minute=30, second=0, microsecond=0
-    )  # 09:00 IST demo day
-    depot_id = "SIM-DEPOT-01"
+async def seed_scenario(request, db, redis, kafka):
+    from app.models.charging import ChargingPlan, ChargingPlanStatus
+    from app.models.reservation import ReservationStatus
+    from app.services.energy import charging_seconds
 
+    rng = random.Random(request.seed)
+    now = datetime.now(UTC).replace(microsecond=0)
+    scenario = request.scenario.value
+    if scenario == "LOW_BATTERY_BEFORE_TRIP":
+        scenario = "NONFINAL_RELAXED"
     run_id = str(uuid4())
     async for key in redis.scan_iter(match="vehicle:SIM*:latest"):
         await redis.delete(key)
-    simulation_filter = {"vin": {"$regex": "^SIM"}}
-    await db.telemetry.delete_many(simulation_filter)
-    await db.trips.delete_many(simulation_filter)
-    await db.alerts.delete_many(simulation_filter)
-    await db.charging_plans.delete_many(simulation_filter)
-    await db.reservations.delete_many(simulation_filter)
-    await db.vehicles.delete_many(simulation_filter)
-
+    for collection in (
+        "telemetry",
+        "trips",
+        "alerts",
+        "charging_plans",
+        "reservations",
+        "vehicles",
+        "manager_decisions",
+    ):
+        await db[collection].delete_many({"vin": {"$regex": "^SIM"}})
+    await db.tariffs.delete_many({"tariff_id": {"$regex": "^SIM-"}})
     depot = Depot(
-        depot_id=depot_id,
-        name="Central Fleet Depot",
+        depot_id="SIM-DEPOT-01",
+        name="Central Depot",
         lat=12.9716,
         lon=77.5946,
-        power_limit_kw=180,
+        power_limit_kw=600,
     )
     await db.depots.update_one(
         {"depot_id": depot.depot_id},
         {"$set": depot.model_dump(mode="python")},
         upsert=True,
     )
-
     chargers = [
         Charger(
             charger_id="SIM-CHARGER-FAST",
-            name="North Hub Fast Charger",
-            depot_id=depot_id,
-            lat=13.0600,
-            lon=77.6350,
-            available_kw=90,
-            price_per_kwh=10.8,
+            name="North Hub",
+            depot_id=depot.depot_id,
+            lat=13.055,
+            lon=77.610,
+            available_kw=60,
+            price_per_kwh=11,
             connector_type="CCS2",
             port_count=2,
         ),
         Charger(
             charger_id="SIM-CHARGER-CHEAP",
-            name="Solar Canopy Charger",
-            depot_id=depot_id,
-            lat=12.9350,
-            lon=77.6900,
-            available_kw=60,
-            price_per_kwh=7.2,
+            name="East Solar",
+            depot_id=depot.depot_id,
+            lat=12.960,
+            lon=77.680,
+            available_kw=45,
+            price_per_kwh=6,
             connector_type="CCS2",
-            port_count=1,
+            port_count=2,
         ),
         Charger(
             charger_id="SIM-CHARGER-SLOW",
-            name="Overflow Charger",
-            depot_id=depot_id,
-            lat=12.9900,
-            lon=77.5600,
+            name="West Park",
+            depot_id=depot.depot_id,
+            lat=12.910,
+            lon=77.500,
             available_kw=30,
-            price_per_kwh=8.5,
+            price_per_kwh=8,
             connector_type="CCS2",
-            port_count=1,
+            port_count=2,
         ),
     ]
-    if request.scenario == SimulationScenario.CHARGER_FAILURE:
+    if scenario == "CHARGER_FAILURE":
         chargers[1].status = ChargerStatus.FAULTY
-    for charger in chargers:
+    for c in chargers:
         await db.chargers.update_one(
-            {"charger_id": charger.charger_id},
-            {"$set": charger.model_dump(mode="python")},
+            {"charger_id": c.charger_id},
+            {"$set": c.model_dump(mode="python")},
             upsert=True,
         )
-
-    tariffs = [
-        Tariff(
-            tariff_id="SIM-TARIFF-SOLAR",
-            depot_id=depot_id,
-            start_time="10:00",
-            end_time="18:00",
-            price_per_kwh=7.2,
-        ),
-        Tariff(
-            tariff_id="SIM-TARIFF-PEAK",
-            depot_id=depot_id,
-            start_time="18:00",
-            end_time="22:00",
-            price_per_kwh=10.8,
-        ),
-        Tariff(
-            tariff_id="SIM-TARIFF-NORMAL",
-            depot_id=depot_id,
-            start_time="22:00",
-            end_time="10:00",
-            price_per_kwh=8.5,
-        ),
-    ]
-    tariffs.extend(
-        [
-            Tariff(
-                tariff_id="SIM-TARIFF-CHEAP-DAY",
-                depot_id=depot_id,
-                charger_id="SIM-CHARGER-CHEAP",
-                start_time="10:00",
-                end_time="18:00",
-                price_per_kwh=5.4,
-            ),
-            Tariff(
-                tariff_id="SIM-TARIFF-CHEAP-NIGHT",
-                depot_id=depot_id,
-                charger_id="SIM-CHARGER-CHEAP",
-                start_time="18:00",
-                end_time="10:00",
-                price_per_kwh=6.4,
-            ),
-        ]
-    )
-    for tariff in tariffs:
-        await db.tariffs.update_one(
-            {"tariff_id": tariff.tariff_id},
-            {"$set": tariff.model_dump(mode="python")},
-            upsert=True,
-        )
-
+        # Station rates stay ordered through midnight so the scenario works at any current IST time.
+        for suffix, start, end, price in [
+            ("DAY", "06:00", "22:00", c.price_per_kwh),
+            ("NIGHT", "22:00", "06:00", c.price_per_kwh - 0.5),
+        ]:
+            t = Tariff(
+                tariff_id=f"SIM-{c.charger_id}-{suffix}",
+                depot_id=depot.depot_id,
+                charger_id=c.charger_id,
+                start_time=start,
+                end_time=end,
+                price_per_kwh=price,
+            )
+            await db.tariffs.insert_one(t.model_dump(mode="python"))
     await db.simulation.update_one(
         {"simulation_id": "active"},
         {
             "$set": {
                 "seed": request.seed,
-                "scenario": request.scenario.value,
+                "scenario": scenario,
                 "created_at": now,
                 "run_id": run_id,
             }
         },
         upsert=True,
     )
-
-    vehicles: list[str] = []
-    seed_records: list[tuple[Vehicle, Trip, TelemetryEvent]] = []
-    for index in range(request.vehicle_count):
+    records = []
+    # Distinct customer districts remain in one city-sized coordinate frame.
+    districts = [
+        (13.065, 77.715),
+        (13.075, 77.525),
+        (12.895, 77.545),
+        (12.915, 77.710),
+        (13.040, 77.650),
+        (depot.lat, depot.lon),
+    ]
+    count = (
+        max(10, request.vehicle_count)
+        if scenario == "CHARGER_CONGESTION"
+        else request.vehicle_count
+    )
+    for index in range(count):
+        focus = index == 0
         vin = f"SIM{index + 1:014d}"
         vehicle = Vehicle(
             vin=vin,
-            name=f"Fleet Van {index + 1:03d}",
-            depot_id=depot_id,
-            battery_capacity_kwh=75,
-            usable_capacity_kwh=70,
-            consumption_kwh_per_km=round(rng.uniform(0.18, 0.24), 3),
+            name=f"Van {index + 1:03d}",
+            depot_id=depot.depot_id,
+            battery_capacity_kwh=35 if focus else 75,
+            usable_capacity_kwh=30 if focus else 70,
+            consumption_kwh_per_km=0.30 if focus else 0.21,
             max_charge_power_kw=60,
             connector_type="CCS2",
         )
-        distance_km = round(rng.uniform(45, 85), 1)
-        if index == 0 and request.scenario in {
-            SimulationScenario.LOW_BATTERY_BEFORE_TRIP,
-            SimulationScenario.CHARGER_CONGESTION,
-        }:
-            distance_km = 95
-        if index == 0 and request.scenario == SimulationScenario.UNEXPECTED_LONG_TRIP:
-            distance_km = 140
-        destination_lat, destination_lon = point_at_distance(
-            depot.lat,
-            depot.lon,
-            distance_km,
-            25 + (index * 67) % 320,
+        start = (
+            (12.974, 77.611)
+            if focus
+            else point_at_distance(
+                depot.lat, depot.lon, 3 + (index % 6) * 1.6, (index * 137) % 360
+            )
         )
-        trip = Trip(
-            trip_id=f"SIM-TRIP-{index + 1:04d}",
-            vin=vin,
-            origin="Central Fleet Depot",
-            destination=f"Customer {index + 1:03d}",
-            origin_lat=depot.lat,
-            origin_lon=depot.lon,
-            destination_lat=destination_lat,
-            destination_lon=destination_lon,
-            departure_time=demo_departure_time(now, index),
-            delivery_deadline=now
-            + timedelta(
-                hours=6
-                if request.scenario == SimulationScenario.UNEXPECTED_LONG_TRIP
-                else 5
-            ),
-            distance_km=distance_km,
-            service_duration_minutes=20,
+        soc = 14.0 if focus else rng.uniform(75, 95)
+        if scenario == "NORMAL_DAY":
+            soc = 100 if focus else soc
+        if focus and scenario == "UNREACHABLE_CHARGER":
+            soc = 0
+        first = (
+            districts[0]
+            if focus
+            else point_at_distance(
+                depot.lat, depot.lon, 5 + (index * 3) % 11, (index * 53) % 360
+            )
         )
-        soc_pct = round(rng.uniform(55, 85), 1)
-        if index == 0 and request.scenario != SimulationScenario.NORMAL_DAY:
-            soc_pct = 20
-        if index == 0 and request.scenario == SimulationScenario.UNEXPECTED_LONG_TRIP:
-            soc_pct = 45
-        temperature = (
-            48
-            if index == 0 and request.scenario == SimulationScenario.BATTERY_OVERHEATING
-            else 31
-        )
-        if index == 0 and request.scenario == SimulationScenario.UNREACHABLE_CHARGER:
-            soc_pct = 0
-        telemetry = TelemetryEvent(
-            simulation_run_id=run_id,
+        direct = haversine_km(*start, *first)
+        if focus and scenario in {"NONFINAL_PRIORITY", "FINAL_PRIORITY"}:
+            soc = (
+                (direct + 1)
+                * vehicle.consumption_kwh_per_km
+                / (vehicle.usable_capacity_kwh * 0.96)
+                * 100
+            )
+        first_due = 180
+        if focus and scenario in {"NONFINAL_TIGHT", "FINAL_TIGHT"}:
+            first_due = 80
+        if focus and scenario == "CHARGER_CONGESTION":
+            first_due = 95
+        if focus and scenario == "CHARGER_FAILURE":
+            first_due = 100
+        if focus and scenario in {"NONFINAL_PRIORITY", "FINAL_PRIORITY"}:
+            first_due = direct / 35 * 60 + 25
+        if focus and scenario == "NONFINAL_CONFLICT":
+            first_due = direct / 35 * 60 + 5
+        length = 1 if focus and scenario.startswith("FINAL_") else 6
+        if scenario == "NORMAL_DAY":
+            length = 4
+        trips = []
+        origin = start
+        origin_name = "City dispatch point"
+        for i in range(length):
+            dest = (
+                first
+                if i == 0
+                else (
+                    districts[i]
+                    if focus
+                    else point_at_distance(
+                        depot.lat,
+                        depot.lon,
+                        5 + (index * 3 + i * 7) % 11,
+                        (index * 53 + i * 97) % 360,
+                    )
+                )
+            )
+            if i == length - 1 and length > 1:
+                dest = (depot.lat, depot.lon)
+            if dest == origin:
+                dest = (dest[0] + 0.003, dest[1] + 0.003)
+            name = (
+                "Central Depot"
+                if i == length - 1 and length > 1
+                else f"Customer {index + 1:03d}-{i + 1}"
+            )
+            # Background schedules are generous; focus later deadlines remain finite and connected.
+            due = first_due + i * 100 if focus else 220 + i * 100
+            if (
+                focus
+                and scenario in {"NONFINAL_PRIORITY", "NONFINAL_CONFLICT"}
+                and i > 0
+            ):
+                due = 240 + i * 90
+            trip = Trip(
+                trip_id=f"SIM-TRIP-{index + 1:04d}" + (f"-LEG-{i + 1}" if i else ""),
+                vin=vin,
+                origin=origin_name,
+                destination=name,
+                origin_lat=origin[0],
+                origin_lon=origin[1],
+                destination_lat=dest[0],
+                destination_lon=dest[1],
+                departure_time=now + timedelta(minutes=0 if i == 0 else i * 35),
+                delivery_deadline=now + timedelta(minutes=due),
+                distance_km=haversine_km(*origin, *dest),
+                service_duration_minutes=4,
+                sequence=i + 1,
+                simulation_enabled=True,
+            )
+            trips.append(trip)
+            origin = dest
+            origin_name = name
+        event = TelemetryEvent(
             vin=vin,
             ts=now,
-            lat=depot.lat,
-            lon=depot.lon,
+            lat=start[0],
+            lon=start[1],
             speed_kmh=0,
-            soc_pct=soc_pct,
-            soh_pct=round(rng.uniform(88, 98), 1),
-            odo_km=round(rng.uniform(10000, 80000), 1),
+            soc_pct=round(soc, 4),
+            soh_pct=96,
+            odo_km=10000 + index * 123,
             seq=0,
-            battery_temperature_c=temperature,
+            battery_temperature_c=31,
             operating_state=OperatingState.PARKED,
-            trip_id=trip.trip_id,
-            route_remaining_km=trip.distance_km,
-            remaining_range_km=round(
-                vehicle.usable_capacity_kwh
-                * soc_pct
-                / 100
-                / vehicle.consumption_kwh_per_km,
-                1,
-            ),
+            trip_id=trips[0].trip_id,
+            route_remaining_km=trips[0].distance_km,
+            simulation_run_id=run_id,
+            navigation_phase="DELIVERY",
+            navigation_target=first and trips[0].destination,
+            destination_lat=first[0],
+            destination_lon=first[1],
+            distance_to_destination_km=direct,
+            eta_minutes=direct / 35 * 60,
         )
-        if index == 0 and request.scenario == SimulationScenario.UNEXPECTED_LONG_TRIP:
-            # Load at the incident checkpoint, ready to explain without waiting.
-            trip.status = TripStatus.IN_PROGRESS
-            trip.destination = "Urgent extended delivery"
-            telemetry.operating_state = OperatingState.DRIVING
-        if index == 0 and request.scenario == SimulationScenario.UNREACHABLE_CHARGER:
-            telemetry.lat, telemetry.lon = point_at_distance(
-                depot.lat, depot.lon, 80, 220
+        records.append((vehicle, trips, event))
+    if scenario in {"NONFINAL_PRIORITY", "FINAL_PRIORITY"} and len(records) > 1:
+        # Standby van can physically collect the remaining packages at Customer 001-1.
+        v, ts, e = records[-1]
+        ts.clear()
+        e.trip_id = None
+        e.route_remaining_km = None
+        e.lat, e.lon = districts[0][0] + 0.010, districts[0][1] - 0.010
+        e.navigation_target = "Standby"
+        e.soc_pct = 95
+
+    async def price_existing_session(plan, charger):
+        from app.services.pricing import charging_cost
+
+        tariff_rows = [
+            Tariff(**d)
+            async for d in db.tariffs.find({"charger_id": charger.charger_id})
+        ]
+        plan.grid_energy_kwh = round(
+            plan.energy_required_kwh / settings.charging_efficiency, 4
+        )
+        plan.estimated_cost = charging_cost(
+            plan.start_time,
+            plan.end_time,
+            plan.allocated_power_kw,
+            tariff_rows,
+            charger.price_per_kwh,
+            settings.charging_efficiency,
+            plan.grid_energy_kwh,
+        )
+        plan.average_price_per_kwh = round(
+            plan.estimated_cost / plan.grid_energy_kwh, 3
+        )
+
+    if scenario == "CHARGER_CONGESTION":
+        # Six real occupied ports, plus three actual waiting vehicles. Focus van remains unapproved.
+        sessions = [
+            (1, 1, 1, 0, 15, 95),
+            (2, 1, 2, 0, 18, 95),
+            (3, 0, 1, 0, 85, 94),
+            (4, 0, 2, 0, 85, 96),
+            (5, 2, 1, 0, 20, 90),
+            (6, 2, 2, 0, 25, 92),
+        ]
+        ends = {}
+        for idx, ci, port, _, start_soc, target in sessions:
+            v, ts, e = records[idx]
+            c = chargers[ci]
+            e.lat, e.lon = c.lat, c.lon
+            e.soc_pct = start_soc
+            duration = charging_seconds(
+                start_soc,
+                target,
+                v.usable_capacity_kwh * 0.96,
+                min(v.max_charge_power_kw, c.available_kw),
+                settings.charging_efficiency,
             )
-            trip.origin = "Remote delivery checkpoint"
-            trip.origin_lat, trip.origin_lon = telemetry.lat, telemetry.lon
-            trip.distance_km = haversine_km(
-                telemetry.lat, telemetry.lon, trip.destination_lat, trip.destination_lon
+            end = now + timedelta(seconds=duration + 120)
+            ends[(ci, port)] = end
+            ts[0].origin_lat, ts[0].origin_lon = c.lat, c.lon
+            ts[0].distance_km = haversine_km(
+                c.lat, c.lon, ts[0].destination_lat, ts[0].destination_lon
             )
-            trip.status = TripStatus.IN_PROGRESS
-            telemetry.route_remaining_km = trip.distance_km
-            telemetry.operating_state = OperatingState.STRANDED
-        telemetry.navigation_phase = "DELIVERY"
-        telemetry.navigation_target = trip.destination
-        telemetry.destination_lat, telemetry.destination_lon = (
-            trip.destination_lat,
-            trip.destination_lon,
-        )
-        telemetry.distance_to_destination_km = trip.distance_km
-        telemetry.eta_minutes = trip.distance_km / 35 * 60
-        seed_records.append((vehicle, trip, telemetry))
-        vehicles.append(vin)
-
-    async def persist_seed_record(
-        vehicle: Vehicle, trip: Trip, telemetry: TelemetryEvent
-    ) -> None:
-        await db.vehicles.update_one(
-            {"vin": vehicle.vin},
-            {"$set": vehicle.model_dump(mode="python")},
-            upsert=True,
-        )
-        await db.trips.update_one(
-            {"trip_id": trip.trip_id},
-            {"$set": trip.model_dump(mode="python")},
-            upsert=True,
-        )
-        # Stored, connected daily itinerary. Only the first leg is executed by this demo.
-        next_lat, next_lon = point_at_distance(
-            trip.destination_lat, trip.destination_lon, 12, 120
-        )
-        for leg, origin, destination, a, b, departure, deadline in [
-            (
-                2,
-                trip.destination,
-                f"Collection hub {vehicle.vin[-3:]}",
-                (trip.destination_lat, trip.destination_lon),
-                (next_lat, next_lon),
-                now + timedelta(hours=6.5),
-                now + timedelta(hours=7.5),
-            ),
-            (
-                3,
-                f"Collection hub {vehicle.vin[-3:]}",
-                depot.name,
-                (next_lat, next_lon),
-                (depot.lat, depot.lon),
-                now + timedelta(hours=8),
-                now + timedelta(hours=13),
-            ),
-        ]:
-            scheduled = Trip(
-                trip_id=f"{trip.trip_id}-LEG-{leg}",
-                vin=vehicle.vin,
-                origin=origin,
-                destination=destination,
-                origin_lat=a[0],
-                origin_lon=a[1],
-                destination_lat=b[0],
-                destination_lon=b[1],
-                departure_time=departure,
-                delivery_deadline=deadline,
-                distance_km=haversine_km(*a, *b),
-                simulation_enabled=False,
+            ts[0].delivery_deadline = now + timedelta(hours=5)
+            plan = ChargingPlan(
+                plan_id=f"SIM-SESSION-{idx}",
+                vin=v.vin,
+                trip_id=ts[0].trip_id,
+                charger_id=c.charger_id,
+                port_number=port,
+                start_time=now,
+                end_time=end,
+                starting_soc_pct=start_soc,
+                target_soc_pct=target,
+                energy_required_kwh=(target - start_soc)
+                * v.usable_capacity_kwh
+                * 0.96
+                / 100,
+                allocated_power_kw=min(v.max_charge_power_kw, c.available_kw),
+                estimated_cost=0,
+                predicted_ready_time=end,
+                status=ChargingPlanStatus.CHARGING,
+                reason="Existing charging session",
+                simulation_run_id=run_id,
             )
-            await db.trips.insert_one(scheduled.model_dump(mode="python"))
-        await store_telemetry(telemetry, db, redis, kafka)
-
-    await asyncio.gather(
-        *(
-            persist_seed_record(vehicle, trip, telemetry)
-            for vehicle, trip, telemetry in seed_records
-        )
-    )
-
-    if request.scenario == SimulationScenario.CHARGER_CONGESTION:
-        reservation = Reservation(
-            reservation_id="SIM-CONGESTION-RESERVATION",
-            charger_id="SIM-CHARGER-CHEAP",
-            port_number=1,
-            vin=vehicles[-1],
-            start_time=now,
-            end_time=now + timedelta(minutes=75),
-            reserved_power_kw=60,
-        )
-        await db.reservations.update_one(
-            {"reservation_id": reservation.reservation_id},
-            {"$set": reservation.model_dump(mode="python")},
-            upsert=True,
-        )
-
+            await price_existing_session(plan, c)
+            await db.charging_plans.insert_one(plan.model_dump(mode="python"))
+            r = Reservation(
+                plan_id=plan.plan_id,
+                vin=v.vin,
+                charger_id=c.charger_id,
+                port_number=port,
+                start_time=now,
+                end_time=end,
+                reserved_power_kw=plan.allocated_power_kw,
+                status=ReservationStatus.OCCUPIED,
+            )
+            await db.reservations.insert_one(r.model_dump(mode="python"))
+            e.operating_state = OperatingState.CHARGING
+            e.charger_id = c.charger_id
+            e.port_number = port
+            e.plan_id = plan.plan_id
+            e.is_plugged_in = True
+            e.navigation_phase = "CHARGING"
+            e.navigation_target = c.name
+            e.destination_lat = c.lat
+            e.destination_lon = c.lon
+            e.distance_to_destination_km = 0
+        for idx, ci, port in [(7, 1, 1), (8, 1, 2), (9, 2, 1)]:
+            v, ts, e = records[idx]
+            c = chargers[ci]
+            start = ends[(ci, port)]
+            e.lat, e.lon = c.lat, c.lon
+            e.soc_pct = 25
+            duration = charging_seconds(
+                25,
+                90,
+                v.usable_capacity_kwh * 0.96,
+                min(v.max_charge_power_kw, c.available_kw),
+                settings.charging_efficiency,
+            )
+            end = start + timedelta(seconds=duration + 120)
+            plan = ChargingPlan(
+                plan_id=f"SIM-QUEUE-{idx}",
+                vin=v.vin,
+                trip_id=ts[0].trip_id,
+                charger_id=c.charger_id,
+                port_number=port,
+                start_time=start,
+                end_time=end,
+                starting_soc_pct=25,
+                target_soc_pct=90,
+                energy_required_kwh=0.65 * v.usable_capacity_kwh * 0.96,
+                allocated_power_kw=min(v.max_charge_power_kw, c.available_kw),
+                estimated_cost=0,
+                predicted_ready_time=end,
+                status=ChargingPlanStatus.APPROVED,
+                reason="Booked charging session",
+                simulation_run_id=run_id,
+            )
+            await price_existing_session(plan, c)
+            await db.charging_plans.insert_one(plan.model_dump(mode="python"))
+            await db.reservations.insert_one(
+                Reservation(
+                    plan_id=plan.plan_id,
+                    vin=v.vin,
+                    charger_id=c.charger_id,
+                    port_number=port,
+                    start_time=start,
+                    end_time=end,
+                    reserved_power_kw=plan.allocated_power_kw,
+                ).model_dump(mode="python")
+            )
+            e.operating_state = OperatingState.WAITING_FOR_CHARGER
+            e.charger_id = c.charger_id
+            e.port_number = port
+            e.plan_id = plan.plan_id
+            e.navigation_phase = "AT_CHARGER"
+            e.navigation_target = c.name
+            e.destination_lat = c.lat
+            e.destination_lon = c.lon
+            e.distance_to_destination_km = 0
+            ts[0].origin_lat, ts[0].origin_lon = c.lat, c.lon
+            ts[0].distance_km = haversine_km(
+                c.lat, c.lon, ts[0].destination_lat, ts[0].destination_lon
+            )
+    for v, ts, e in records:
+        await db.vehicles.insert_one(v.model_dump(mode="python"))
+        if ts:
+            await db.trips.insert_many([t.model_dump(mode="python") for t in ts])
+        await store_telemetry(e, db, redis, kafka)
     return {
-        "scenario": request.scenario.value,
-        "vehicles_seeded": len(vehicles),
-        "primary_demo_vin": vehicles[0],
+        "scenario": scenario,
+        "vehicles_seeded": len(records),
+        "primary_demo_vin": records[0][0].vin,
         "simulated_start_time": now.isoformat(),
     }
 
@@ -639,7 +730,10 @@ class SimulatorManager:
         # Serialize physical occupancy decisions within each depot. Vehicles still
         # move concurrently unless they have a charging plan in the same depot.
         plan = await self._db.charging_plans.find_one(
-            {"vin": state.vehicle.vin, "status": {"$in": ["APPROVED", "CHARGING"]}}
+            {
+                "vin": state.vehicle.vin,
+                "status": {"$in": ["APPROVED", "CHARGING", "SCHEDULED"]},
+            }
         )
         if plan:
             charger = await self._db.chargers.find_one(
@@ -680,6 +774,38 @@ class SimulatorManager:
         distance_to_destination_km = None
         eta_minutes = None
 
+        if not plan:
+            next_trip = await self._db.trips.find_one(
+                {
+                    "vin": state.vehicle.vin,
+                    "status": {"$in": ["IN_PROGRESS", "PLANNED"]},
+                    "simulation_enabled": {"$ne": False},
+                },
+                sort=[("departure_time", 1)],
+            )
+            if next_trip:
+                last = await self._db.trips.find_one(
+                    {"vin": state.vehicle.vin, "status": "COMPLETED"},
+                    sort=[("completed_at", -1)],
+                )
+                service_done = (
+                    not last
+                    or not last.get("service_until")
+                    or last["service_until"] <= now
+                )
+                future_plan = await self._db.charging_plans.find_one(
+                    {
+                        "vin": state.vehicle.vin,
+                        "trip_id": next_trip["trip_id"],
+                        "status": "SCHEDULED",
+                    }
+                )
+                if future_plan and service_done:
+                    await self._db.charging_plans.update_one(
+                        {"plan_id": future_plan["plan_id"]},
+                        {"$set": {"status": "APPROVED", "active": True}},
+                    )
+                    plan = {**future_plan, "status": "APPROVED", "active": True}
         charger = None
         if plan:
             charger_id = plan["charger_id"]
@@ -868,7 +994,80 @@ class SimulatorManager:
                 },
                 sort=[("departure_time", 1)],
             )
-            if trip_doc and state.battery_temperature_c >= 45:
+            last_trip = await self._db.trips.find_one(
+                {"vin": state.vehicle.vin, "status": "COMPLETED"},
+                sort=[("completed_at", -1)],
+            )
+            service_pending = (
+                last_trip
+                and last_trip.get("service_until")
+                and last_trip["service_until"] > now
+            )
+            recovery = last_trip and last_trip.get("recovery_requested")
+            hold = False
+            if trip_doc and not trip_doc.get("reserve_exception"):
+                from app.services.scheduler import escape_km
+
+                t = Trip(**trip_doc)
+                future = [
+                    Trip(**d)
+                    async for d in self._db.trips.find(
+                        {
+                            "vin": state.vehicle.vin,
+                            "status": "PLANNED",
+                            "trip_id": {"$ne": t.trip_id},
+                            "simulation_enabled": {"$ne": False},
+                        }
+                    ).sort("departure_time", 1)
+                ]
+                cs = [
+                    Charger(**d)
+                    async for d in self._db.chargers.find(
+                        {"depot_id": state.vehicle.depot_id}
+                    )
+                ]
+                required = (
+                    haversine_km(
+                        state.lat, state.lon, t.destination_lat, t.destination_lon
+                    )
+                    if t.destination_lat is not None
+                    else t.distance_km
+                )
+                required += settings.reserve_range_km + escape_km(
+                    state.vehicle, t, future, cs
+                )
+                available = (
+                    state.vehicle.usable_capacity_kwh
+                    * state.soh_pct
+                    / 100
+                    * state.soc_pct
+                    / 100
+                    / state.vehicle.consumption_kwh_per_km
+                )
+                # Evaluate before departure; do not stop a previously approved safe journey on rounding noise.
+                hold = t.status == TripStatus.PLANNED and available + 0.05 < required
+            if recovery:
+                operating_state = OperatingState.RECOVERY_REQUIRED
+                navigation_phase = "RECOVERY_REQUIRED"
+            elif service_pending:
+                operating_state = OperatingState.AT_CUSTOMER
+                navigation_phase = "SERVICE"
+            elif (
+                trip_doc
+                and trip_doc.get("handover_trip_id")
+                and not await self._db.trips.find_one(
+                    {"trip_id": trip_doc["handover_trip_id"], "status": "COMPLETED"}
+                )
+            ):
+                operating_state = OperatingState.PARKED
+                navigation_phase = "WAITING_FOR_HANDOVER"
+            elif state.soc_pct <= 1e-8:
+                operating_state = OperatingState.STRANDED
+                navigation_phase = "STRANDED"
+            elif hold and state.battery_temperature_c < 45:
+                operating_state = OperatingState.AWAITING_DECISION
+                navigation_phase = "AWAITING_DECISION"
+            elif trip_doc and state.battery_temperature_c >= 45:
                 operating_state = OperatingState.HEALTH_HOLD
                 navigation_phase = "HEALTH_HOLD"
             elif trip_doc:
@@ -898,7 +1097,7 @@ class SimulatorManager:
                         if state.resume_pending
                         else OperatingState.DRIVING
                     )
-                    speed_kmh = self._rng.uniform(32, 48)
+                    speed_kmh = 35.0
                     if destination_lat is not None and destination_lon is not None:
                         distance, distance_to_destination_km = advance_toward_location(
                             state,
@@ -931,7 +1130,14 @@ class SimulatorManager:
                 ):
                     await self._db.trips.update_one(
                         {"trip_id": trip.trip_id},
-                        {"$set": {"status": TripStatus.COMPLETED.value}},
+                        {
+                            "$set": {
+                                "status": TripStatus.COMPLETED.value,
+                                "completed_at": now,
+                                "service_until": now
+                                + timedelta(minutes=trip.service_duration_minutes),
+                            }
+                        },
                     )
                     state.trip_id = None
                     state.route_remaining_km = 0

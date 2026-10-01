@@ -126,7 +126,7 @@ class DemoJourneyTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_complete_journey_and_port_release(self):
         await self.manager._tick()
-        self.assertEqual("DRIVING", (await self.latest())["operating_state"])
+        self.assertEqual("AWAITING_DECISION", (await self.latest())["operating_state"])
         plan = await self.plan()
         approval = await self.client.post(f"/charging/plans/{plan['plan_id']}/approve")
         self.assertEqual(200, approval.status_code, approval.text)
@@ -191,7 +191,8 @@ class DemoJourneyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("AT_CUSTOMER", (await self.latest())["operating_state"])
         await self.manager._load_states()
         await self.manager._tick()
-        self.assertEqual("AT_CUSTOMER", (await self.latest())["operating_state"])
+        self.assertEqual("DRIVING", (await self.latest())["operating_state"])
+        self.assertEqual("SIM-TRIP-0001-LEG-2", (await self.latest())["trip_id"])
 
     async def test_arrival_reports_waiting_and_does_not_charge_before_slot(self):
         plan = await self.plan()
@@ -254,7 +255,7 @@ class DemoJourneyTests(unittest.IsolatedAsyncioTestCase):
         for i in range(1, 5):
             vin = f"SIM{i:014d}"
             event = TelemetryEvent(**await self.latest(vin)).model_copy(
-                update={"event_id": f"low-{i}", "seq": 1, "soc_pct": 20}
+                update={"event_id": f"low-{i}", "seq": 1, "soc_pct": 8}
             )
             await store_telemetry(event, self.db, self.redis, self.kafka)
         plans = await asyncio.gather(
@@ -371,53 +372,27 @@ class DemoJourneyTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_all_scenarios_and_failed_charger_and_overheating(self):
+    async def test_all_scenarios_use_healthy_chargers_or_explicit_decisions(self):
+        no_plan = {
+            "NORMAL_DAY",
+            "UNREACHABLE_CHARGER",
+            "NONFINAL_PRIORITY",
+            "NONFINAL_CONFLICT",
+            "FINAL_PRIORITY",
+        }
         for scenario in SimulationScenario:
             await self.seed(scenario)
-            if scenario == SimulationScenario.UNEXPECTED_LONG_TRIP:
-                for _ in range(6):
-                    await self.manager._tick()
             response = await self.client.post(f"/charging/plans/{self.vin}")
-            if scenario in {
-                SimulationScenario.NORMAL_DAY,
-                SimulationScenario.BATTERY_OVERHEATING,
-                SimulationScenario.UNREACHABLE_CHARGER,
-            }:
-                self.assertEqual(422, response.status_code, response.text)
-            else:
-                self.assertEqual(201, response.status_code, response.text)
-                plan = response.json()
+            self.assertEqual(
+                422 if scenario.value in no_plan else 201,
+                response.status_code,
+                (scenario, response.text),
+            )
+            if response.status_code == 201:
                 charger = await self.db.chargers.find_one(
-                    {"charger_id": plan["charger_id"]}
+                    {"charger_id": response.json()["charger_id"]}
                 )
                 self.assertEqual("AVAILABLE", charger["status"])
-            await self.manager._tick()
-            if scenario == SimulationScenario.BATTERY_OVERHEATING:
-                self.assertGreaterEqual(
-                    (await self.latest())["battery_temperature_c"], 45
-                )
-
-    async def test_long_trip_has_feasible_emergency_plan_after_route_extension(self):
-        await self.seed(SimulationScenario.UNEXPECTED_LONG_TRIP, count=1)
-        self.manager._time_scale = 300
-        for _ in range(6):
-            await self.manager._tick()
-        plan = await self.plan()
-        charger = await self.db.chargers.find_one({"charger_id": plan["charger_id"]})
-        trip = await self.db.trips.find_one({"trip_id": plan["trip_id"]})
-        self.assertAlmostEqual(
-            plan["remaining_delivery_km"],
-            haversine_km(
-                charger["lat"],
-                charger["lon"],
-                trip["destination_lat"],
-                trip["destination_lon"],
-            ),
-            places=2,
-        )
-        self.assertGreater(plan["remaining_delivery_km"], 120)
-        approval = await self.client.post(f"/charging/plans/{plan['plan_id']}/approve")
-        self.assertEqual(200, approval.status_code, approval.text)
 
     async def test_zero_energy_stops_at_actual_range(self):
         state = self.manager._states[self.vin]
@@ -664,16 +639,16 @@ class DemoJourneyTests(unittest.IsolatedAsyncioTestCase):
             422, (await self.client.post(f"/charging/plans/{self.vin}")).status_code
         )
 
-    async def test_daily_itinerary_connected_and_schedule_only_not_executed(self):
+    async def test_daily_itinerary_connected_and_all_legs_enabled(self):
         trips = (await self.client.get(f"/trips/vehicle/{self.vin}")).json()
-        self.assertEqual(3, len(trips))
+        self.assertEqual(6, len(trips))
         for a, b in zip(trips, trips[1:]):
             self.assertEqual(a["destination"], b["origin"])
             self.assertEqual(
                 (a["destination_lat"], a["destination_lon"]),
                 (b["origin_lat"], b["origin_lon"]),
             )
-            self.assertLess(a["delivery_deadline"], b["departure_time"])
+            self.assertLess(a["departure_time"], b["departure_time"])
         for trip in trips:
             self.assertAlmostEqual(
                 trip["distance_km"],
@@ -685,21 +660,8 @@ class DemoJourneyTests(unittest.IsolatedAsyncioTestCase):
                 ),
                 places=4,
             )
-        await self.db.trips.update_one(
-            {"trip_id": trips[0]["trip_id"]}, {"$set": {"status": "COMPLETED"}}
-        )
-        state = self.manager._states[self.vin]
-        state.arrived = True
-        state.trip_id = None
-        self.manager._simulated_time += timedelta(hours=10)
-        await self.manager._tick()
-        self.assertEqual("AT_CUSTOMER", (await self.latest())["operating_state"])
-        view = (await self.client.get("/fleet/manager")).json()
-        self.assertEqual("COMPLETE", view["vehicles"][0]["manager_readiness"])
-        self.assertEqual(
-            "PLANNED",
-            (await self.db.trips.find_one({"trip_id": trips[1]["trip_id"]}))["status"],
-        )
+        self.assertTrue(all(t["simulation_enabled"] for t in trips))
+        self.assertTrue(all(t["service_duration_minutes"] > 0 for t in trips))
 
     async def test_reset_preserves_non_demo_data_and_hides_legacy_resources(self):
         await self.db.vehicles.insert_one({"vin": "REAL00000000001", "active": True})
@@ -726,7 +688,11 @@ class DemoJourneyTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_health_hold_does_not_drive_or_offer_charging(self):
-        await self.seed(SimulationScenario.BATTERY_OVERHEATING)
+        before = TelemetryEvent(**await self.latest()).model_copy(
+            update={"event_id": "hot-battery", "seq": 1, "battery_temperature_c": 48}
+        )
+        await store_telemetry(before, self.db, self.redis, self.kafka)
+        await self.manager._load_states()
         before = await self.latest()
         await self.manager._tick()
         after = await self.latest()
@@ -745,7 +711,7 @@ class DemoJourneyTests(unittest.IsolatedAsyncioTestCase):
         await self.seed(SimulationScenario.NORMAL_DAY, count=100)
         view = (await self.client.get("/fleet/manager")).json()
         self.assertEqual(100, len(view["vehicles"]))
-        self.assertTrue(all(len(v["itinerary"]) == 3 for v in view["vehicles"]))
+        self.assertTrue(all(len(v["itinerary"]) == 4 for v in view["vehicles"]))
         self.assertTrue(
             all(v["simulation_run_id"] == view["run_id"] for v in view["vehicles"])
         )

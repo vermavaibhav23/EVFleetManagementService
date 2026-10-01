@@ -26,6 +26,14 @@ class Trip(BaseModel):
     service_duration_minutes: int = Field(default=20, ge=0, le=1440)
     status: TripStatus = TripStatus.PLANNED
     simulation_enabled: bool = True
+    sequence: int = 1
+    service_until: AwareDatetime | None = None
+    completed_at: AwareDatetime | None = None
+    accepted_delay: bool = False
+    reserve_exception: bool = False
+    recovery_requested: bool = False
+    transfer_from_vin: str | None = None
+    handover_trip_id: str | None = None
     created_at: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @field_validator("departure_time")
