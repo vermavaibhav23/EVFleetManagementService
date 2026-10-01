@@ -146,3 +146,6 @@ h3 { font-size: 14px; margin: 16px 0 8px; }
   .badge { min-width:0; }
   .system-state { font-size:12px; }
 }
+
+.map-shell { height: 360px; aspect-ratio: auto; }
+@media (max-width:600px) { .map-shell { height: 300px; aspect-ratio: auto; } }

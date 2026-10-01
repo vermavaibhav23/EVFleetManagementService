@@ -397,6 +397,7 @@ class SimulatorManager:
         self._rng = random.Random(42)
         self._error: str | None = None
         self._scenario: str | None = None
+        self._last_tick_real: float | None = None
         self._charger_locks: dict[str, asyncio.Lock] = {}
 
     @serialized
@@ -434,6 +435,7 @@ class SimulatorManager:
         self._states.clear()
         self._error = None
         self._simulated_time = None
+        self._last_tick_real = None
         self._emitted_events = 0
 
     @serialized
@@ -443,6 +445,7 @@ class SimulatorManager:
             with suppress(asyncio.CancelledError):
                 await self._task
             self._task = None
+        self._last_tick_real = None
         return self.status()
 
     def status(self) -> SimulatorStatus:
@@ -502,10 +505,14 @@ class SimulatorManager:
         return latest_telemetry_time
 
     async def _run(self) -> None:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time()
+        self._last_tick_real = deadline - self._tick_seconds
         try:
             while True:
                 await self._tick()
-                await asyncio.sleep(self._tick_seconds)
+                deadline = max(deadline + self._tick_seconds, loop.time())
+                await asyncio.sleep(max(0, deadline - loop.time()))
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - Task boundary: make failure observable without secrets.
@@ -517,7 +524,12 @@ class SimulatorManager:
     @serialized
     async def _tick(self) -> None:
         assert self._simulated_time is not None
-        elapsed_simulated_seconds = self._tick_seconds * self._time_scale
+        elapsed_real = self._tick_seconds
+        if self._last_tick_real is not None:
+            real_now = asyncio.get_running_loop().time()
+            elapsed_real = max(0, real_now - self._last_tick_real)
+            self._last_tick_real = real_now
+        elapsed_simulated_seconds = elapsed_real * self._time_scale
         self._simulated_time += timedelta(seconds=elapsed_simulated_seconds)
         results = await asyncio.gather(
             *(

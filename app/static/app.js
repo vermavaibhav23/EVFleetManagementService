@@ -54,6 +54,7 @@ async function loadDashboard() {
     ]);
     if (version !== epoch || busy) return;
     dashboard = {overview,fleet,alerts,plans,simulator,chargers,depots,health};
+    if (!connected && byId("message").classList.contains("error")) setMessage("Connection restored. Live data is up to date.");
     connected = true;
     byId("live-dot").classList.add("online");
     byId("system-label").textContent = "API connected";
@@ -97,6 +98,8 @@ function renderVehicles(vehicles, plans) {
 }
 // Both views use the same physical coordinates. The detail view has its own scale.
 function drawMap(svg, vehicles, chargers, depots, detail) {
+  const width = Math.max(320, svg.clientWidth || 1000), height = Math.max(280, svg.clientHeight || 420);
+  svg.setAttribute?.("viewBox", `0 0 ${width} ${height}`);
   const depot = depots[0];
   const near = v => !detail || !depot || Math.hypot((v.lat-depot.lat)*111,(v.lon-depot.lon)*108)<12;
   const nodes = [
@@ -110,8 +113,8 @@ function drawMap(svg, vehicles, chargers, depots, detail) {
   const xs = nodes.map(n=>n.lon*cos), ys=nodes.map(n=>n.lat);
   const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
   const spanX=Math.max(.015,maxX-minX),spanY=Math.max(.015,maxY-minY);
-  const scale=Math.min(860/spanX,320/spanY);
-  const project=(lat,lon)=>({x:500+(lon*cos-(minX+maxX)/2)*scale,y:210-(lat-(minY+maxY)/2)*scale});
+  const scale=Math.min((width-80)/spanX,(height-80)/spanY);
+  const project=(lat,lon)=>({x:width/2+(lon*cos-(minX+maxX)/2)*scale,y:height/2-(lat-(minY+maxY)/2)*scale});
   const routes=vehicles.filter(v=>v.lat!=null&&v.destination_lat!=null&&(!detail||near(v))).map(v=>{
     const a=project(v.lat,v.lon),b=project(v.destination_lat,v.destination_lon);
     return `<line class="map-route ${v.navigation_phase==="TO_CHARGER"?"charger-route":"delivery-route"}" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"/>`;
@@ -123,13 +126,13 @@ function drawMap(svg, vehicles, chargers, depots, detail) {
     // Screen-space displacement only; leader lines preserve the geographic point.
     for(let attempt=0;attempt<300&&placed.some(q=>Math.hypot(p.x-q.x,p.y-q.y)<29);attempt++) {
       const radius=18*Math.sqrt(attempt+1),angle=attempt*2.4;
-      p={x:Math.max(22,Math.min(978,real.x+Math.cos(angle)*radius)),y:Math.max(22,Math.min(398,real.y+Math.sin(angle)*radius))};
+      p={x:Math.max(22,Math.min(width-22,real.x+Math.cos(angle)*radius)),y:Math.max(22,Math.min(height-22,real.y+Math.sin(angle)*radius))};
     }
     placed.push(p);
     const shape=n.kind==="charger"?`<rect class="map-charger" x="${p.x-13}" y="${p.y-13}" width="26" height="26" rx="3"/>`:n.kind==="depot"?`<path class="map-depot" d="M ${p.x} ${p.y-16} L ${p.x+16} ${p.y} L ${p.x} ${p.y+16} L ${p.x-16} ${p.y} Z"/>`:`<circle class="map-${n.kind}" cx="${p.x}" cy="${p.y}" r="${n.kind==="destination"?5:13}"/>`;
     return `<g tabindex="0" role="button" data-map-name="${escapeHtml(n.name)}" aria-label="${escapeHtml(n.name)}"><title>${escapeHtml(n.name)}</title><line class="marker-leader" x1="${real.x}" y1="${real.y}" x2="${p.x}" y2="${p.y}"/>${shape}<text class="marker-code" x="${p.x}" y="${p.y+3}">${n.key}</text></g>`;
   }).join("");
-  svg.innerHTML=`<rect width="1000" height="420" fill="#eef3f2"/>${routes}${markers}`;
+  svg.innerHTML=`<rect width="${width}" height="${height}" fill="#eef3f2"/>${routes}${markers}`;
 }
 function renderMap(vehicles,chargers,depots) {
   byId("map-empty").hidden=vehicles.length+chargers.length>0;
@@ -180,6 +183,7 @@ document.addEventListener("click",async event=>{
   if(action==="generate") viewPlan(id);
 });
 document.addEventListener("keydown",event=>{if(event.key==="Enter"&&event.target.dataset.mapName)setMessage(event.target.dataset.mapName);});
+document.defaultView?.addEventListener("resize",()=>{if(dashboard)renderMap(dashboard.fleet.vehicles,dashboard.chargers,dashboard.depots);});
 updateControls();
 refresh();
 setInterval(()=>refresh(),2000);

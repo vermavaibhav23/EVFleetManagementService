@@ -39,7 +39,7 @@ async def list_chargers() -> list[Charger]:
         doc["reserved_ports"] = len(reserved)
         doc["free_ports"] = (
             max(0, doc["port_count"] - len(set(occupied)))
-            if doc["status"] == "AVAILABLE"
+            if str(doc["status"]).upper() == "AVAILABLE"
             else 0
         )
         chargers.append(Charger(**doc))

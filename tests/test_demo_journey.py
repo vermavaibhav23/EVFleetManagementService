@@ -2,7 +2,7 @@ import asyncio
 import json
 import unittest
 from contextlib import ExitStack
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import httpx
@@ -10,7 +10,7 @@ from mongomock_motor import AsyncMongoMockClient
 
 from app.main import app
 from app.models.simulator import ScenarioRequest, SimulationScenario
-from app.models.telemetry import TelemetryEvent
+from app.models.telemetry import OperatingState, TelemetryEvent
 from app.models.trip import TripUpdate
 from app.services.energy import charge_for_seconds, charging_seconds
 from app.services.fleet_readiness import update_charging_lifecycle
@@ -413,3 +413,104 @@ class DemoJourneyTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.post(f"/charging/plans/{plan['plan_id']}/approve")
         self.assertEqual(200, response.status_code, response.text)
         self.assertNotEqual(plan["charger_id"], response.json()["charger_id"])
+
+    async def test_confirmed_reservation_blocks_physical_charging(self):
+        plan = await self.plan()
+        approved = (
+            await self.client.post(f"/charging/plans/{plan['plan_id']}/approve")
+        ).json()
+        charger = await self.db.chargers.find_one(
+            {"charger_id": approved["charger_id"]}
+        )
+        state = self.manager._states[self.vin]
+        state.lat, state.lon = charger["lat"], charger["lon"]
+        self.manager._simulated_time = datetime.fromisoformat(approved["start_time"])
+        await self.db.reservations.insert_one(
+            {
+                "reservation_id": "block",
+                "vin": "SIM00000000000002",
+                "plan_id": "other",
+                "charger_id": approved["charger_id"],
+                "port_number": approved["port_number"],
+                "start_time": self.manager._simulated_time,
+                "end_time": self.manager._simulated_time + timedelta(hours=1),
+                "status": "CONFIRMED",
+                "reserved_power_kw": 60,
+            }
+        )
+        soc = state.soc_pct
+        await self.manager._tick()
+        self.assertEqual(
+            "WAITING_FOR_CHARGER", (await self.latest())["operating_state"]
+        )
+        self.assertEqual(soc, state.soc_pct)
+        self.assertFalse((await self.latest())["is_plugged_in"])
+
+    async def test_ready_resume_survives_manager_reload(self):
+        event = TelemetryEvent(**await self.latest()).model_copy(
+            update={
+                "event_id": "ready-event",
+                "seq": 1,
+                "operating_state": OperatingState.READY,
+                "soc_pct": 80,
+            }
+        )
+        await store_telemetry(event, self.db, self.redis, self.kafka)
+        await self.manager._load_states()
+        self.assertTrue(self.manager._states[self.vin].resume_pending)
+        await self.manager._tick()
+        self.assertEqual("RESUMING_TRIP", (await self.latest())["operating_state"])
+
+    async def test_delayed_approval_rejects_missed_delivery_deadline(self):
+        plan = await self.plan()
+        await self.db.trips.update_one(
+            {"vin": self.vin},
+            {
+                "$set": {
+                    "delivery_deadline": self.manager._simulated_time
+                    + timedelta(minutes=2)
+                }
+            },
+        )
+        response = await self.client.post(f"/charging/plans/{plan['plan_id']}/approve")
+        self.assertEqual(422, response.status_code)
+        self.assertEqual(
+            0, await self.db.reservations.count_documents({"plan_id": plan["plan_id"]})
+        )
+
+    async def test_battery_target_includes_charger_to_customer_and_reserve(self):
+        plan = await self.plan()
+        vehicle = self.manager._states[self.vin]
+        capacity = vehicle.vehicle.usable_capacity_kwh * vehicle.soh_pct / 100
+        required = (
+            plan["remaining_delivery_km"] + 30
+        ) * vehicle.vehicle.consumption_kwh_per_km
+        self.assertGreaterEqual(
+            plan["target_soc_pct"] / 100 * capacity, required - 0.001
+        )
+        self.assertGreater(plan["grid_energy_kwh"], plan["energy_required_kwh"])
+        arrival = datetime.fromisoformat(plan["estimated_arrival_time"])
+        self.assertGreater(arrival, self.manager._simulated_time)
+        self.assertGreaterEqual(datetime.fromisoformat(plan["start_time"]), arrival)
+
+    async def test_simulation_cannot_select_legacy_depot_charger(self):
+        charger = await self.db.chargers.find_one({"charger_id": "SIM-CHARGER-FAST"})
+        charger.pop("_id")
+        charger.update(
+            charger_id="LEGACY",
+            depot_id="OTHER",
+            price_per_kwh=0,
+            lat=12.9716,
+            lon=77.5946,
+        )
+        await self.db.chargers.insert_one(charger)
+        self.assertNotEqual("LEGACY", (await self.plan())["charger_id"])
+
+    async def test_simulation_clock_includes_io_time(self):
+        loop = asyncio.get_running_loop()
+        self.manager._last_tick_real = loop.time() - 2
+        before = self.manager._simulated_time
+        await self.manager._tick()
+        elapsed = (self.manager._simulated_time - before).total_seconds()
+        self.assertGreaterEqual(elapsed, 120)
+        self.assertLess(elapsed, 125)

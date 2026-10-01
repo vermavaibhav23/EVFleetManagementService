@@ -21,3 +21,16 @@ Baseline: main `4d805c0`, clean tracked tree. unittest: 19 passed; pytest: 20 pa
 - [ ] Add API/state-machine/contention/frontend regressions; run measured load and live acceptance.
 
 Deployment and acceptance evidence will be appended after verification. No 100,000 events/s claim is validated.
+
+## Reproduced live baseline
+
+Railway baseline 4d805c0: seed/start/first approval HTTP 200; repeated approval HTTP 409, confirmed in application logs. The legacy BLR-EV-002 resource was preserved and excluded from SIM planning.
+
+## Additional findings during live acceptance
+
+- Nominal 60x originally ignored database time in the tick loop; elapsed monotonic time now determines the simulation clock. Regression: test_simulation_clock_includes_io_time.
+- Kafka replay repeated already-completed readiness work; per-event operations_processed now makes consumer replay idempotent.
+- Legacy lowercase charger status falsely reported zero free ports; normalize when deriving port availability.
+- Mobile map scaled symbols below readable sizes; projection now uses each SVG viewport while retaining geographic coordinates.
+
+Checks before live deployment: 40 pytest tests and four Node frontend tests pass. Test dependencies are in requirements-dev.txt.

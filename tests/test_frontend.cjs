@@ -8,7 +8,7 @@ const source = fs.readFileSync(path.join(__dirname, '../app/static/app.js'), 'ut
 function harness(fetch) {
   const nodes = new Map();
   const node = id => {
-    if (!nodes.has(id)) nodes.set(id, {innerHTML:'', textContent:'', disabled:false, classList:{add(){},remove(){},toggle(){}},addEventListener(){},querySelectorAll(){return[];}});
+    if (!nodes.has(id)) nodes.set(id, {innerHTML:'', textContent:'', disabled:false, classList:{add(){},remove(){},toggle(){},contains(){return false;}},addEventListener(){},querySelectorAll(){return[];}});
     return nodes.get(id);
   };
   const context = vm.createContext({document:{getElementById:node,querySelectorAll:()=>[],addEventListener(){}}, fetch, AbortSignal, setInterval(){},setTimeout(){}, console});

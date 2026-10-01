@@ -189,13 +189,20 @@ async def process_telemetry_for_operations(
 ) -> None:
     latest = await db.telemetry.find_one(
         {"vin": event.vin},
-        {"event_id": 1},
+        {"event_id": 1, "operations_processed": 1},
         sort=[("ts", -1), ("seq", -1)],
     )
-    if latest is None or latest.get("event_id") != event.event_id:
+    if (
+        latest is None
+        or latest.get("event_id") != event.event_id
+        or latest.get("operations_processed")
+    ):
         return
 
     await update_charging_lifecycle(db, event)
     assessment = await evaluate_vehicle_readiness(db, event.vin, event)
     if assessment is not None:
         await synchronize_readiness_alert(db, assessment, kafka)
+    await db.telemetry.update_one(
+        {"event_id": event.event_id}, {"$set": {"operations_processed": True}}
+    )
