@@ -6,7 +6,7 @@ Hackathon demonstration of a connected EV fleet platform. The service converts l
 
 Open `/portal` for **Overview**, **Vehicles**, **Chargers**, and **Plans & Decisions**. Choose a grouped **Scenario**, load 10 vehicles, review Van 001 and approve the charging plan or manager decision. Every load starts paused at current IST.
 
-Ten scenarios are arranged into four compact groups. Non-final cases execute a connected six-stop timetable, including later reserved charging sessions. The planner charges toward full within the protected departure window, preserves reserve by default, and checks continuation through later deliveries. Priority cases offer an explicit reserve exception with recovery requested and feasible package handover/reassignment, or accepting a charging delay while retaining original deadlines.
+Fifteen scenarios are arranged into four compact groups. Non-final cases execute a connected six-stop timetable, including later reserved charging sessions. The planner charges toward full within the protected departure window, preserves reserve by default, and checks continuation through later deliveries. Priority cases offer an explicit reserve exception with recovery requested and feasible package handover/reassignment, or accepting a charging delay while retaining original deadlines.
 
 The city map shows fixed, separated stations, distributed customers, individually selectable cars, green charging pulses and gray waiting vehicles. Port occupancy and queues come from actual simulation sessions. See [the demonstration guide](docs/manager-demo.md) for the full scenario table and limits.
 
@@ -22,7 +22,7 @@ The city map shows fixed, separated stations, distributed customers, individuall
 - Charger selection that checks connector compatibility, reachability, port reservations, waiting time, tariffs, charging duration, and the next departure deadline.
 - Serialized proposed-plan approval that revalidates and reserves current and later charging slots.
 - Deterministic simulator with realistic battery decrease while driving and increase while charging.
-- Ten grouped demo scenarios and an accelerated simulation clock.
+- Fifteen grouped demo scenarios and an accelerated simulation clock.
 - Manual fleet portal at `/portal` and interactive OpenAPI documentation at `/docs`.
 
 ## Architecture
@@ -84,7 +84,7 @@ Open:
 10. The delivery resumes from the charger (`RESUMING_TRIP`) and ends at `AT_CUSTOMER`.
 11. Stop freezes all telemetry; reseeding automatically stops and resets the disposable SIM fleet.
 
-Scenario groups: **Normal Operations**, **Charger Scenarios** (Busy Chargers / Charger Offline), **Non-final Deliveries** (Time to Charge Ahead / Tight Next Deadline / Priority Delivery / Timetable Conflict), and **Final Delivery** (Time to Top Up / Deadline First / Priority Final Stop).
+Scenario groups: **Normal Operations**, **Charger Scenarios**, **Non-final Deliveries**, and **Final Delivery**. The [demonstration guide](docs/manager-demo.md) lists all 15 cases and station-failure variations. Presets configure starting conditions; all vehicles use shared runtime planning. Reviewing options leaves the simulation running. The selected vehicle’s journey tracker records real transitions for each leg.
 
 ## Core endpoints
 

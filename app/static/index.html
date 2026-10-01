@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#103d36" />
     <title>EV Fleet</title>
-    <link rel="stylesheet" href="/static/styles.css?v=timetable-2" />
+    <link rel="stylesheet" href="/static/styles.css?v=journey-1" />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to fleet workspace</a>
@@ -25,28 +25,9 @@
     <main id="main">
       <section class="control-band" aria-label="Global demo controls">
         <label
-          >Scenario<select id="scenario">
-            <optgroup label="Normal Operations">
-              <option value="NORMAL_DAY">Normal Operations</option>
-            </optgroup>
-            <optgroup label="Charger Scenarios">
-              <option value="CHARGER_CONGESTION">Busy Chargers</option>
-              <option value="CHARGER_FAILURE">Charger Offline</option>
-            </optgroup>
-            <optgroup label="Non-final Deliveries">
-              <option value="NONFINAL_RELAXED">Time to Charge Ahead</option>
-              <option value="NONFINAL_TIGHT">Tight Next Deadline</option>
-              <option value="NONFINAL_PRIORITY">Priority Delivery</option>
-              <option value="NONFINAL_CONFLICT">Timetable Conflict</option>
-            </optgroup>
-            <optgroup label="Final Delivery">
-              <option value="FINAL_RELAXED">Time to Top Up</option>
-              <option value="FINAL_TIGHT">Deadline First</option>
-              <option value="FINAL_PRIORITY">Priority Final Stop</option>
-            </optgroup>
-          </select></label
+          >Scenario<select id="scenario"><optgroup label="Normal Operations"><option value="NORMAL_DAY">Smooth Deliveries</option><option value="NORMAL_LATER">Charging Needed Later</option></optgroup><optgroup label="Charger Scenarios"><option value="CHARGER_RELAXED">Busy Chargers - Time to Save</option><option value="CHARGER_CONGESTION">Busy Chargers - Deadline First</option><option value="CHARGER_FAILURE">Charger Unavailable / Offline / Faulty / Incompatible Connector</option><option value="CHARGER_INTERRUPTION">Charger Fails During Journey</option><option value="QUEUE_OVERRUN">Queue Takes Longer</option></optgroup><optgroup label="Non-final Deliveries"><option value="NONFINAL_RELAXED">Charge Ahead for Later Stops</option><option value="NONFINAL_TIGHT">Tight Next Deadline</option><option value="NONFINAL_PRIORITY">Priority Delivery - Reserve Exception</option><option value="NONFINAL_CONTINUATION">Priority Delivery - No Safe Continuation</option><option value="NONFINAL_CONFLICT">Timetable Conflict</option></optgroup><optgroup label="Final Delivery"><option value="FINAL_RELAXED">Time to Top Up</option><option value="FINAL_TIGHT">Deadline First</option><option value="FINAL_PRIORITY">Priority Final Stop</option></optgroup></select></label
         >
-        <label
+        <label id="variant-control" hidden>Variation<select id="scenario-variant"></select></label><label
           >Fleet size<input
             id="vehicle-count"
             type="number"
@@ -116,7 +97,7 @@
               <span class="badge neutral">Straight-line demo</span>
             </div>
             <div class="map-tools">
-              <button data-map="fit">Fit fleet</button>
+              <button data-map="fit">Fit fleet</button><button data-map="in" aria-label="Zoom in" title="Zoom in">+</button><button data-map="out" aria-label="Zoom out" title="Zoom out">−</button>
             </div>
             <div class="map-shell">
               <svg
@@ -136,7 +117,7 @@
               ><span><i class="key waiting"></i>Waiting</span
               ><span><i class="key depot"></i>Depot</span
               ><span><i class="key charger"></i>Charger</span
-              ><span><i class="key destination"></i>Customer</span
+              ><span><i class="key customer-diamond"></i>Customer</span
               ><span><i class="line-key"></i>Delivery</span
               ><span><i class="line-key proposed"></i>Proposed</span
               ><span><i class="line-key approved"></i>Approved</span>
@@ -224,6 +205,6 @@
         ><span id="freshness">Waiting for first snapshot</span>
       </footer>
     </main>
-    <script src="/static/app.js?v=timetable-2"></script>
+    <script src="/static/app.js?v=journey-1"></script>
   </body>
 </html>

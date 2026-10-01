@@ -1831,3 +1831,25 @@ details summary {
     grid-template-columns: 1fr;
   }
 }
+
+/* Event-backed progress for the selected delivery leg. */
+.key.customer-diamond { width:9px; height:9px; background:#8954de; border:0; border-radius:0; transform:rotate(45deg); }
+.journey-progress { margin-top:18px; padding-top:16px; border-top:1px solid #dce6eb; }
+.journey-progress h3 { margin:0 0 6px; font-size:15px; }
+.journey-leg,.journey-extra { margin:5px 0; font-size:12px; color:#5d7380; }
+.journey-status { display:block; color:#16765e; margin:10px 0; }
+.journey-status.warning { color:#b14822; }
+.journey-steps { list-style:none; padding:0; margin:10px 0; max-height:310px; overflow:auto; }
+.journey-steps li { display:grid; grid-template-columns:22px 1fr auto; gap:5px; align-items:start; padding:8px 6px; border-left:2px solid #dce6eb; margin-left:8px; font-size:12px; }
+.journey-steps li.current { background:#eaf4ff; border-color:#318ae0; border-radius:5px; font-weight:600; }
+.journey-steps li.stage-charging.current { background:#dcf8e9; border-color:#18a970; }
+.journey-steps li.done { color:#16765e; }
+.journey-steps li.warning { color:#a64920; background:#fff5e8; }
+.journey-steps li.upcoming { color:#94a3ac; }
+.journey-steps small { display:block; margin-top:3px; font-size:10px; font-weight:400; }
+.journey-steps time { font-size:9px; color:#6b7f8d; }
+.journey-symbol { text-align:center; }
+.journey-progress details { font-size:11px; }
+.control-band select#scenario { max-width:290px; }
+.control-band [hidden] { display:none !important; }
+@media (prefers-reduced-motion:no-preference) { .stage-charging.current .journey-symbol { animation:chargeGlow 1.8s ease-in-out infinite; } }

@@ -86,6 +86,7 @@ def create_recommendation(
     average_travel_speed_kmh=35,
     charging_efficiency=0.92,
     future_trips=None,
+    reviewed_plan=None,
 ):
     now = (now or datetime.now(UTC)).astimezone(UTC)
     future = sorted(
@@ -99,9 +100,10 @@ def create_recommendation(
         key=lambda t: t.departure_time,
     )
 
-    def no(reason, exclusions=None):
+    def no(reason, exclusions=None, required=False):
         return ChargingRecommendation(
             vin=vehicle.vin,
+            decision_required=required,
             readiness=readiness,
             reason=reason,
             exclusions=exclusions or [],
@@ -124,17 +126,12 @@ def create_recommendation(
     if capacity <= 0:
         return no("Battery capacity is unavailable.")
     available = capacity * telemetry.soc_pct / 100
-    healthy = healthy_chargers(vehicle, chargers)
     current_location = (telemetry.lat, telemetry.lon)
     minimum_km = (
         leg_distance(current_location, trip)
         + reserve_range_km
         + escape_km(vehicle, trip, future, chargers)
     )
-    if available >= minimum_km * consumption and not trip.accepted_delay:
-        return no(
-            "Enough energy for the next delivery and a safe continuation. No charging detour is needed."
-        )
     if trip.reserve_exception:
         return no(
             "Manager approved direct delivery with a reserve exception. Recovery is requested."
@@ -162,12 +159,24 @@ def create_recommendation(
         options = []
         exclusions = []
         for c in chargers:
+            reviewed = (
+                reviewed_plan
+                if reviewed_plan and t.trip_id == reviewed_plan.trip_id
+                else None
+            )
+            if reviewed and c.charger_id != reviewed.charger_id:
+                continue
 
             def exclude(reason):
                 exclusions.append({"charger_id": c.charger_id, "reason": reason})
 
-            if c not in healthy:
-                exclude("Station offline or connector incompatible")
+            if c.status not in {ChargerStatus.AVAILABLE, ChargerStatus.OCCUPIED}:
+                exclude(f"Station {c.status.value.lower()}")
+                continue
+            if c.connector_type.casefold() != vehicle.connector_type.casefold():
+                exclude(
+                    f"Incompatible connector: {c.connector_type}; vehicle needs {vehicle.connector_type}"
+                )
                 continue
             travel = haversine_km(*origin, c.lat, c.lon)
             arrival_energy = energy - travel * consumption
@@ -207,10 +216,22 @@ def create_recommendation(
                     )
                 cumulative += later_trip.service_duration_minutes
                 previous = destination(later_trip, previous)
-            slot = _round_up(arrival, slot_minutes)
+            slot = (
+                _round_up(
+                    arrival + timedelta(minutes=5 if depth_review(t, moment) else 0),
+                    slot_minutes,
+                )
+                if not reviewed
+                else reviewed.start_time
+            )
+            if slot < arrival:
+                exclude("Reviewed slot can no longer be reached in time")
+                continue
             best = None
             while slot < cutoff:
                 for port in range(1, c.port_count + 1):
+                    if reviewed and port != reviewed.port_number:
+                        continue
                     if any(
                         r.charger_id == c.charger_id
                         and r.port_number == port
@@ -237,6 +258,10 @@ def create_recommendation(
                         usable,
                     )
                     target = math.floor(target * 10 + 1e-7) / 10
+                    if reviewed:
+                        if target + 1e-7 < reviewed.target_soc_pct:
+                            continue
+                        target = reviewed.target_soc_pct
                     if (
                         target * capacity / 100 + 1e-8 < min_energy
                         or target <= arrival_energy / capacity * 100
@@ -292,7 +317,7 @@ def create_recommendation(
                     margin = (cutoff - end).total_seconds() / 60
                     unit = cost / grid if grid else c.price_per_kwh
                     # Targets differ: compare unit energy price, travel and waiting after feasibility.
-                    score = unit + travel * 0.15 + wait * 0.08
+                    score = unit
                     candidate = CandidateCharger(
                         charger_id=c.charger_id,
                         port_number=port,
@@ -322,6 +347,8 @@ def create_recommendation(
                         best = candidate
                 # An earlier available slot gives the most time to charge; retain later slots if blocked.
                 if best:
+                    break
+                if reviewed:
                     break
                 slot += timedelta(minutes=slot_minutes)
             if best:
@@ -374,7 +401,13 @@ def create_recommendation(
                     )
                 )
         return sorted(
-            options, key=lambda o: (o.total_score, -o.target_soc_pct)
+            options,
+            key=lambda o: (
+                o.average_price_per_kwh,
+                o.travel_distance_km,
+                o.wait_minutes,
+                -o.target_soc_pct,
+            ),
         ), exclusions
 
     def route_check(origin, energy, moment, route, held, depth=0):
@@ -422,6 +455,20 @@ def create_recommendation(
             covered += 1
         return follow, covered
 
+    def depth_review(t, moment):
+        return t.trip_id == trip.trip_id and moment == now
+
+    continuation = None
+    direct_covered = 0
+    if available >= minimum_km * consumption:
+        continuation, direct_covered = route_check(
+            current_location, available, now, [trip] + future, reservations
+        )
+        if continuation == []:
+            return no(
+                "Enough energy and time for a safe continuation through the timetable. No charging detour is needed now."
+            )
+
     options, exclusions = station_options(
         current_location, available, now, trip, future, reservations
     )
@@ -456,10 +503,23 @@ def create_recommendation(
             o.follow_up_stops = follow
             o.covered_stops = covered
             feasible.append(o)
+    if continuation is not None and not trip.accepted_delay:
+        # Use a generous window now when a substantial top-up covers more stops.
+        # Otherwise keep the already-validated direct journey and charge later.
+        feasible = [
+            o
+            for o in feasible
+            if o.target_soc_pct >= 90 and o.covered_stops > direct_covered
+        ]
+        if not feasible:
+            return no(
+                "Enough energy for the next delivery; later charging fits the timetable. Continue now."
+            )
     if not feasible:
         return no(
             "No charging option meets the timetable with reserve and traffic buffer. Review a manager decision.",
             exclusions,
+            required=True,
         )
     selected = feasible[0]
     c = next(c for c in chargers if c.charger_id == selected.charger_id)
@@ -469,7 +529,7 @@ def create_recommendation(
         f"{selected.covered_stops} stop(s) covered before another charge; {follow_count} later charging stop(s) validated. "
         f"{selected.wait_minutes:g} min wait, {selected.charging_minutes:g} min charge, INR {selected.electricity_cost:.2f}. "
         f"{reserve_range_km:g} km reserve and {deadline_buffer_minutes} min traffic buffer retained. "
-        "Target uses the available time; selection compares unit energy cost, travel and waiting among feasible timetables."
+        "Target uses the available time; selection prioritises the lowest energy price among feasible timetables, then distance and waiting."
     )
     if trip.accepted_delay:
         reason = (
@@ -507,6 +567,7 @@ def create_recommendation(
     )
     return ChargingRecommendation(
         vin=vehicle.vin,
+        decision_required=True,
         readiness=readiness,
         plan=plan,
         reason=reason,

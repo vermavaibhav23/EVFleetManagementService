@@ -375,6 +375,8 @@ class DemoJourneyTests(unittest.IsolatedAsyncioTestCase):
     async def test_all_scenarios_use_healthy_chargers_or_explicit_decisions(self):
         no_plan = {
             "NORMAL_DAY",
+            "NORMAL_LATER",
+            "NONFINAL_CONTINUATION",
             "UNREACHABLE_CHARGER",
             "NONFINAL_PRIORITY",
             "NONFINAL_CONFLICT",
@@ -506,7 +508,7 @@ class DemoJourneyTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         response = await self.client.post(f"/charging/plans/{plan['plan_id']}/approve")
-        self.assertEqual(422, response.status_code)
+        self.assertEqual(409, response.status_code)
         self.assertEqual(
             0, await self.db.reservations.count_documents({"plan_id": plan["plan_id"]})
         )
@@ -539,14 +541,13 @@ class DemoJourneyTests(unittest.IsolatedAsyncioTestCase):
         await self.db.chargers.insert_one(charger)
         self.assertNotEqual("LEGACY", (await self.plan())["charger_id"])
 
-    async def test_simulation_clock_includes_io_time(self):
+    async def test_simulation_clock_is_not_advanced_by_io_delay(self):
         loop = asyncio.get_running_loop()
         self.manager._last_tick_real = loop.time() - 2
         before = self.manager._simulated_time
         await self.manager._tick()
         elapsed = (self.manager._simulated_time - before).total_seconds()
-        self.assertGreaterEqual(elapsed, 120)
-        self.assertLess(elapsed, 125)
+        self.assertEqual(elapsed, 60)
 
     async def test_legacy_charger_without_port_count_keeps_dashboard_available(self):
         await self.db.chargers.insert_one(

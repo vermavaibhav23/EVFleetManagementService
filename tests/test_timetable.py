@@ -61,7 +61,7 @@ class TimetableTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_catalog_and_real_queues(self):
-        self.assertEqual(10, len(SCENARIOS))
+        self.assertEqual(15, len(SCENARIOS))
         self.assertEqual(4, len({s[1] for s in SCENARIOS}))
         await self.seed("CHARGER_CONGESTION")
         s = await self.get("/fleet/manager")
@@ -181,12 +181,26 @@ class TimetableTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(d["delay_available"])
                 if sid == "NONFINAL_CONFLICT":
                     self.assertFalse(d["deliver_now_available"])
-                await self.approve()
+                self.assertIsNotNone(
+                    await self.f.db.charging_plans.find_one(
+                        {"vin": self.f.vin, "status": "APPROVED"}
+                    )
+                )
                 total = await self.f.db.trips.count_documents({"vin": self.f.vin})
                 await self.finish(total)
                 new = await self.f.db.trips.find_one({"trip_id": old["trip_id"]})
                 self.assertEqual(old["delivery_deadline"], new["delivery_deadline"])
-                self.assertGreater(new["completed_at"], new["delivery_deadline"])
+                if sid == "NONFINAL_CONFLICT":
+                    legs = await self.f.db.trips.find({"vin": self.f.vin}).to_list(20)
+                    self.assertTrue(
+                        any(
+                            leg["completed_at"] > leg["delivery_deadline"]
+                            for leg in legs
+                        )
+                    )
+                    self.assertLessEqual(new["completed_at"], new["delivery_deadline"])
+                else:
+                    self.assertGreater(new["completed_at"], new["delivery_deadline"])
 
     async def test_normal_and_current_clock(self):
         await self.seed("NORMAL_DAY")

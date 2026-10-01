@@ -1,8 +1,10 @@
+"""Smoke-test the published scenario catalogue using disposable SIM records."""
+
 import argparse
 import asyncio
 import json
 from pathlib import Path
-from time import perf_counter
+from time import monotonic
 
 import httpx
 
@@ -10,141 +12,158 @@ VIN = "SIM00000000000001"
 
 
 async def main(args):
-    out = Path(args.output)
-    BASE = args.base_url.rstrip("/") + "/api/v1"
     evidence = []
-    async with httpx.AsyncClient(base_url=BASE, timeout=60) as c:
+    out = Path(args.output)
+    async with httpx.AsyncClient(
+        base_url=args.base_url.rstrip("/") + "/api/v1", timeout=90
+    ) as client:
 
         async def req(method, path, **kwargs):
-            r = await c.request(method, path, **kwargs)
-            if r.status_code >= 400:
-                raise RuntimeError(f"{method} {path}: {r.status_code} {r.text}")
-            return r.json()
+            response = await client.request(method, path, **kwargs)
+            response.raise_for_status()
+            return response.json()
+
+        async def seed(sid, variant="offline"):
+            await req(
+                "POST",
+                "/simulator/scenarios",
+                json={
+                    "scenario": sid,
+                    "variant": variant,
+                    "vehicle_count": 10,
+                    "seed": 42,
+                },
+            )
 
         try:
-            for scenario in [
-                "CHARGER_CONGESTION",
-                "CHARGER_FAILURE",
-                "BATTERY_OVERHEATING",
-                "UNEXPECTED_LONG_TRIP",
-                "NORMAL_DAY",
-                "UNREACHABLE_CHARGER",
-            ]:
-                result = {"scenario": scenario}
-                result["seed"] = await req(
-                    "POST",
-                    "/simulator/scenarios",
-                    json={"scenario": scenario, "vehicle_count": 10, "seed": 42},
-                )
-                await req(
-                    "POST",
-                    "/simulator/start",
-                    json={"tick_seconds": 1, "time_scale": 60},
-                )
-                start = perf_counter()
-                while True:
-                    event = (await req("GET", f"/vehicles/{VIN}/latest"))["vehicle"]
-                    if event["seq"] >= 6:
-                        break
-                    assert perf_counter() - start < 120
-                    await asyncio.sleep(1)
-                await req("POST", "/simulator/stop")
-                result["event"] = event
-                result["manager"] = await req("GET", "/fleet/manager")
-                r = await c.post(f"/charging/plans/{VIN}")
-                result["plan_status"] = r.status_code
-                result["plan_response"] = r.json()
-                if scenario in [
+            catalog = (await req("GET", "/fleet/manager"))["scenario_catalog"]
+            assert len(catalog) == 15 and len({s["group"] for s in catalog}) == 4
+            for entry in catalog:
+                sid = entry["id"]
+                await seed(sid)
+                d = await req("GET", f"/charging/recommendations/{VIN}")
+                p = d.get("plan")
+                no_plan = {
                     "NORMAL_DAY",
-                    "BATTERY_OVERHEATING",
-                    "UNREACHABLE_CHARGER",
-                ]:
-                    assert r.status_code == 422, r.text
-                    if scenario == "BATTERY_OVERHEATING":
-                        assert event["battery_temperature_c"] >= 45
-                else:
-                    assert r.status_code == 201, r.text
-                    plan = r.json()
-                    approved = await req(
-                        "POST", f"/charging/plans/{plan['plan_id']}/approve"
+                    "NORMAL_LATER",
+                    "NONFINAL_PRIORITY",
+                    "NONFINAL_CONTINUATION",
+                    "NONFINAL_CONFLICT",
+                    "FINAL_PRIORITY",
+                }
+                assert bool(p) == (sid not in no_plan), (sid, d)
+                result = {
+                    "scenario": sid,
+                    "passed": True,
+                    "station": p["charger_id"] if p else None,
+                    "target": p["target_soc_pct"] if p else None,
+                }
+                if sid == "CHARGER_RELAXED":
+                    assert p["charger_id"] == "SIM-CHARGER-CHEAP"
+                if sid == "CHARGER_CONGESTION":
+                    assert p["charger_id"] == "SIM-CHARGER-FAST"
+                if sid in {
+                    "NONFINAL_PRIORITY",
+                    "NONFINAL_CONTINUATION",
+                    "FINAL_PRIORITY",
+                    "NONFINAL_CONFLICT",
+                }:
+                    choice = await req("GET", f"/charging/manager-decisions/{VIN}")
+                    assert choice["delay_available"]
+                    assert choice["deliver_now_available"] == (
+                        sid != "NONFINAL_CONFLICT"
                     )
-                    result["approved"] = approved
-                    chargers = await req("GET", "/chargers")
-                    chosen = next(
-                        x for x in chargers if x["charger_id"] == approved["charger_id"]
+                    result["manager_choices"] = {
+                        k: choice[k]
+                        for k in ["delay_available", "deliver_now_available"]
+                    }
+                evidence.append(result)
+                out.write_text(json.dumps(evidence, indent=2), encoding="utf-8")
+                print(sid, "PASS", flush=True)
+            for variant in ["offline", "faulty", "incompatible", "all_unavailable"]:
+                await seed("CHARGER_FAILURE", variant)
+                d = await req("GET", f"/charging/recommendations/{VIN}")
+                assert bool(d.get("plan")) == (variant != "all_unavailable")
+                if variant == "all_unavailable":
+                    v = next(
+                        v
+                        for v in (await req("GET", "/fleet/manager"))["vehicles"]
+                        if v["vin"] == VIN
                     )
-                    assert chosen["status"] == "AVAILABLE"
-                    if scenario == "CHARGER_FAILURE":
-                        assert (
-                            next(
-                                x
-                                for x in chargers
-                                if x["charger_id"] == "SIM-CHARGER-CHEAP"
-                            )["status"]
-                            == "FAULTY"
-                        )
-                    await req(
-                        "POST",
-                        "/simulator/start",
-                        json={"tick_seconds": 1, "time_scale": 60},
+                    assert v["manager_readiness"] == "EMERGENCY"
+                evidence.append({"variant": variant, "passed": True})
+            # Approval and plan review leave a running fleet running.
+            await seed("CHARGER_RELAXED")
+            p = await req("POST", f"/charging/plans/{VIN}")
+            await req(
+                "POST", "/simulator/start", json={"tick_seconds": 1, "time_scale": 60}
+            )
+            await req("POST", f"/charging/plans/{p['plan_id']}/approve")
+            assert (await req("GET", "/simulator/status"))["running"]
+            deadline = monotonic() + 120
+            while monotonic() < deadline:
+                e = (await req("GET", f"/vehicles/{VIN}/latest"))["vehicle"]
+                if e["operating_state"] in {
+                    "EN_ROUTE_TO_CHARGER",
+                    "WAITING_FOR_CHARGER",
+                    "CHARGING",
+                }:
+                    assert any(
+                        s["stage"] == "decision" for s in e["journey_progress"]["steps"]
                     )
-                    start = perf_counter()
-                    states = set()
-                    while True:
-                        event = (await req("GET", f"/vehicles/{VIN}/latest"))["vehicle"]
-                        states.add(event["operating_state"])
-                        if event["operating_state"] in [
-                            "CHARGING",
-                            "READY",
-                            "RESUMING_TRIP",
-                        ]:
-                            break
-                        assert perf_counter() - start < 180, states
-                        await asyncio.sleep(1)
-                    result["states"] = sorted(states)
-                    result["charging_event"] = event
-                result["stop"] = await req("POST", "/simulator/stop")
-                # A seed during a run must cancel the task and clear all plans/cache.
+                    evidence.append(
+                        {"live_progress": e["operating_state"], "passed": True}
+                    )
+                    break
+                await asyncio.sleep(2)
+            else:
+                raise AssertionError("Approved vehicle did not progress")
+            await req("POST", "/simulator/stop")
+            # Both exceptional manager choices execute, not just record a label.
+            for action, state in [
+                ("accept-delay", "EN_ROUTE_TO_CHARGER"),
+                ("deliver-now", "DRIVING"),
+            ]:
+                await seed("NONFINAL_CONTINUATION")
+                d = await req("GET", f"/charging/manager-decisions/{VIN}")
+                body = {
+                    k: d[k]
+                    for k in [
+                        "simulation_run_id",
+                        "trip_id",
+                        "telemetry_sequence",
+                        "decision_token",
+                    ]
+                }
+                await req(
+                    "POST", f"/charging/manager-decisions/{VIN}/{action}", json=body
+                )
                 await req(
                     "POST",
                     "/simulator/start",
                     json={"tick_seconds": 1, "time_scale": 60},
                 )
-                await req(
-                    "POST",
-                    "/simulator/scenarios",
-                    json={"scenario": scenario, "vehicle_count": 10, "seed": 42},
+                deadline = monotonic() + 120
+                while monotonic() < deadline:
+                    e = (await req("GET", f"/vehicles/{VIN}/latest"))["vehicle"]
+                    if e["operating_state"] == state:
+                        break
+                    await asyncio.sleep(2)
+                else:
+                    raise AssertionError((action, e))
+                evidence.append(
+                    {"manager_choice": action, "state": state, "passed": True}
                 )
-                status = await req("GET", "/simulator/status")
-                assert not status["running"] and status["emitted_events"] == 0
-                assert not await req("GET", f"/charging/plans?vin={VIN}")
-                result["reset_verified"] = status
-                result["health"] = await req("GET", "/health/ready")
-                result["passed"] = True
-                evidence.append(result)
-                out.write_text(json.dumps(evidence, indent=2))
-                print(scenario, "PASS", flush=True)
-            # Repeat view/reject/cancel/regenerate against the deployed API.
-            await req(
-                "POST", "/simulator/scenarios", json={"vehicle_count": 10, "seed": 42}
+                await req("POST", "/simulator/stop")
+            await req("GET", "/health/ready")
+            out.write_text(json.dumps(evidence, indent=2), encoding="utf-8")
+            print(
+                "Station variations, running approval and both manager choices PASS",
+                flush=True,
             )
-            p = await req("POST", f"/charging/plans/{VIN}")
-            for _ in range(2):
-                await req("POST", f"/charging/plans/{p['plan_id']}/reject")
-            p = await req("POST", f"/charging/plans/{VIN}")
-            for _ in range(2):
-                await req("POST", f"/charging/plans/{p['plan_id']}/approve")
-            for _ in range(2):
-                await req("POST", f"/charging/plans/{p['plan_id']}/cancel")
-            new = await req("POST", f"/charging/plans/{VIN}")
-            assert new["plan_id"] != p["plan_id"]
-            evidence.append({"plan_lifecycle_repeats": "PASS"})
-            out.write_text(json.dumps(evidence, indent=2))
         finally:
             await req("POST", "/simulator/stop")
-            await req(
-                "POST", "/simulator/scenarios", json={"vehicle_count": 10, "seed": 42}
-            )
+            await seed("NONFINAL_RELAXED")
 
 
 if __name__ == "__main__":

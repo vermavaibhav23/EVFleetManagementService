@@ -65,6 +65,8 @@ class ChargingPlanStatus(StrEnum):
 
 
 class ChargingPlan(BaseModel):
+    parent_plan_id: str | None = None
+    interruption_reason: str | None = None
     plan_id: str = Field(default_factory=lambda: str(uuid4()))
     vin: str
     trip_id: str | None = None
@@ -100,6 +102,7 @@ class ChargingPlan(BaseModel):
 
 
 class ChargingRecommendation(BaseModel):
+    decision_required: bool = False
     vin: str
     readiness: ReadinessAssessment
     plan: ChargingPlan | None = None

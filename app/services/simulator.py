@@ -11,6 +11,7 @@ from uuid import uuid4
 from app.core.config import settings
 from app.models.charger import Charger, ChargerStatus
 from app.models.depot import Depot
+from app.models.journey import JourneyProgress
 from app.models.reservation import ACTIVE_RESERVATION_STATUSES, Reservation
 from app.models.simulator import SimulatorStatus
 from app.models.tariff import Tariff
@@ -18,6 +19,7 @@ from app.models.telemetry import OperatingState, TelemetryEvent
 from app.models.trip import Trip, TripStatus
 from app.models.vehicle import Vehicle
 from app.services.coordination import serialized
+from app.services.journey import advance_journey
 from app.services.reservations import shift_window_to_now
 from app.services.scheduler import haversine_km
 from app.services.telemetry import store_telemetry
@@ -38,6 +40,10 @@ class VehicleSimulationState:
     resume_pending: bool = False
     arrived: bool = False
     simulation_run_id: str | None = None
+    journey_progress: JourneyProgress | None = None
+    decision_reason: str | None = None
+    check_key: tuple | None = None
+    check_at: datetime | None = None
 
 
 def advance_driving_state(
@@ -146,6 +152,7 @@ async def seed_scenario(request, db, redis, kafka):
     rng = random.Random(request.seed)
     now = datetime.now(UTC).replace(microsecond=0)
     scenario = request.scenario.value
+    legacy_low_battery = scenario == "LOW_BATTERY_BEFORE_TRIP"
     if scenario == "LOW_BATTERY_BEFORE_TRIP":
         scenario = "NONFINAL_RELAXED"
     run_id = str(uuid4())
@@ -161,6 +168,7 @@ async def seed_scenario(request, db, redis, kafka):
         "manager_decisions",
     ):
         await db[collection].delete_many({"vin": {"$regex": "^SIM"}})
+    await db.simulation_events.delete_many({"simulation_run_id": {"$exists": True}})
     await db.tariffs.delete_many({"tariff_id": {"$regex": "^SIM-"}})
     depot = Depot(
         depot_id="SIM-DEPOT-01",
@@ -210,7 +218,17 @@ async def seed_scenario(request, db, redis, kafka):
         ),
     ]
     if scenario == "CHARGER_FAILURE":
-        chargers[1].status = ChargerStatus.FAULTY
+        if request.variant == "incompatible":
+            chargers[1].connector_type = "CHAdeMO"
+        elif request.variant == "all_unavailable":
+            for c in chargers:
+                c.status = ChargerStatus.OFFLINE
+        else:
+            chargers[1].status = (
+                ChargerStatus.FAULTY
+                if request.variant == "faulty"
+                else ChargerStatus.OFFLINE
+            )
     for c in chargers:
         await db.chargers.update_one(
             {"charger_id": c.charger_id},
@@ -237,6 +255,7 @@ async def seed_scenario(request, db, redis, kafka):
             "$set": {
                 "seed": request.seed,
                 "scenario": scenario,
+                "variant": request.variant,
                 "created_at": now,
                 "run_id": run_id,
             }
@@ -255,7 +274,7 @@ async def seed_scenario(request, db, redis, kafka):
     ]
     count = (
         max(10, request.vehicle_count)
-        if scenario == "CHARGER_CONGESTION"
+        if scenario in {"CHARGER_CONGESTION", "CHARGER_RELAXED", "QUEUE_OVERRUN"}
         else request.vehicle_count
     )
     for index in range(count):
@@ -281,6 +300,10 @@ async def seed_scenario(request, db, redis, kafka):
         soc = 14.0 if focus else rng.uniform(75, 95)
         if scenario == "NORMAL_DAY":
             soc = 100 if focus else soc
+        if focus and scenario == "NORMAL_LATER":
+            soc = 55
+        if focus and scenario == "NONFINAL_RELAXED" and not legacy_low_battery:
+            soc = 52
         if focus and scenario == "UNREACHABLE_CHARGER":
             soc = 0
         first = (
@@ -291,24 +314,48 @@ async def seed_scenario(request, db, redis, kafka):
             )
         )
         direct = haversine_km(*start, *first)
-        if focus and scenario in {"NONFINAL_PRIORITY", "FINAL_PRIORITY"}:
+        if focus and scenario in {
+            "NONFINAL_PRIORITY",
+            "FINAL_PRIORITY",
+            "NONFINAL_CONTINUATION",
+        }:
             soc = (
                 (direct + 1)
                 * vehicle.consumption_kwh_per_km
                 / (vehicle.usable_capacity_kwh * 0.96)
                 * 100
             )
+        if focus and scenario == "NONFINAL_CONTINUATION":
+            first = point_at_distance(depot.lat, depot.lon, 35, 65)
+            direct = haversine_km(*start, *first)
+            soc = (
+                (direct + 16)
+                * vehicle.consumption_kwh_per_km
+                / (vehicle.usable_capacity_kwh * 0.96)
+                * 100
+            )
         first_due = 180
+        if focus and scenario == "NORMAL_LATER":
+            first_due = 65
         if focus and scenario in {"NONFINAL_TIGHT", "FINAL_TIGHT"}:
-            first_due = 80
+            first_due = 85
         if focus and scenario == "CHARGER_CONGESTION":
             first_due = 95
+        if focus and scenario == "CHARGER_RELAXED":
+            first_due = 330
+        if focus and scenario == "QUEUE_OVERRUN":
+            first_due = 105
         if focus and scenario == "CHARGER_FAILURE":
             first_due = 100
-        if focus and scenario in {"NONFINAL_PRIORITY", "FINAL_PRIORITY"}:
+        if focus and scenario in {
+            "NONFINAL_PRIORITY",
+            "FINAL_PRIORITY",
+            "NONFINAL_CONTINUATION",
+        }:
             first_due = direct / 35 * 60 + 25
         if focus and scenario == "NONFINAL_CONFLICT":
-            first_due = direct / 35 * 60 + 5
+            soc = 55
+            first_due = 120
         length = 1 if focus and scenario.startswith("FINAL_") else 6
         if scenario == "NORMAL_DAY":
             length = 4
@@ -343,10 +390,14 @@ async def seed_scenario(request, db, redis, kafka):
             due = first_due + i * 100 if focus else 220 + i * 100
             if (
                 focus
-                and scenario in {"NONFINAL_PRIORITY", "NONFINAL_CONFLICT"}
+                and scenario in {"NONFINAL_PRIORITY", "NONFINAL_CONTINUATION"}
                 and i > 0
             ):
-                due = 240 + i * 90
+                due = 300 + i * 100
+            if focus and scenario == "NONFINAL_RELAXED" and not legacy_low_battery:
+                due = [155, 185, 245, 380, 490, 580][i]
+            if focus and scenario == "NONFINAL_CONFLICT":
+                due = [120, 72, 115, 260, 380, 500][i]
             trip = Trip(
                 trip_id=f"SIM-TRIP-{index + 1:04d}" + (f"-LEG-{i + 1}" if i else ""),
                 vin=vin,
@@ -389,13 +440,19 @@ async def seed_scenario(request, db, redis, kafka):
             eta_minutes=direct / 35 * 60,
         )
         records.append((vehicle, trips, event))
-    if scenario in {"NONFINAL_PRIORITY", "FINAL_PRIORITY"} and len(records) > 1:
+    if (
+        scenario in {"NONFINAL_PRIORITY", "FINAL_PRIORITY", "NONFINAL_CONTINUATION"}
+        and len(records) > 1
+    ):
         # Standby van can physically collect the remaining packages at Customer 001-1.
         v, ts, e = records[-1]
         ts.clear()
         e.trip_id = None
         e.route_remaining_km = None
-        e.lat, e.lon = districts[0][0] + 0.010, districts[0][1] - 0.010
+        e.lat, e.lon = (
+            records[0][1][0].destination_lat + 0.010,
+            records[0][1][0].destination_lon - 0.010,
+        )
         e.navigation_target = "Standby"
         e.soc_pct = 95
 
@@ -422,7 +479,7 @@ async def seed_scenario(request, db, redis, kafka):
             plan.estimated_cost / plan.grid_energy_kwh, 3
         )
 
-    if scenario == "CHARGER_CONGESTION":
+    if scenario in {"CHARGER_CONGESTION", "CHARGER_RELAXED", "QUEUE_OVERRUN"}:
         # Six real occupied ports, plus three actual waiting vehicles. Focus van remains unapproved.
         sessions = [
             (1, 1, 1, 0, 15, 95),
@@ -554,10 +611,34 @@ async def seed_scenario(request, db, redis, kafka):
             ts[0].distance_km = haversine_km(
                 c.lat, c.lon, ts[0].destination_lat, ts[0].destination_lon
             )
+    if scenario in {"CHARGER_INTERRUPTION", "QUEUE_OVERRUN"}:
+        await db.simulation_events.insert_one(
+            {
+                "event_id": str(uuid4()),
+                "simulation_run_id": run_id,
+                "vin": records[0][0].vin,
+                "trigger_state": "CHARGING"
+                if request.variant == "while_charging"
+                else "EN_ROUTE_TO_CHARGER",
+                "action": "fault"
+                if scenario == "CHARGER_INTERRUPTION"
+                else "slow_charging",
+                "applied": False,
+            }
+        )
     seed_limit = asyncio.Semaphore(20)
 
     async def persist_record(v, ts, e):
         async with seed_limit:
+            e.journey_progress = advance_journey(
+                None,
+                run_id=run_id,
+                trip_id=e.trip_id,
+                state=e.operating_state,
+                phase=e.navigation_phase,
+                now=e.ts,
+                plan_id=e.plan_id,
+            )
             if ts:
                 e.route_remaining_km = haversine_km(
                     e.lat, e.lon, ts[0].destination_lat, ts[0].destination_lon
@@ -701,6 +782,9 @@ class SimulatorManager:
                 in {"READY", "RESUMING_TRIP"},
                 arrived=telemetry_doc.get("operating_state") == "AT_CUSTOMER",
                 simulation_run_id=telemetry_doc.get("simulation_run_id"),
+                journey_progress=JourneyProgress(**telemetry_doc["journey_progress"])
+                if telemetry_doc.get("journey_progress")
+                else None,
             )
         return latest_telemetry_time
 
@@ -727,6 +811,22 @@ class SimulatorManager:
         # Speed controls the requested logical step, capped at one simulated minute.
         elapsed_simulated_seconds = min(self._tick_seconds * self._time_scale, 60.0)
         self._simulated_time += timedelta(seconds=elapsed_simulated_seconds)
+        from app.services.simulation_events import apply_events
+
+        await apply_events(self._db, self._simulated_time)
+        self._planning_chargers = [
+            Charger(**d) async for d in self._db.chargers.find({})
+        ]
+        self._planning_reservations = [
+            Reservation(**d)
+            async for d in self._db.reservations.find(
+                {"status": {"$in": [x.value for x in ACTIVE_RESERVATION_STATUSES]}}
+            )
+        ]
+        self._planning_tariffs = [Tariff(**d) async for d in self._db.tariffs.find({})]
+        self._planning_limits = {
+            d["depot_id"]: d["power_limit_kw"] async for d in self._db.depots.find({})
+        }
         results = await asyncio.gather(
             *(
                 self._advance_vehicle(state, elapsed_simulated_seconds)
@@ -770,6 +870,11 @@ class SimulatorManager:
     ) -> None:
         assert self._simulated_time is not None
         now = self._simulated_time
+        journey_trip_id = (
+            state.journey_progress.trip_id if state.journey_progress else state.trip_id
+        )
+        journey_decision = None
+        journey_interruption = None
         plan = await self._db.charging_plans.find_one(
             {"vin": state.vehicle.vin, "status": {"$in": ["APPROVED", "CHARGING"]}},
             sort=[("created_at", -1)],
@@ -825,6 +930,16 @@ class SimulatorManager:
         if plan:
             charger_id = plan["charger_id"]
             charger = await self._db.chargers.find_one({"charger_id": charger_id})
+            if not charger:
+                from app.services.plan_lifecycle import release_plan_chain
+
+                journey_interruption = "Charger no longer exists"
+                await release_plan_chain(
+                    self._db, plan["plan_id"], now, journey_interruption
+                )
+                state.decision_reason = journey_interruption
+                state.check_key = None
+                plan = None
 
         if plan and charger:
             own_reservation = await self._db.reservations.find_one(
@@ -837,17 +952,90 @@ class SimulatorManager:
                     },
                 }
             )
-            if charger.get("status") in {"FAULTY", "OFFLINE"} or not own_reservation:
-                await self._db.charging_plans.update_one(
-                    {"plan_id": plan["plan_id"]},
-                    {"$set": {"status": "CANCELLED", "active": False}},
+            later_plans = [
+                d
+                async for d in self._db.charging_plans.find(
+                    {"parent_plan_id": plan["plan_id"], "status": "SCHEDULED"}
                 )
-                await self._db.reservations.update_many(
-                    {"plan_id": plan["plan_id"]}, {"$set": {"status": "CANCELLED"}}
+            ]
+            problem = None
+            if charger.get("status") in {"FAULTY", "OFFLINE"}:
+                problem = "Charger unavailable"
+            elif (
+                charger.get("connector_type", "").casefold()
+                != state.vehicle.connector_type.casefold()
+            ):
+                problem = "Charger connector incompatible"
+            elif not own_reservation:
+                problem = "Charging reservation unavailable"
+            elif float(charger.get("available_kw", 0)) < float(
+                plan["allocated_power_kw"]
+            ):
+                problem = "Charging power changed; review timing"
+            elif any(
+                not any(
+                    c.charger_id == x["charger_id"]
+                    and c.status.value in {"AVAILABLE", "OCCUPIED"}
+                    for c in getattr(self, "_planning_chargers", [])
                 )
+                for x in later_plans
+            ):
+                problem = "A later booked charger is unavailable"
+            if (
+                not problem
+                and plan.get("delivery_deadline")
+                and not plan.get("accepted_delay")
+            ):
+                from app.services.energy import charging_seconds
+
+                remaining_drive = haversine_km(
+                    state.lat, state.lon, charger["lat"], charger["lon"]
+                )
+                remaining_charge = charging_seconds(
+                    state.soc_pct,
+                    plan["target_soc_pct"],
+                    state.vehicle.usable_capacity_kwh * state.soh_pct / 100,
+                    plan["allocated_power_kw"],
+                    settings.charging_efficiency,
+                )
+                blockers = [
+                    r.end_time
+                    for r in getattr(self, "_planning_reservations", [])
+                    if r.charger_id == plan["charger_id"]
+                    and r.port_number == plan["port_number"]
+                    and r.plan_id != plan["plan_id"]
+                    and r.status.value == "OCCUPIED"
+                ]
+                earliest = max(
+                    [
+                        now + timedelta(minutes=remaining_drive / 35 * 60),
+                        plan["start_time"],
+                    ]
+                    + blockers
+                )
+                eta = earliest + timedelta(
+                    seconds=remaining_charge,
+                    minutes=(
+                        plan.get("remaining_delivery_km", 0) / 35 * 60
+                        + settings.charging_deadline_buffer_minutes
+                    ),
+                )
+                if eta > plan["delivery_deadline"] + timedelta(seconds=60):
+                    problem = "Waiting or charging would miss the protected deadline"
+            if problem:
+                from app.services.plan_lifecycle import release_plan_chain
+
+                await release_plan_chain(self._db, plan["plan_id"], now, problem)
+                journey_interruption = problem
+                state.decision_reason = problem
+                state.check_key = None
                 plan = None
 
         if plan and charger:
+            state.decision_reason = None
+            journey_trip_id = plan.get("trip_id") or journey_trip_id
+            if plan.get("status") == "APPROVED":
+                journey_decision = "Charging approved"
             destination_lat = float(charger["lat"])
             destination_lon = float(charger["lon"])
             navigation_target = charger.get("name", charger_id)
@@ -1019,6 +1207,13 @@ class SimulatorManager:
                 and last_trip["service_until"] > now
             )
             recovery = last_trip and last_trip.get("recovery_requested")
+            if service_pending or recovery or (not trip_doc and last_trip):
+                journey_trip_id = last_trip["trip_id"]
+            elif trip_doc:
+                journey_trip_id = trip_doc["trip_id"]
+                if trip_doc.get("reserve_exception"):
+                    journey_decision = "Reserve exception approved"
+                    state.decision_reason = None
             hold = False
             if (
                 trip_doc
@@ -1065,6 +1260,76 @@ class SimulatorManager:
                 )
                 # Evaluate before departure; do not stop a previously approved safe journey on rounding noise.
                 hold = t.status == TripStatus.PLANNED and available + 0.05 < required
+                key = (
+                    t.trip_id,
+                    round(state.soc_pct, 3),
+                    t.accepted_delay,
+                    tuple(
+                        (c.charger_id, c.status.value, c.connector_type, c.available_kw)
+                        for c in cs
+                    ),
+                )
+                scheduled = await self._db.charging_plans.find_one(
+                    {"vin": state.vehicle.vin, "status": "SCHEDULED"}
+                )
+                if (
+                    not service_pending
+                    and not state.resume_pending
+                    and not scheduled
+                    and (
+                        state.check_key != key
+                        or not state.check_at
+                        or now - state.check_at >= timedelta(minutes=5)
+                    )
+                ):
+                    from app.services.readiness import assess_readiness
+                    from app.services.scheduler import create_recommendation
+
+                    probe = TelemetryEvent(
+                        vin=state.vehicle.vin,
+                        ts=now,
+                        lat=state.lat,
+                        lon=state.lon,
+                        speed_kmh=0,
+                        soc_pct=state.soc_pct,
+                        soh_pct=state.soh_pct,
+                        odo_km=state.odometer_km,
+                        seq=state.sequence,
+                        route_remaining_km=required
+                        - settings.reserve_range_km
+                        - escape_km(state.vehicle, t, future, cs),
+                    )
+                    assessment = assess_readiness(
+                        state.vehicle,
+                        probe,
+                        t,
+                        settings.reserve_range_km,
+                        settings.charge_soon_margin_km,
+                    )
+                    check = create_recommendation(
+                        state.vehicle,
+                        probe,
+                        t,
+                        assessment,
+                        cs,
+                        [
+                            r
+                            for r in getattr(self, "_planning_reservations", [])
+                            if r.vin != state.vehicle.vin
+                        ],
+                        getattr(self, "_planning_tariffs", []),
+                        depot_power_limits=getattr(self, "_planning_limits", {}),
+                        now=now,
+                        future_trips=future,
+                        slot_minutes=settings.scheduler_slot_minutes,
+                        deadline_buffer_minutes=settings.charging_deadline_buffer_minutes,
+                        charging_efficiency=settings.charging_efficiency,
+                    )
+                    state.decision_reason = (
+                        check.reason if check.decision_required else None
+                    )
+                    state.check_key, state.check_at = key, now
+                hold = hold or bool(state.decision_reason)
             if recovery:
                 operating_state = OperatingState.RECOVERY_REQUIRED
                 navigation_phase = "RECOVERY_REQUIRED"
@@ -1083,7 +1348,15 @@ class SimulatorManager:
             elif state.soc_pct <= 1e-8:
                 operating_state = OperatingState.STRANDED
                 navigation_phase = "STRANDED"
-            elif hold and state.battery_temperature_c < 45:
+            elif (
+                hold
+                or journey_interruption
+                or (
+                    state.decision_reason
+                    and trip_doc
+                    and trip_doc["status"] == "IN_PROGRESS"
+                )
+            ) and state.battery_temperature_c < 45:
                 operating_state = OperatingState.AWAITING_DECISION
                 navigation_phase = "AWAITING_DECISION"
             elif trip_doc and state.battery_temperature_c >= 45:
@@ -1231,6 +1504,31 @@ class SimulatorManager:
             if distance_to_destination_km is not None
             else None,
             eta_minutes=round(eta_minutes, 1) if eta_minutes is not None else None,
+        )
+        previous_steps = state.journey_progress.steps if state.journey_progress else []
+        if (
+            not plan
+            and not journey_interruption
+            and previous_steps
+            and previous_steps[-1].stage in {"to_charger", "waiting", "charging"}
+        ):
+            journey_interruption = "Charging plan interrupted"
+        state.journey_progress = advance_journey(
+            state.journey_progress,
+            run_id=state.simulation_run_id,
+            trip_id=journey_trip_id,
+            state=operating_state,
+            phase=navigation_phase,
+            now=now,
+            plan_id=plan["plan_id"] if plan else None,
+            decision=journey_decision,
+            interruption=journey_interruption,
+        )
+        event.journey_progress = state.journey_progress
+        event.decision_reason = (
+            state.decision_reason
+            if operating_state == OperatingState.AWAITING_DECISION
+            else None
         )
         await store_telemetry(event, self._db, self._redis, self._kafka)
         self._emitted_events += 1

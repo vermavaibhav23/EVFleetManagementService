@@ -4,6 +4,8 @@ from uuid import uuid4
 
 from pydantic import AwareDatetime, BaseModel, Field, field_validator
 
+from app.models.journey import JourneyProgress
+
 
 class OperatingState(StrEnum):
     PARKED = "PARKED"
@@ -52,6 +54,8 @@ class TelemetryEvent(BaseModel):
     destination_lon: float | None = Field(default=None, ge=-180, le=180)
     distance_to_destination_km: float | None = Field(default=None, ge=0)
     eta_minutes: float | None = Field(default=None, ge=0)
+    journey_progress: JourneyProgress | None = None
+    decision_reason: str | None = None
 
     @field_validator("ts")
     @classmethod

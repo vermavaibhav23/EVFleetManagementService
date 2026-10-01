@@ -39,6 +39,12 @@ def manager_readiness(vehicle, event, trip, assessment, chargers):
             "Charging blocked: inspect the battery-health warning before normal charging.",
             reachable,
         )
+    if event.operating_state == "STRANDED":
+        return (
+            "EMERGENCY",
+            "Vehicle has no driving energy. Assistance required.",
+            reachable,
+        )
     if event.operating_state == "RECOVERY_REQUIRED":
         return (
             "EMERGENCY",
@@ -174,6 +180,17 @@ async def build_manager_snapshot(db, simulator):
             ):
                 status = "NEEDS_CHARGING"
                 reason = "Charge before departure to cover this delivery, a reachable continuation and reserve."
+        if event.operating_state == "AWAITING_DECISION" and status not in {
+            "EMERGENCY",
+            "BLOCKED",
+        }:
+            status = "NEEDS_CHARGING" if reachable else "EMERGENCY"
+            reason = (
+                event.decision_reason or "Review the charging and timetable decision."
+            )
+        if status == "NEEDS_CHARGING" and not reachable:
+            status = "EMERGENCY"
+            reason = "Energy Emergency: no suitable charger is reachable. Vehicle held for manager intervention."
         if event.operating_state == "RECOVERY_REQUIRED" or (
             trip and trip.reserve_exception
         ):
@@ -302,6 +319,7 @@ async def build_manager_snapshot(db, simulator):
     return {
         "run_id": config.get("run_id"),
         "scenario": config.get("scenario"),
+        "variant": config.get("variant"),
         "scenario_catalog": [
             {"id": s[0], "group": s[1], "name": s[2], "description": s[3]}
             for s in SCENARIOS

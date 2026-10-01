@@ -60,57 +60,131 @@ const priority = {
   COMPLETE: 6,
 };
 const scenarios = {
-  NORMAL_DAY: {
-    name: "Normal Operations",
-    group: "Normal Operations",
-    description: "Enough energy for the full timetable.",
+  "NORMAL_DAY": {
+    "group": "Normal Operations",
+    "name": "Smooth Deliveries",
+    "description": "Enough energy for the supplied timetable."
   },
-  CHARGER_CONGESTION: {
-    name: "Busy Chargers",
-    group: "Charger Scenarios",
-    description: "The cheaper station has a longer queue.",
+  "NORMAL_LATER": {
+    "group": "Normal Operations",
+    "name": "Charging Needed Later",
+    "description": "Complete initial stops, then charge for the next leg."
   },
-  CHARGER_FAILURE: {
-    name: "Charger Offline",
-    group: "Charger Scenarios",
-    description: "A nearby station is unavailable.",
+  "CHARGER_RELAXED": {
+    "group": "Charger Scenarios",
+    "name": "Busy Chargers - Time to Save",
+    "description": "Waiting at the cheaper station fits the timetable."
   },
-  NONFINAL_RELAXED: {
-    name: "Time to Charge Ahead",
-    group: "Non-final Deliveries",
-    description: "Time now can protect the later deliveries.",
+  "CHARGER_CONGESTION": {
+    "group": "Charger Scenarios",
+    "name": "Busy Chargers - Deadline First",
+    "description": "The cheaper queue would miss the deadline."
   },
-  NONFINAL_TIGHT: {
-    name: "Tight Next Deadline",
-    group: "Non-final Deliveries",
-    description: "A short charge now; another stop later.",
+  "CHARGER_FAILURE": {
+    "group": "Charger Scenarios",
+    "name": "Charger Unavailable / Offline / Faulty / Incompatible Connector",
+    "description": "Exclude unsuitable stations; declare an emergency if none is reachable."
   },
-  NONFINAL_PRIORITY: {
-    name: "Priority Delivery",
-    group: "Non-final Deliveries",
-    description: "Deliver now or charge and accept a delay.",
+  "CHARGER_INTERRUPTION": {
+    "group": "Charger Scenarios",
+    "name": "Charger Fails During Journey",
+    "description": "A station fault interrupts an approved charging journey."
   },
-  NONFINAL_CONFLICT: {
-    name: "Timetable Conflict",
-    group: "Non-final Deliveries",
-    description: "The current deadline needs a manager decision.",
+  "QUEUE_OVERRUN": {
+    "group": "Charger Scenarios",
+    "name": "Queue Takes Longer",
+    "description": "An occupied port runs beyond its booking."
   },
-  FINAL_RELAXED: {
-    name: "Time to Top Up",
-    group: "Final Delivery",
-    description: "Top up while the final deadline allows it.",
+  "NONFINAL_RELAXED": {
+    "group": "Non-final Deliveries",
+    "name": "Charge Ahead for Later Stops",
+    "description": "Use available time now to protect tighter deadlines later."
   },
-  FINAL_TIGHT: {
-    name: "Deadline First",
-    group: "Final Delivery",
-    description: "Keep enough time for the final delivery.",
+  "NONFINAL_TIGHT": {
+    "group": "Non-final Deliveries",
+    "name": "Tight Next Deadline",
+    "description": "A partial charge now and a planned charging stop later."
   },
-  FINAL_PRIORITY: {
-    name: "Priority Final Stop",
-    group: "Final Delivery",
-    description: "Review the low-reserve arrival before dispatch.",
+  "NONFINAL_PRIORITY": {
+    "group": "Non-final Deliveries",
+    "name": "Priority Delivery - Reserve Exception",
+    "description": "Choose charging delay or direct delivery with recovery."
   },
+  "NONFINAL_CONTINUATION": {
+    "group": "Non-final Deliveries",
+    "name": "Priority Delivery - No Safe Continuation",
+    "description": "The customer is reachable, but the vehicle cannot safely continue."
+  },
+  "NONFINAL_CONFLICT": {
+    "group": "Non-final Deliveries",
+    "name": "Timetable Conflict",
+    "description": "A later deadline makes the full timetable infeasible."
+  },
+  "FINAL_RELAXED": {
+    "group": "Final Delivery",
+    "name": "Time to Top Up",
+    "description": "Charge toward full within the final deadline."
+  },
+  "FINAL_TIGHT": {
+    "group": "Final Delivery",
+    "name": "Deadline First",
+    "description": "Take the maximum safe charge that fits."
+  },
+  "FINAL_PRIORITY": {
+    "group": "Final Delivery",
+    "name": "Priority Final Stop",
+    "description": "Choose charging delay or direct delivery with recovery."
+  }
 };
+const disclosureState = new Map();
+function captureDisclosures() {
+  document.querySelectorAll("details[data-disclosure]").forEach(el => disclosureState.set(el.dataset.disclosure, el.open));
+}
+function disclosure(key, defaultOpen = false) {
+  const id = `${dashboard?.run_id}:${selectedVin}:${key}`;
+  return `data-disclosure="${escapeHtml(id)}" ${(disclosureState.get(id) ?? defaultOpen) ? "open" : ""}`;
+}
+const scenarioVariants = {
+  CHARGER_FAILURE: [["offline","Offline station"],["faulty","Faulty station"],["incompatible","Incompatible connector"],["all_unavailable","No suitable charger"]],
+  CHARGER_INTERRUPTION: [["en_route","Fails en route"],["while_charging","Fails while charging"]],
+};
+function updateVariants() {
+  const choices = scenarioVariants[byId("scenario").value] || [];
+  byId("variant-control").hidden = !choices.length;
+  byId("scenario-variant").innerHTML = choices.map(([id,label]) => `<option value="${id}">${label}</option>`).join("");
+}
+byId("scenario").addEventListener("change", updateVariants);
+
+const journeyLabels = {parked:"Parked",decision:"Decision",to_charger:"To charger",waiting:"Waiting",charging:"Charging",ready:"Ready",delivering:"Delivering",at_customer:"At customer",recovery:"Recovery required",stranded:"Stranded",health_hold:"Health hold",offline:"Awaiting telemetry",interrupted:"Interrupted",handover:"Package handover"};
+function renderJourney(v) {
+  const progress = v.journey_progress;
+  const trips = v.itinerary || [];
+  const leg = trips.find(t => t.trip_id === progress?.trip_id) || v.current_trip;
+  const index = trips.findIndex(t => t.trip_id === leg?.trip_id);
+  const stateStage = {PARKED:"parked",AWAITING_DECISION:"decision",CHARGING:"charging",WAITING_FOR_CHARGER:"waiting",READY:"ready",DRIVING:"delivering",RESUMING_TRIP:"delivering",EN_ROUTE_TO_CHARGER:"to_charger",AT_CUSTOMER:"at_customer",STRANDED:"stranded",RECOVERY_REQUIRED:"recovery",HEALTH_HOLD:"health_hold"}[v.operating_state] || "offline";
+  const observed = progress?.steps?.length ? progress.steps : [{stage:stateStage,at:v.telemetry_time}];
+  const current = observed[observed.length-1].stage;
+  const terminal = ["recovery","stranded","health_hold","offline"].includes(current) || v.manager_readiness === "EMERGENCY";
+  const service = current === "at_customer" && leg?.service_until && new Date(leg.service_until) > new Date(dashboard.simulator.simulated_time);
+  const complete = v.manager_readiness === "COMPLETE" && !service;
+  const plan = currentPlan(v.vin);
+  const route = plan ? ["decision","to_charger","waiting","charging","ready","delivering","at_customer"] : ["parked","delivering","at_customer"];
+  let upcoming = terminal || complete || current === "at_customer" ? [] : route.slice(Math.max(0, route.indexOf(current)+1));
+  if (current === "decision" && !plan) upcoming = [];
+  const status = complete ? "Timetable complete" : v.manager_readiness === "EMERGENCY" ? "Energy Emergency" : service ? "Service in progress" : journeyLabels[current];
+  const observedHtml = observed.map((step,i) => {
+    const active = i === observed.length-1;
+    const interrupted = step.stage === "interrupted" || observed[i+1]?.stage === "interrupted";
+    const exceptional = ["interrupted","stranded","health_hold","recovery"].includes(step.stage);
+    const tone = interrupted || exceptional ? "warning" : active && !complete ? "current" : "done";
+    const symbol = interrupted || exceptional ? "!" : active && !complete ? "●" : "✓";
+    return `<li class="${tone} stage-${step.stage}" ${active ? 'aria-current="step"' : ''}><span class="journey-symbol">${symbol}</span><span>${escapeHtml(journeyLabels[step.stage] || step.stage)}${step.note ? `<small>${escapeHtml(step.note)}</small>` : ''}</span><time>${formatTime(step.at)}</time></li>`;
+  }).join("");
+  const extra = current === "charging" && plan ? `${number(v.soc_pct,"%")} / ${number(plan.target_soc_pct,"%",0)} target` : v.operating_state === "RESUMING_TRIP" ? "Resumed after charging" : current === "at_customer" && !complete ? "Next leg begins after service and scheduled departure" : "";
+  const history = progress?.previous_legs || [];
+  return `<section class="journey-progress" aria-label="Journey progress"><h3>Journey progress</h3><p class="journey-leg">${index >= 0 ? `Stop ${index+1} of ${trips.length} · ` : ''}${escapeHtml(leg?.destination || (trips.length ? "Timetable" : "No delivery scheduled"))}</p><strong class="journey-status ${terminal ? 'warning' : ''}">${escapeHtml(status)}</strong>${extra ? `<p class="journey-extra">${escapeHtml(extra)}</p>` : ''}<ol class="journey-steps">${observedHtml}${upcoming.map(step=>`<li class="upcoming"><span class="journey-symbol">○</span><span>${journeyLabels[step]}</span></li>`).join('')}</ol>${current === 'decision' && !plan ? '<p class="muted">Review the available choices to continue.</p>' : ''}${history.length ? `<details ${disclosure('journey-history')}><summary>Previous deliveries (${history.length})</summary><ul>${history.map(h=>`<li>${h.completed?'✓':'!'} ${escapeHtml(trips.find(t=>t.trip_id===h.trip_id)?.destination || h.trip_id)} · ${h.completed?'Delivered':'Interrupted'} · ${formatTime(h.ended_at)}</li>`).join('')}</ul></details>`:''}</section>`;
+}
+
 let decisionPreview = null;
 
 let dashboard = null,
@@ -207,7 +281,10 @@ async function loadDashboard() {
     }
     dashboard = snapshot;
     if (changedRun) {
+      disclosureState.clear();
       if (snapshot.scenario) byId("scenario").value = snapshot.scenario;
+      updateVariants();
+      if (snapshot.variant) byId("scenario-variant").value = snapshot.variant;
       byId("vehicle-count").value = snapshot.vehicles.length || 10;
     }
     if (!connected && byId("message").classList.contains("error"))
@@ -398,6 +475,7 @@ function renderOverview() {
   renderSelected();
 }
 function renderSelected() {
+  captureDisclosures();
   const v = selected();
   if (!v) {
     byId("selected-detail").innerHTML =
@@ -409,11 +487,11 @@ function renderSelected() {
     done = trips.filter((t) => t.status === "COMPLETED").length;
   const actions = plan
     ? actionButton("view", v.vin, "Review plan", true)
-    : v.manager_readiness === "NEEDS_CHARGING"
+    : v.current_trip
       ? actionButton("compare", v.vin, "Review options", true)
       : "";
   byId("selected-detail").innerHTML =
-    `<h2>${escapeHtml(v.name)}</h2><div class="status-row">${readinessBadge(v)} ${badge(v.operating_state)}</div><div class="battery-readout"><strong>${number(v.soc_pct, "", 0)}</strong><span>% battery</span></div><div class="battery-bar ${v.soc_pct < 25 ? "low" : ""}"><i style="width:${v.soc_pct || 0}%"></i></div><div class="detail-body"><dl class="facts">${fact("Next stop", v.current_trip?.destination || "Timetable complete")}${fact("Distance", number(v.delivery_remaining_km, " km"))}${fact("Deadline", formatDate(v.current_trip?.delivery_deadline) + " · " + formatTime(v.current_trip?.delivery_deadline) + " IST")}${fact("Stops completed", `${done} / ${trips.length}`)}</dl><p class="short-reason">${escapeHtml(v.explanation)}</p>${actions}${!plan && ["NEEDS_CHARGING", "EMERGENCY"].includes(v.manager_readiness) ? actionButton("manager", v.vin, "Manager choices") : ""}<details><summary>Battery & route details</summary><dl class="facts">${fact("Available range", number(v.current_range_km, " km"))}${fact("Reserve", number(v.reserve_range_km, " km"))}${fact("Battery temperature", number(v.battery_temperature_c, "Â°C"))}${fact("Updated", formatTime(v.telemetry_time) + " IST")}</dl></details><button class="detail-link" data-select="${escapeHtml(v.vin)}" data-select-tab="vehicles">View timetable →</button></div>`;
+    `<h2>${escapeHtml(v.name)}</h2><div class="status-row">${readinessBadge(v)} ${badge(v.operating_state)}</div><div class="battery-readout"><strong>${number(v.soc_pct, "", 0)}</strong><span>% battery</span></div><div class="battery-bar ${v.soc_pct < 25 ? "low" : ""}"><i style="width:${v.soc_pct || 0}%"></i></div><div class="detail-body"><dl class="facts">${fact("Next stop", v.current_trip?.destination || "Timetable complete")}${fact("Distance", number(v.delivery_remaining_km, " km"))}${fact("Deadline", formatDate(v.current_trip?.delivery_deadline) + " · " + formatTime(v.current_trip?.delivery_deadline) + " IST")}${fact("Stops completed", `${done} / ${trips.length}`)}</dl><p class="short-reason">${escapeHtml(v.explanation)}</p>${actions}${!plan && v.current_trip ? actionButton("manager", v.vin, "Manager choices") : ""}<details ${disclosure("battery")}><summary>Battery & route details</summary><dl class="facts">${fact("Available range", number(v.current_range_km, " km"))}${fact("Reserve", number(v.reserve_range_km, " km"))}${fact("Battery temperature", number(v.battery_temperature_c, "°C"))}${fact("Updated", formatTime(v.telemetry_time) + " IST")}</dl></details><button class="detail-link" data-select="${escapeHtml(v.vin)}" data-select-tab="vehicles">View timetable →</button>${renderJourney(v)}</div>`;
 }
 
 function renderVehicleProfile() {
@@ -459,6 +537,7 @@ function renderChargers() {
 }
 
 function renderPlans() {
+  captureDisclosures();
   const v = selected(),
     plan = currentPlan(),
     options = plan?.evaluated_options || [];
@@ -470,7 +549,7 @@ function renderPlans() {
     ? plan?.status === "PROPOSED"
       ? actionButton("replace", plan.plan_id, "Refresh") +
         actionButton("reject", plan.plan_id, "Dismiss")
-      : !plan && ["NEEDS_CHARGING", "EMERGENCY"].includes(v.manager_readiness)
+      : !plan && v.current_trip
         ? actionButton("compare", v.vin, "Compare chargers", true) +
           actionButton("manager", v.vin, "Manager choices")
         : ""
@@ -479,7 +558,7 @@ function renderPlans() {
     ? options
         .map(
           (o, i) =>
-            `<article class="option-card ${i === 0 ? "recommended" : ""}">${badge(i === 0 ? "NORMAL" : "neutral", i === 0 ? "Recommended" : "Alternative")}<h3>${escapeHtml(stationName(o.charger_id))}</h3><p class="price">${number(o.target_soc_pct, "%", 0)} <small>target charge</small></p><dl class="facts">${fact("Energy & cost", `${number(o.grid_energy_kwh, " kWh")} · ${money(o.electricity_cost)}`)}${fact("Average energy price", money(o.average_price_per_kwh) + " / kWh")}${fact("Travel / wait", `${number(o.travel_minutes, " min")} / ${number(o.wait_minutes, " min")}`)}${fact("Charging", number(o.charging_minutes, " min"))}${fact("Delivery ETA", formatTime(o.delivery_eta) + " IST")}${fact("Traffic buffer", "20 min protected")}${fact("Stops covered now", String(o.covered_stops ?? 0))}</dl><p class="short-reason">${i === 0 ? "Fits the timetable and preserves reserve." : escapeHtml(optionReason(o, options[0]))}</p>${i === 0 && plan.status === "PROPOSED" ? actionButton("approve", plan.plan_id, "Approve plan", true) : i === 0 ? badge(plan.status) : ""}</article>`,
+            `<article class="option-card ${i === 0 ? "recommended" : ""}">${badge(i === 0 ? "NORMAL" : "neutral", i === 0 ? "Recommended" : "Alternative")}<h3>${escapeHtml(stationName(o.charger_id))}</h3><p class="price">${number(o.target_soc_pct, "%", 0)} <small>target charge</small></p><dl class="facts">${fact("Energy & cost", `${number(o.grid_energy_kwh, " kWh")} · ${money(o.electricity_cost)}`)}${fact("Average energy price", money(o.average_price_per_kwh) + " / kWh")}${fact("Travel / wait", `${number(o.travel_minutes, " min")} / ${number(o.wait_minutes, " min")}`)}${fact("Charging", number(o.charging_minutes, " min"))}${fact("Delivery ETA", formatTime(o.delivery_eta) + " IST")}${fact("Traffic buffer", "20 min protected")}${fact("Stops covered now", String(o.covered_stops ?? 0))}</dl><p class="short-reason">${i === 0 ? "Preserves reserve; follows the approved deadline policy." : escapeHtml(optionReason(o, options[0]))}</p>${i === 0 && plan.status === "PROPOSED" ? actionButton("approve", plan.plan_id, "Approve plan", true) : i === 0 ? badge(plan.status) : ""}</article>`,
         )
         .join("")
     : `<div class="workspace empty" style="grid-column:1/-1">${escapeHtml(noOptions?.vin === v?.vin && noOptions?.run_id === dashboard.run_id ? noOptions.reason : v?.explanation || "Select a vehicle.")}</div>`;
@@ -491,10 +570,10 @@ function renderPlans() {
     [];
   byId("decision-reasoning").innerHTML =
     (plan
-      ? `<details class="reasoning"><summary>Why this plan?</summary><p>${escapeHtml(plan.reason)}</p>${plan.follow_up_stops?.length ? `<h3>Later booked stops</h3><ul>${plan.follow_up_stops.map((s) => `<li>${escapeHtml(stationName(s.charger_id))} · ${formatTime(s.start_time)}–${formatTime(s.end_time)} IST · target ${number(s.target_soc_pct, "%")}</li>`).join("")}</ul>` : ""}</details>`
+      ? `<details class="reasoning" ${disclosure("why-plan")}><summary>Why this plan?</summary><p>${escapeHtml(plan.reason)}</p>${plan.follow_up_stops?.length ? `<h3>Later booked stops</h3><ul>${plan.follow_up_stops.map((s) => `<li>${escapeHtml(stationName(s.charger_id))} · ${formatTime(s.start_time)}–${formatTime(s.end_time)} IST · target ${number(s.target_soc_pct, "%")}</li>`).join("")}</ul>` : ""}</details>`
       : "") +
     (exclusions.length
-      ? `<details class="reasoning" ${!plan ? "open" : ""}><summary>Other stations</summary><ul>${exclusions.map((e) => `<li><b>${escapeHtml(stationName(e.charger_id))}:</b> ${escapeHtml(e.reason)}</li>`).join("")}</ul></details>`
+      ? `<details class="reasoning" ${disclosure("other-stations", !plan)}><summary>Other stations</summary><ul>${exclusions.map((e) => `<li><b>${escapeHtml(stationName(e.charger_id))}:</b> ${escapeHtml(e.reason)}</li>`).join("")}</ul></details>`
       : "") +
     renderManagerChoices(v);
   byId("plans-body").innerHTML =
@@ -539,7 +618,7 @@ function renderManagerChoices(v) {
   if ((dashboard.manager_decisions || []).some((x) => x.trip_id === d.trip_id))
     return "";
   const delayed = d.delay_plan?.evaluated_options?.[0]?.delivery_eta;
-  return `<section class="workspace manager-choices"><h3>Manager decision</h3><div class="choice-grid"><article><h3>Charge & accept delay</h3><p>Keep the reserve. ${delayed ? "Delivery around " + formatTime(delayed) + " IST." : "No feasible charging continuation available."}</p>${d.delay_available ? actionButton("accept-delay", v.vin, "Accept delay & review charge", true) : ""}</article><article><h3>Deliver priority customer</h3><p>${number(d.arrival_soc_pct, "%")} predicted arrival battery. ${escapeHtml(d.reason)}</p>${d.replacement ? `<p>${d.remaining_deliveries} later stops → ${escapeHtml(d.replacement.name)} after package handover.</p>` : ""}${d.deliver_now_available ? actionButton("deliver-now", v.vin, "Approve reserve exception") : '<span class="badge neutral">Unavailable</span>'}</article></div></section>`;
+  return `<section class="workspace manager-choices"><h3>Manager decision</h3><div class="choice-grid"><article><h3>Charge & accept delay</h3><p>Keep the reserve. Original deadlines stay visible; accept any resulting delay across the remaining timetable. ${delayed ? "Delivery around " + formatTime(delayed) + " IST." : "No feasible charging continuation available."}</p>${d.delay_available ? actionButton("accept-delay", v.vin, "Approve charging + delay", true) : ""}</article><article><h3>Deliver priority customer</h3><p>${number(d.arrival_soc_pct, "%")} predicted arrival battery. ${escapeHtml(d.reason)}</p>${d.replacement ? `<p>${d.remaining_deliveries} later stops → ${escapeHtml(d.replacement.name)} after package handover.</p>` : ""}${d.deliver_now_available ? actionButton("deliver-now", v.vin, "Approve delivery + recovery") : '<span class="badge neutral">Unavailable</span>'}</article></div></section>`;
 }
 
 function mapProjection(camera, width, height) {
@@ -710,7 +789,7 @@ function drawMap(svg, vehicles, chargers, depots) {
     })
     .join("");
   const bar = 5 * scale;
-  svg.innerHTML = `<defs><pattern id="grid" width="46" height="46" patternUnits="userSpaceOnUse"><path d="M46 0H0V46" fill="none" stroke="#d6e5ee" stroke-width=".6"/></pattern></defs><rect width="${width}" height="${height}" fill="#f1f7fc"/><rect width="${width}" height="${height}" fill="url(#grid)"/><text class="map-text" x="16" y="22">BENGALURU · SIMULATION</text>${routes}${pins}${depotPins}${stationPins}${markers}<path d="M18 ${height - 20}v5h${bar}v-5" fill="none" stroke="#526b81"/><text class="map-text" x="18" y="${height - 27}">5 km</text>`;
+  svg.innerHTML = `<defs><pattern id="grid" width="46" height="46" patternUnits="userSpaceOnUse"><path d="M46 0H0V46" fill="none" stroke="#d6e5ee" stroke-width=".6"/></pattern></defs><rect width="${width}" height="${height}" fill="#f1f7fc"/><rect width="${width}" height="${height}" fill="url(#grid)"/>${routes}${pins}${depotPins}${stationPins}${markers}<path d="M18 ${height - 20}v5h${bar}v-5" fill="none" stroke="#526b81"/><text class="map-text" x="18" y="${height - 27}">5 km</text>`;
 }
 
 function renderMap() {
@@ -750,8 +829,6 @@ async function compare(vin, replacePlanId) {
   selectedVin = vin;
   switchTab("plans");
   await perform(async () => {
-    if (dashboard.simulator.running)
-      await request("/simulator/stop", { method: "POST" });
     if (replacePlanId)
       await request(
         `/charging/plans/${encodeURIComponent(replacePlanId)}/reject`,
@@ -774,7 +851,7 @@ async function compare(vin, replacePlanId) {
         vin,
       };
     }
-  }, "Review ready. Simulation paused.");
+  }, "Review ready. Vehicles awaiting a decision remain safely held.");
 }
 byId("seed-button").addEventListener("click", () => {
   const count = Number(byId("vehicle-count").value),
@@ -786,7 +863,7 @@ byId("seed-button").addEventListener("click", () => {
   perform(async () => {
     await request("/simulator/scenarios", {
       method: "POST",
-      body: JSON.stringify({ scenario, vehicle_count: count, seed: 42 }),
+      body: JSON.stringify({ scenario, vehicle_count: count, seed: 42, variant: byId("scenario-variant").value || "offline" }),
     });
     selectedVin = null;
     viewport = null;
@@ -858,8 +935,8 @@ document.addEventListener("click", async (event) => {
       viewport = { lat: v.lat, lon: v.lon, spanKm: 25 };
     if (mode === "depot" && d)
       viewport = { lat: d.lat, lon: d.lon, spanKm: 28 };
-    if (mode === "in") viewport.spanKm = Math.max(0.5, viewport.spanKm / 1.8);
-    if (mode === "out") viewport.spanKm = Math.min(1000, viewport.spanKm * 1.8);
+    if (mode === "in") viewport.spanKm = Math.max(0.5, viewport.spanKm / 1.2);
+    if (mode === "out") viewport.spanKm = Math.min(1000, viewport.spanKm * 1.2);
     renderMap();
     return;
   }
@@ -870,8 +947,6 @@ document.addEventListener("click", async (event) => {
     selectedVin = id;
     switchTab("plans");
     await perform(async () => {
-      if (dashboard.simulator.running)
-        await request("/simulator/stop", { method: "POST" });
       decisionPreview = {
         ...(await request(
           `/charging/manager-decisions/${encodeURIComponent(id)}`,
@@ -886,8 +961,6 @@ document.addEventListener("click", async (event) => {
     if (!d || d.vin !== id) return;
     await perform(
       async () => {
-        if (dashboard.simulator.running)
-          await request("/simulator/stop", { method: "POST" });
         await request(
           `/charging/manager-decisions/${encodeURIComponent(id)}/${action}`,
           {
@@ -896,18 +969,16 @@ document.addEventListener("click", async (event) => {
               simulation_run_id: d.simulation_run_id,
               trip_id: d.trip_id,
               telemetry_sequence: d.telemetry_sequence,
+              decision_token: d.decision_token,
             }),
           },
         );
         decisionPreview = null;
         noOptions = null;
-        if (action === "accept-delay")
-          await request(`/charging/plans/${encodeURIComponent(id)}`, {
-            method: "POST",
-          });
+
       },
       action === "accept-delay"
-        ? "Delay accepted. Review the charging plan."
+        ? "Charging and delay approved. The vehicle can continue."
         : "Reserve exception approved. Recovery requested.",
     );
     return;
@@ -930,7 +1001,7 @@ document.addEventListener("click", async (event) => {
         method: "POST",
       }),
     action === "approve"
-      ? "Diversion approved and port reserved. Press Start to watch the journey."
+      ? (dashboard.simulator.running ? "Charging approved. The vehicle will follow its booked route." : "Charging approved. Press Start to watch the journey.")
       : `Decision ${action === "reject" ? "rejected" : "cancelled"}. Any associated reservation was released.`,
   );
 });
@@ -990,7 +1061,7 @@ byId("fleet-map").addEventListener(
     event.preventDefault();
     viewport.spanKm = Math.max(
       1,
-      Math.min(150, viewport.spanKm * (event.deltaY > 0 ? 1.15 : 1 / 1.15)),
+      Math.min(150, viewport.spanKm * Math.exp(Math.max(-20, Math.min(20, event.deltaY * (event.deltaMode === 1 ? 12 : 1))) * (event.ctrlKey ? 0.0008 : 0.002))),
     );
     renderMap();
   },

@@ -5,6 +5,12 @@ from pydantic import BaseModel, Field
 
 class SimulationScenario(StrEnum):
     NORMAL_DAY = "NORMAL_DAY"
+    NORMAL_LATER = "NORMAL_LATER"
+    CHARGER_RELAXED = "CHARGER_RELAXED"
+    CHARGER_INTERRUPTION = "CHARGER_INTERRUPTION"
+    QUEUE_OVERRUN = "QUEUE_OVERRUN"
+    NONFINAL_CONTINUATION = "NONFINAL_CONTINUATION"
+
     LOW_BATTERY_BEFORE_TRIP = "LOW_BATTERY_BEFORE_TRIP"
     CHARGER_CONGESTION = "CHARGER_CONGESTION"
     CHARGER_FAILURE = "CHARGER_FAILURE"
@@ -22,6 +28,7 @@ class ScenarioRequest(BaseModel):
     scenario: SimulationScenario = SimulationScenario.NONFINAL_RELAXED
     vehicle_count: int = Field(default=10, ge=1, le=1000)
     seed: int = 42
+    variant: str = "offline"
 
 
 class SimulatorStartRequest(BaseModel):

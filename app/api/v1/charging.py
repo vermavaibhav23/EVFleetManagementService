@@ -1,3 +1,5 @@
+import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -18,13 +20,16 @@ from app.models.trip import Trip
 from app.models.vehicle import Vehicle
 from app.services.coordination import serialized
 from app.services.fleet_readiness import evaluate_vehicle_readiness, find_next_trip
-from app.services.scheduler import create_recommendation, haversine_km
+from app.services.scheduler import create_recommendation, escape_km, haversine_km
 
 router = APIRouter()
 
 
 async def _load_recommendation(
-    vin: str, ignore_plan_id: str | None = None, allow_delay: bool = False
+    vin: str,
+    ignore_plan_id: str | None = None,
+    allow_delay: bool = False,
+    reviewed_plan=None,
 ) -> ChargingRecommendation:
     db = get_database()
     vehicle_doc = await db.vehicles.find_one({"vin": vin})
@@ -80,6 +85,10 @@ async def _load_recommendation(
             {"vin": vin, "status": "PLANNED", "simulation_enabled": {"$ne": False}}
         ).sort("departure_time", 1)
     ]
+    if allow_delay:
+        future_trips = [
+            t.model_copy(update={"accepted_delay": True}) for t in future_trips
+        ]
     return create_recommendation(
         vehicle,
         telemetry,
@@ -96,6 +105,7 @@ async def _load_recommendation(
         charging_efficiency=settings.charging_efficiency,
         now=telemetry.ts,
         future_trips=future_trips,
+        reviewed_plan=reviewed_plan,
     )
 
 
@@ -159,9 +169,15 @@ async def approve_plan(plan_id: str) -> ChargingPlan:
         return ChargingPlan(**plan_doc)
     if plan_doc.get("status") != "PROPOSED":
         raise HTTPException(422, "This plan is closed. Generate a new plan.")
-    recommendation = await _load_recommendation(plan_doc["vin"], ignore_plan_id=plan_id)
+    recommendation = await _load_recommendation(
+        plan_doc["vin"], ignore_plan_id=plan_id, reviewed_plan=ChargingPlan(**plan_doc)
+    )
     if recommendation.plan is None:
-        raise HTTPException(422, recommendation.reason)
+        raise HTTPException(
+            409,
+            "Reviewed plan is no longer feasible. Refresh options. "
+            + recommendation.reason,
+        )
     refreshed = recommendation.plan.model_dump(mode="python")
     reviewed_fields = (
         "charger_id",
@@ -188,7 +204,7 @@ async def approve_plan(plan_id: str) -> ChargingPlan:
     ):
         raise HTTPException(
             409,
-            "This recommendation is stale. Pause the simulation, reject this proposal, and compare fresh options. No reservation was made and no alternative was substituted.",
+            "This recommendation is stale. Refresh the options and review the updated timing before approving. No reservation was made.",
         )
     refreshed["plan_id"] = plan_id
     refreshed["created_at"] = plan_doc["created_at"]
@@ -227,6 +243,12 @@ async def approve_plan(plan_id: str) -> ChargingPlan:
             estimated_cost=stop["electricity_cost"],
             predicted_ready_time=stop["end_time"],
             active=False,
+            delivery_deadline=(
+                await db.trips.find_one({"trip_id": stop["trip_id"]})
+            ).get("delivery_deadline"),
+            remaining_delivery_km=stop["remaining_delivery_km"],
+            accepted_delay=plan_doc.get("accepted_delay", False),
+            parent_plan_id=plan_id,
             status="SCHEDULED",
             simulation_run_id=plan_doc["simulation_run_id"],
             reason="Later charging stop approved with the timetable.",
@@ -293,6 +315,12 @@ async def _set_plan_status(plan_id: str, status: ChargingPlanStatus) -> Charging
         raise HTTPException(
             422, "This plan is already closed; generate a new plan if needed"
         )
+    if status == ChargingPlanStatus.CANCELLED:
+        from app.services.plan_lifecycle import release_plan_chain
+
+        await release_plan_chain(
+            db, plan_id, now, "Manager cancelled the charging plan"
+        )
     doc = await db.charging_plans.find_one_and_update(
         {"plan_id": plan_id},
         {"$set": {"status": status.value, "active": False, "updated_at": now}},
@@ -330,6 +358,7 @@ class ManagerDecisionRequest(BaseModel):
     simulation_run_id: str
     trip_id: str
     telemetry_sequence: int
+    decision_token: str | None = None
 
 
 async def _decision_context(vin):
@@ -433,13 +462,35 @@ async def _decision_context(vin):
                 }
                 break
     delay = await _load_recommendation(vin, allow_delay=True)
+    compatible = [
+        Charger(**d) async for d in db.chargers.find({"depot_id": v.depot_id})
+    ]
+    needed_after = settings.reserve_range_km + escape_km(v, t, future, compatible)
     allowed_direct = (
         can_deliver
         and (not future or replacement is not None)
-        and remaining < settings.reserve_range_km * v.consumption_kwh_per_km
+        and remaining < needed_after * v.consumption_kwh_per_km
     )
     original = await _load_recommendation(vin)
+    token = hashlib.sha256(
+        json.dumps(
+            {
+                "run": e.simulation_run_id,
+                "trip": t.trip_id,
+                "soc": e.soc_pct,
+                "lat": e.lat,
+                "lon": e.lon,
+                "state": e.operating_state,
+                "replacement": replacement and replacement["vin"],
+                "direct": allowed_direct,
+                "delay": delay.plan is not None,
+                "deadline": str(t.delivery_deadline),
+            },
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
     return {
+        "decision_token": token,
         "simulation_run_id": e.simulation_run_id,
         "trip_id": t.trip_id,
         "telemetry_sequence": e.seq,
@@ -451,8 +502,9 @@ async def _decision_context(vin):
         "replacement": replacement,
         "remaining_deliveries": len(future),
         "delay_available": delay.plan is not None,
+        "delay_scope": len(future) + 1,
         "delay_plan": delay.plan.model_dump(mode="json") if delay.plan else None,
-        "reason": "Direct delivery uses the reserve. Recovery will be requested; it is not simulated."
+        "reason": "Direct delivery leaves insufficient reserve or no safe continuation. Recovery will be requested."
         if allowed_direct
         else "Direct delivery cannot satisfy the arrival or reassignment checks.",
     }, (v, e, t, future)
@@ -470,22 +522,37 @@ async def manager_decision(vin: str, choice: str, request: ManagerDecisionReques
     if choice not in {"accept-delay", "deliver-now"}:
         raise HTTPException(422, "Unknown manager decision")
     preview, (v, e, t, future) = await _decision_context(vin)
-    if (request.simulation_run_id, request.trip_id, request.telemetry_sequence) != (
+    stale = (request.simulation_run_id, request.trip_id) != (
         e.simulation_run_id,
         t.trip_id,
-        e.seq,
-    ):
+    )
+    stale = stale or (
+        request.decision_token != preview["decision_token"]
+        if request.decision_token
+        else request.telemetry_sequence != e.seq
+    )
+    if stale:
         raise HTTPException(
-            409, "Vehicle state changed. Review the decision again while paused."
+            409,
+            "Vehicle conditions changed. Refresh the manager choices before deciding.",
         )
     db = get_database()
     existing = await db.manager_decisions.find_one(
-        {"vin": vin, "trip_id": t.trip_id, "simulation_run_id": e.simulation_run_id}
+        {"vin": vin, "trip_id": t.trip_id, "simulation_run_id": e.simulation_run_id},
+        sort=[("created_at", -1)],
     )
     if existing:
-        raise HTTPException(
-            409, "A manager decision has already been recorded for this delivery."
+        previous_plan = await db.charging_plans.find_one(
+            {"plan_id": existing.get("plan_id")}
         )
+        if (
+            existing["choice"] != "accept-delay"
+            or not previous_plan
+            or previous_plan["status"] != "CANCELLED"
+        ):
+            raise HTTPException(
+                409, "A manager decision has already been recorded for this delivery."
+            )
     if await db.charging_plans.find_one(
         {"vin": vin, "status": {"$in": ["APPROVED", "CHARGING"]}}
     ):
@@ -498,8 +565,9 @@ async def manager_decision(vin: str, choice: str, request: ManagerDecisionReques
             raise HTTPException(
                 422, "No feasible charging continuation exists even with this delay."
             )
-        await db.trips.update_one(
-            {"trip_id": t.trip_id}, {"$set": {"accepted_delay": True}}
+        await db.trips.update_many(
+            {"vin": vin, "status": {"$in": ["PLANNED", "IN_PROGRESS"]}},
+            {"$set": {"accepted_delay": True}},
         )
     else:
         if not preview["deliver_now_available"]:
@@ -558,5 +626,26 @@ async def manager_decision(vin: str, choice: str, request: ManagerDecisionReques
         if choice == "accept-delay"
         else "Reserve exception approved; recovery requested and remaining work reassigned where applicable.",
     }
+    if choice == "accept-delay":
+        try:
+            charge_plan = await create_plan(vin, Response())
+            approved = await approve_plan(charge_plan.plan_id)
+            decision["plan_id"] = approved.plan_id
+        except Exception:
+            for previous in [t] + future:
+                await db.trips.update_one(
+                    {"trip_id": previous.trip_id},
+                    {"$set": {"accepted_delay": previous.accepted_delay}},
+                )
+            if "charge_plan" in locals():
+                from app.services.plan_lifecycle import release_plan_chain
+
+                await release_plan_chain(
+                    db,
+                    charge_plan.plan_id,
+                    e.ts,
+                    "Manager approval could not be completed",
+                )
+            raise
     await db.manager_decisions.insert_one(dict(decision))
     return decision

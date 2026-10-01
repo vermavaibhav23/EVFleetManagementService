@@ -244,3 +244,28 @@ test("arrived vehicle does not retain an obsolete diversion distance label", () 
   assert.equal(h.run("geographicDistance({lat:13,lon:77},{lat:13,lon:77})"), 0);
   assert.ok(h.run("geographicDistance({lat:0,lon:0},{lat:0,lon:1})") > 111);
 });
+
+test("disclosure state survives redraws, respects closure and is scoped to vehicle/run", () => {
+  const h = harness(() => new Promise(() => {}));
+  h.run(`dashboard={run_id:'r1'};selectedVin='A';document.querySelectorAll=()=>[{dataset:{disclosure:'r1:A:why-plan'},open:true}];captureDisclosures()`);
+  assert.match(h.run("disclosure('why-plan')"), / open/);
+  h.run("captureDisclosures()");
+  assert.match(h.run("disclosure('why-plan')"), / open/);
+  h.run("document.querySelectorAll=()=>[{dataset:{disclosure:'r1:A:why-plan'},open:false}];captureDisclosures()");
+  assert.ok(!h.run("disclosure('why-plan')").includes(' open'));
+  h.run("selectedVin='B'");
+  assert.ok(!h.run("disclosure('why-plan')").includes(' open'));
+});
+
+test("journey shows observed interruption without claiming skipped charging, then ends at emergency", () => {
+  const h = harness(() => new Promise(() => {}));
+  h.run("dashboard={plans:[],simulator:{simulated_time:'2026-10-01T09:00:00Z'}}");
+  const markup=h.run(`renderJourney({vin:'A',manager_readiness:'NEEDS_CHARGING',journey_progress:{steps:[{stage:'to_charger'},{stage:'interrupted',note:'Station fault'},{stage:'decision'}]}})`);
+  assert.match(markup,/Station fault/);
+  assert.match(markup,/aria-current="step"/);
+  assert.ok(!markup.includes('stage-charging'));
+  assert.match(markup,/Review the available choices/);
+  const emergency=h.run(`renderJourney({vin:'A',manager_readiness:'EMERGENCY',operating_state:'STRANDED'})`);
+  assert.match(emergency,/Energy Emergency/);
+  assert.ok(!emergency.includes('class="upcoming"'));
+});
