@@ -43,7 +43,8 @@ async def _load_recommendation(
         )
 
     chargers: list[Charger] = []
-    async for doc in db.chargers.find({}):
+    charger_query = {"depot_id": vehicle.depot_id} if vin.startswith("SIM") else {}
+    async for doc in db.chargers.find(charger_query):
         doc.pop("_id", None)
         chargers.append(Charger(**doc))
     reservations: list[Reservation] = []
