@@ -38,7 +38,7 @@ async function refresh() {
     byId("sim-clock").textContent = simulator.running
       ? `Running · ${formatTime(simulator.simulated_time)} · ${simulator.emitted_events} events`
       : `Stopped · ${simulator.tracked_vehicles} vehicles loaded`;
-    renderVehicles(fleet.vehicles);
+    renderVehicles(fleet.vehicles, plans);
     renderAlerts(alerts);
     renderPlans(plans);
   } catch (error) {
@@ -48,10 +48,22 @@ async function refresh() {
   }
 }
 
-function renderVehicles(vehicles) {
+function renderVehicles(vehicles, plans) {
   const priority = {CRITICAL: 0, CHARGE_SOON: 1, UNKNOWN: 2, SAFE: 3};
+  const activePlans = new Map(
+    plans
+      .filter((plan) => ["PROPOSED", "APPROVED", "CHARGING"].includes(plan.status))
+      .map((plan) => [plan.vin, plan])
+  );
   vehicles.sort((a, b) => (priority[a.readiness] ?? 9) - (priority[b.readiness] ?? 9));
-  byId("vehicles-body").innerHTML = vehicles.map((vehicle) => `
+  byId("vehicles-body").innerHTML = vehicles.map((vehicle) => {
+    const activePlan = activePlans.get(vehicle.vin);
+    const action = activePlan
+      ? `<button class="table-action" onclick="viewPlan('${vehicle.vin}')">${activePlan.status === "PROPOSED" ? "View plan" : activePlan.status}</button>`
+      : vehicle.readiness === "CRITICAL" || vehicle.readiness === "CHARGE_SOON"
+        ? `<button class="table-action" onclick="generatePlan('${vehicle.vin}')">Generate plan</button>`
+        : "-";
+    return `
     <tr>
       <td><strong>${vehicle.name}</strong><br><span class="muted">${vehicle.vin}</span></td>
       <td>${vehicle.operating_state || "-"}</td>
@@ -60,9 +72,9 @@ function renderVehicles(vehicles) {
       <td>${number(vehicle.post_trip_range_km, " km")}</td>
       <td>${number(vehicle.range_margin_km, " km")}</td>
       <td><span class="badge ${vehicle.readiness}">${vehicle.readiness}</span></td>
-      <td>${vehicle.readiness === "CRITICAL" || vehicle.readiness === "CHARGE_SOON"
-        ? `<button class="table-action" onclick="generatePlan('${vehicle.vin}')">Generate plan</button>` : "-"}</td>
-    </tr>`).join("") || `<tr><td colspan="8" class="muted">Seed a scenario to begin.</td></tr>`;
+      <td>${action}</td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="8" class="muted">Seed a scenario to begin.</td></tr>`;
 }
 
 function renderAlerts(alerts) {
@@ -74,7 +86,7 @@ function renderAlerts(alerts) {
 
 function renderPlans(plans) {
   byId("plans-body").innerHTML = plans.map((plan) => `
-    <tr><td>${plan.vin}</td><td>${plan.charger_id} · port ${plan.port_number}</td>
+    <tr data-vin="${plan.vin}"><td>${plan.vin}</td><td>${plan.charger_id} · port ${plan.port_number}</td>
     <td>${formatTime(plan.start_time)}<br><span class="muted">to ${formatTime(plan.end_time)}</span></td>
     <td>${number(plan.target_soc_pct, "%")}</td><td>₹${Number(plan.estimated_cost).toFixed(2)}</td>
     <td><span class="badge ${plan.status}">${plan.status}</span></td>
@@ -107,8 +119,23 @@ async function stopSimulation() {
 }
 
 async function generatePlan(vin) {
-  try { const plan = await request(`/charging/plans/${vin}`, {method: "POST"}); setMessage(`Plan ${plan.plan_id} proposed for ${vin}.`); await refresh(); }
+  try {
+    const plan = await request(`/charging/plans/${vin}`, {method: "POST"});
+    setMessage(`Plan ${plan.plan_id} is ready for review.`);
+    await refresh();
+    viewPlan(vin);
+  }
   catch (error) { setMessage(error.message, true); }
+}
+
+function viewPlan(vin) {
+  byId("plans-section").scrollIntoView({behavior: "smooth", block: "start"});
+  const row = [...byId("plans-body").querySelectorAll("tr")]
+    .find((item) => item.dataset.vin === vin);
+  if (row) {
+    row.classList.add("attention");
+    window.setTimeout(() => row.classList.remove("attention"), 2000);
+  }
 }
 
 async function approvePlan(planId) {
@@ -122,5 +149,6 @@ byId("stop-button").addEventListener("click", stopSimulation);
 byId("refresh-button").addEventListener("click", refresh);
 window.generatePlan = generatePlan;
 window.approvePlan = approvePlan;
+window.viewPlan = viewPlan;
 refresh();
 setInterval(refresh, 5000);

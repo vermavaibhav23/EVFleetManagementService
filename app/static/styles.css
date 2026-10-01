@@ -71,6 +71,11 @@ tbody tr:hover { background: #f7f9f9; }
 .badge.CHARGE_SOON, .badge.warning { color: #805a08; background: #fff2cd; }
 .badge.SAFE, .badge.COMPLETED { color: #126249; background: #def4e9; }
 .badge.UNKNOWN, .badge.PROPOSED { color: #52686f; background: #e9eff1; }
+
+tr.attention td {
+  background: #fff2cd;
+  transition: background 0.4s ease;
+}
 .badge.APPROVED, .badge.CHARGING, .badge.ACTION_SCHEDULED { color: #185a75; background: #dceff7; }
 .table-action { height: 30px; padding: 0 9px; font-size: 12px; }
 .muted { color: #77898f; }

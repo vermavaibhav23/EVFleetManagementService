@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import status as http_status
 from pymongo import ReturnDocument
 
 from app.core.config import settings
@@ -77,16 +78,15 @@ async def recommend_charger(vin: str) -> ChargingRecommendation:
 
 
 @router.post("/plans/{vin}", response_model=ChargingPlan, status_code=201)
-async def create_plan(vin: str) -> ChargingPlan:
+async def create_plan(vin: str, response: Response) -> ChargingPlan:
     db = get_database()
     existing = await db.charging_plans.find_one(
         {"vin": vin, "status": {"$in": ["PROPOSED", "APPROVED", "CHARGING"]}}
     )
     if existing:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Vehicle already has an active {existing['status'].lower()} charging plan",
-        )
+        existing.pop("_id", None)
+        response.status_code = http_status.HTTP_200_OK
+        return ChargingPlan(**existing)
     recommendation = await _load_recommendation(vin)
     if recommendation.plan is None:
         raise HTTPException(status_code=409, detail=recommendation.reason)
