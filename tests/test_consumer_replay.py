@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -30,3 +31,32 @@ class ConsumerReplayTests(unittest.IsolatedAsyncioTestCase):
                     SimpleNamespace(value=event.model_dump(mode="json"))
                 )
             consumer._process_unprocessed.assert_not_awaited()
+
+    async def test_consumer_commits_once_after_whole_batch(self):
+        consumer = AlertConsumer()
+        committed = asyncio.Event()
+        delivered = False
+
+        async def getmany(**kwargs):
+            nonlocal delivered
+            if not delivered:
+                delivered = True
+                return {"partition": [1, 2, 3]}
+            await asyncio.Event().wait()
+
+        async def commit():
+            committed.set()
+
+        consumer._consumer = SimpleNamespace(
+            getmany=getmany, commit=AsyncMock(side_effect=commit)
+        )
+        consumer._process_message = AsyncMock()
+        task = asyncio.create_task(consumer._consume())
+        await asyncio.wait_for(committed.wait(), 2)
+        self.assertEqual(3, consumer._process_message.await_count)
+        self.assertEqual(3, consumer.processed)
+        self.assertEqual(0, consumer._inflight)
+        consumer._consumer.commit.assert_awaited_once()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task

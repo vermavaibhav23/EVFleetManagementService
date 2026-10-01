@@ -19,6 +19,7 @@ class AlertConsumer:
         self._consumer = None
         self.error = None
         self.processed = 0
+        self._inflight = 0
         self.last_processed_at = None
 
     async def start(self):
@@ -48,7 +49,7 @@ class AlertConsumer:
         return {
             "running": running,
             "error": self.error,
-            "lag": lag,
+            "lag": lag + self._inflight,
             "processed": self.processed,
             "last_processed_at": self.last_processed_at,
         }
@@ -69,31 +70,51 @@ class AlertConsumer:
     async def _process_unprocessed(self, event):
         await process_telemetry_for_operations(get_database(), event, get_kafka_bus())
 
+    async def _process_message(self, message):
+        try:
+            await self._process(message)
+        except ValidationError:
+            await get_database().rejected_events.update_one(
+                {
+                    "topic": message.topic,
+                    "partition": message.partition,
+                    "offset": message.offset,
+                },
+                {"$set": {"reason": "Invalid telemetry schema"}},
+                upsert=True,
+            )
+
     async def _consume(self):
         try:
-            async for message in self._consumer:
+            while True:
+                batches = await self._consumer.getmany(timeout_ms=1000, max_records=100)
+                messages = [message for batch in batches.values() for message in batch]
+                if not messages:
+                    continue
+                self._inflight = len(messages)
                 while True:
                     try:
-                        await self._process(message)
+                        semaphore = asyncio.Semaphore(20)
+
+                        async def process(message):
+                            async with semaphore:
+                                await self._process_message(message)
+
+                        results = await asyncio.gather(
+                            *(process(message) for message in messages),
+                            return_exceptions=True,
+                        )
+                        for result in results:
+                            if isinstance(result, Exception):
+                                raise result
+                        # Every fetched record is processed before advancing offsets.
                         await self._consumer.commit()
-                        self.processed += 1
+                        self.processed += len(messages)
+                        self._inflight = 0
                         self.last_processed_at = datetime.now(UTC).isoformat()
                         self.error = None
                         break
-                    except ValidationError:
-                        # Store only metadata, never echo arbitrary event contents.
-                        await get_database().rejected_events.update_one(
-                            {
-                                "topic": message.topic,
-                                "partition": message.partition,
-                                "offset": message.offset,
-                            },
-                            {"$set": {"reason": "Invalid telemetry schema"}},
-                            upsert=True,
-                        )
-                        await self._consumer.commit()
-                        break
-                    except Exception as exc:  # noqa: BLE001 - retry transient dependency errors
+                    except Exception as exc:  # noqa: BLE001 - retry entire idempotent batch
                         self.error = type(exc).__name__
                         logging.getLogger(__name__).warning(
                             "Telemetry consumer retry: %s", self.error
