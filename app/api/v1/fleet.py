@@ -1,3 +1,6 @@
+import asyncio
+from typing import Any
+
 from fastapi import APIRouter, Query
 
 from app.core.dependencies import get_database
@@ -36,30 +39,31 @@ async def fleet_vehicle_statuses(
     limit: int = Query(default=50, ge=1, le=200),
 ) -> dict[str, object]:
     db = get_database()
-    rows: list[dict[str, object]] = []
-    async for vehicle in db.vehicles.find({"active": True}).sort("vin", 1).limit(limit):
+    vehicles = await db.vehicles.find({"active": True}).sort("vin", 1).to_list(limit)
+
+    async def build_row(vehicle: dict[str, Any]) -> dict[str, object]:
         vin = vehicle["vin"]
         telemetry = await db.telemetry.find_one({"vin": vin}, sort=[("ts", -1)])
         assessment = await evaluate_vehicle_readiness(db, vin) if telemetry else None
-        rows.append(
-            {
-                "vin": vin,
-                "name": vehicle.get("name", vin),
-                "soc_pct": telemetry.get("soc_pct") if telemetry else None,
-                "operating_state": telemetry.get("operating_state")
-                if telemetry
-                else "OFFLINE",
-                "readiness": assessment.status.value if assessment else "UNKNOWN",
-                "current_range_km": assessment.current_range_km if assessment else None,
-                "post_trip_range_km": assessment.post_trip_range_km
-                if assessment
-                else None,
-                "range_margin_km": assessment.range_margin_km if assessment else None,
-                "next_departure_time": assessment.next_departure_time
-                if assessment
-                else None,
-            }
-        )
+        return {
+            "vin": vin,
+            "name": vehicle.get("name", vin),
+            "soc_pct": telemetry.get("soc_pct") if telemetry else None,
+            "operating_state": telemetry.get("operating_state")
+            if telemetry
+            else "OFFLINE",
+            "readiness": assessment.status.value if assessment else "UNKNOWN",
+            "current_range_km": assessment.current_range_km if assessment else None,
+            "post_trip_range_km": assessment.post_trip_range_km
+            if assessment
+            else None,
+            "range_margin_km": assessment.range_margin_km if assessment else None,
+            "next_departure_time": assessment.next_departure_time
+            if assessment
+            else None,
+        }
+
+    rows = await asyncio.gather(*(build_row(vehicle) for vehicle in vehicles))
     return {
         "vehicles": rows,
         "total": await db.vehicles.count_documents({"active": True}),

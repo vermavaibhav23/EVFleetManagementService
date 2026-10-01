@@ -191,6 +191,7 @@ async def seed_scenario(
     )
 
     vehicles: list[str] = []
+    seed_records: list[tuple[Vehicle, Trip, TelemetryEvent]] = []
     for index in range(request.vehicle_count):
         vin = f"SIM{index + 1:014d}"
         vehicle = Vehicle(
@@ -203,10 +204,6 @@ async def seed_scenario(
             max_charge_power_kw=60,
             connector_type="CCS2",
         )
-        await db.vehicles.update_one(
-            {"vin": vin}, {"$set": vehicle.model_dump(mode="python")}, upsert=True
-        )
-
         distance_km = round(rng.uniform(45, 85), 1)
         if index == 0 and request.scenario in {
             SimulationScenario.LOW_BATTERY_BEFORE_TRIP,
@@ -223,12 +220,6 @@ async def seed_scenario(
             distance_km=distance_km,
             service_duration_minutes=20,
         )
-        await db.trips.update_one(
-            {"trip_id": trip.trip_id},
-            {"$set": trip.model_dump(mode="python")},
-            upsert=True,
-        )
-
         soc_pct = round(rng.uniform(55, 85), 1)
         if index == 0 and request.scenario != SimulationScenario.NORMAL_DAY:
             soc_pct = 20
@@ -259,8 +250,27 @@ async def seed_scenario(
                 1,
             ),
         )
-        await store_telemetry(telemetry, db, redis, kafka)
+        seed_records.append((vehicle, trip, telemetry))
         vehicles.append(vin)
+
+    async def persist_seed_record(
+        vehicle: Vehicle, trip: Trip, telemetry: TelemetryEvent
+    ) -> None:
+        await db.vehicles.update_one(
+            {"vin": vehicle.vin},
+            {"$set": vehicle.model_dump(mode="python")},
+            upsert=True,
+        )
+        await db.trips.update_one(
+            {"trip_id": trip.trip_id},
+            {"$set": trip.model_dump(mode="python")},
+            upsert=True,
+        )
+        await store_telemetry(telemetry, db, redis, kafka)
+
+    await asyncio.gather(
+        *(persist_seed_record(vehicle, trip, telemetry) for vehicle, trip, telemetry in seed_records)
+    )
 
     if request.scenario == SimulationScenario.CHARGER_CONGESTION:
         reservation = Reservation(
@@ -390,8 +400,12 @@ class SimulatorManager:
         assert self._simulated_time is not None
         elapsed_simulated_seconds = self._tick_seconds * self._time_scale
         self._simulated_time += timedelta(seconds=elapsed_simulated_seconds)
-        for state in self._states.values():
-            await self._advance_vehicle(state, elapsed_simulated_seconds)
+        await asyncio.gather(
+            *(
+                self._advance_vehicle(state, elapsed_simulated_seconds)
+                for state in self._states.values()
+            )
+        )
 
     async def _advance_vehicle(
         self, state: VehicleSimulationState, elapsed_seconds: float
