@@ -660,12 +660,12 @@ main {
   stroke-dasharray: 7 5;
 }
 .map-route.approved {
-  stroke: #477eaf;
-  stroke-width: 3;
+  stroke: #2563eb;
+  stroke-width: 4;
 }
 .map-route.return {
   stroke-dasharray: 3 5;
-  opacity: 0.8;
+  opacity: 0.4;
 }
 .map-halo {
   fill: #b9d989;

@@ -388,3 +388,25 @@ test("failed plan request does not trigger expensive fallback calculations", asy
   assert.match(h.node('message').textContent,/Service temporarily unavailable/);
   assert.equal(h.run('busy'),false);
 });
+
+test("approval switches the active map leg and next-stop panel to the charger, then back after charging", () => {
+  const h = harness(() => new Promise(() => {}));
+  h.run(`dashboard={vehicles:[{vin:'A',name:'Van',lat:13,lon:77,soc_pct:20,operating_state:'AWAITING_DECISION',delivery_remaining_km:12,current_trip:{trip_id:'T',destination:'Customer',destination_lat:13.1,destination_lon:77.1},itinerary:[]}],chargers:[{charger_id:'C',name:'North Hub',lat:13.01,lon:77.01}],depots:[],plans:[{vin:'A',plan_id:'P',charger_id:'C',status:'PROPOSED'}],simulator:{}};selectedVin='A';drawMap(byId('fleet-map'),dashboard.vehicles,dashboard.chargers,[])`);
+  assert.match(h.node('fleet-map').innerHTML,/map-route delivery/);
+  assert.match(h.node('fleet-map').innerHTML,/map-route proposed/);
+  h.run(`dashboard.plans[0].status='APPROVED';renderSelected();renderMap()`);
+  const approved=h.node('fleet-map').innerHTML;
+  assert.ok(!approved.includes('map-route delivery'));
+  assert.match(approved,/map-route approved.*marker-end="url\(#charger-arrow\)"/);
+  assert.match(approved,/map-route return/);
+  assert.match(h.node('selected-detail').innerHTML,/<dt>Next stop<\/dt><dd>North Hub<\/dd>/);
+  assert.match(h.node('selected-detail').innerHTML,/<dt>Next delivery<\/dt><dd>Customer<\/dd>/);
+  assert.match(h.node('map-selection').innerHTML,/North Hub/);
+  assert.ok(h.run('nextDestination(selected()).distance') < 2);
+  h.run(`dashboard.plans[0].status='CHARGING';dashboard.vehicles[0].lat=13.01;dashboard.vehicles[0].lon=77.01`);
+  assert.equal(h.run('nextDestination(selected()).distance'),0);
+  h.run(`dashboard.plans[0].status='COMPLETED';dashboard.vehicles[0].operating_state='RESUMING_TRIP';renderSelected();renderMap()`);
+  assert.match(h.node('fleet-map').innerHTML,/map-route delivery/);
+  assert.ok(!h.node('fleet-map').innerHTML.includes('map-route approved'));
+  assert.match(h.node('selected-detail').innerHTML,/<dt>Next stop<\/dt><dd>Customer<\/dd>/);
+});

@@ -493,6 +493,16 @@ function renderOverview() {
     '<p class="empty">All clear. No vehicles need charging attention.</p>';
   renderSelected();
 }
+function nextDestination(v, plan = currentPlan(v?.vin), chargers = dashboard?.chargers || []) {
+  const committed = plan && ["APPROVED", "CHARGING"].includes(plan.status);
+  const station = committed && chargers.find((c) => c.charger_id === plan.charger_id);
+  if (station) return {
+    name: station.name,
+    distance: geographicDistance(v, station),
+    charger: station,
+  };
+  return {name: v?.current_trip?.destination || "Timetable complete", distance: v?.delivery_remaining_km, charger: null};
+}
 function renderSelected() {
   captureDisclosures();
   const v = selected();
@@ -502,6 +512,7 @@ function renderSelected() {
     return;
   }
   const plan = currentPlan(),
+    destination = nextDestination(v, plan),
     trips = v.itinerary || [],
     done = trips.filter((t) => t.status === "COMPLETED").length;
   const actions = plan
@@ -510,7 +521,7 @@ function renderSelected() {
       ? actionButton("compare", v.vin, "Review options", true)
       : "";
   byId("selected-detail").innerHTML =
-    `<h2>${escapeHtml(v.name)}</h2><div class="status-row">${readinessBadge(v)} ${badge(v.operating_state)}</div><div class="battery-readout"><strong>${number(v.soc_pct, "", 0)}</strong><span>% battery</span></div><div class="battery-bar ${v.soc_pct < 25 ? "low" : ""}"><i style="width:${v.soc_pct || 0}%"></i></div><div class="detail-body"><dl class="facts">${fact("Next stop", v.current_trip?.destination || "Timetable complete")}${fact("Distance", number(v.delivery_remaining_km, " km"))}${fact("Deadline", formatDate(v.current_trip?.delivery_deadline) + " · " + formatTime(v.current_trip?.delivery_deadline) + " IST")}${fact("Stops completed", `${done} / ${trips.length}`)}</dl><p class="short-reason">${escapeHtml(v.explanation)}</p>${actions}${!plan && v.current_trip ? actionButton("manager", v.vin, "Manager choices") : ""}<details ${disclosure("battery")}><summary>Battery & route details</summary><dl class="facts">${fact("Available range", number(v.current_range_km, " km"))}${fact("Reserve", number(v.reserve_range_km, " km"))}${fact("Battery temperature", number(v.battery_temperature_c, "°C"))}${fact("Updated", formatTime(v.telemetry_time) + " IST")}</dl></details><button class="detail-link" data-select="${escapeHtml(v.vin)}" data-select-tab="vehicles">View timetable →</button>${renderJourney(v)}</div>`;
+    `<h2>${escapeHtml(v.name)}</h2><div class="status-row">${readinessBadge(v)} ${badge(v.operating_state)}</div><div class="battery-readout"><strong>${number(v.soc_pct, "", 0)}</strong><span>% battery</span></div><div class="battery-bar ${v.soc_pct < 25 ? "low" : ""}"><i style="width:${v.soc_pct || 0}%"></i></div><div class="detail-body"><dl class="facts">${fact("Next stop", destination.name)}${fact("Distance to stop", number(destination.distance, " km"))}${destination.charger ? fact("Next delivery", v.current_trip?.destination || "Timetable complete") : ""}${fact("Delivery deadline", formatDate(v.current_trip?.delivery_deadline) + " · " + formatTime(v.current_trip?.delivery_deadline) + " IST")}${fact("Stops completed", `${done} / ${trips.length}`)}</dl><p class="short-reason">${escapeHtml(destination.charger ? `Charging approved at ${destination.name}. Delivery continues after charging.` : v.explanation)}</p>${actions}${!plan && v.current_trip ? actionButton("manager", v.vin, "Manager choices") : ""}<details ${disclosure("battery")}><summary>Battery & route details</summary><dl class="facts">${fact("Available range", number(v.current_range_km, " km"))}${fact("Reserve", number(v.reserve_range_km, " km"))}${fact("Battery temperature", number(v.battery_temperature_c, "°C"))}${fact("Updated", formatTime(v.telemetry_time) + " IST")}</dl></details><button class="detail-link" data-select="${escapeHtml(v.vin)}" data-select-tab="vehicles">View timetable →</button>${renderJourney(v)}</div>`;
 }
 
 function renderVehicleProfile() {
@@ -703,7 +714,7 @@ function drawMap(svg, vehicles, chargers, depots) {
   const line = (a, b, kind) => {
     const p = point(a.lat, a.lon),
       q = point(b.lat, b.lon);
-    return `<line class="map-route ${kind}" x1="${p.x}" y1="${p.y}" x2="${q.x}" y2="${q.y}"/>`;
+    return `<line class="map-route ${kind}" ${kind === "approved" ? 'marker-end="url(#charger-arrow)"' : ""} x1="${p.x}" y1="${p.y}" x2="${q.x}" y2="${q.y}"/>`;
   };
   let routes = "";
   if (v?.current_trip?.destination_lat != null) {
@@ -711,7 +722,9 @@ function drawMap(svg, vehicles, chargers, depots) {
       lat: v.current_trip.destination_lat,
       lon: v.current_trip.destination_lon,
     };
-    routes += line(v, target, "delivery");
+    const destination = nextDestination(v, plan, chargers);
+    // Once approved, the charger is the active leg. The customer comes afterward.
+    if (!destination.charger) routes += line(v, target, "delivery");
     let previous = target;
     for (const t of (v.itinerary || []).filter(
       (t) => t.status === "PLANNED" && t.trip_id !== v.current_trip.trip_id,
@@ -808,7 +821,7 @@ function drawMap(svg, vehicles, chargers, depots) {
     })
     .join("");
   const bar = 5 * scale;
-  svg.innerHTML = `<defs><pattern id="grid" width="46" height="46" patternUnits="userSpaceOnUse"><path d="M46 0H0V46" fill="none" stroke="#d6e5ee" stroke-width=".6"/></pattern></defs><rect width="${width}" height="${height}" fill="#f1f7fc"/><rect width="${width}" height="${height}" fill="url(#grid)"/>${routes}${pins}${depotPins}${stationPins}${markers}<path d="M18 ${height - 20}v5h${bar}v-5" fill="none" stroke="#526b81"/><text class="map-text" x="18" y="${height - 27}">5 km</text>`;
+  svg.innerHTML = `<defs><marker id="charger-arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#2563eb"/></marker><pattern id="grid" width="46" height="46" patternUnits="userSpaceOnUse"><path d="M46 0H0V46" fill="none" stroke="#d6e5ee" stroke-width=".6"/></pattern></defs><rect width="${width}" height="${height}" fill="#f1f7fc"/><rect width="${width}" height="${height}" fill="url(#grid)"/>${routes}${pins}${depotPins}${stationPins}${markers}<path d="M18 ${height - 20}v5h${bar}v-5" fill="none" stroke="#526b81"/><text class="map-text" x="18" y="${height - 27}">5 km</text>`;
 }
 
 function renderMap() {
@@ -823,7 +836,7 @@ function renderMap() {
   );
   const v = selected();
   byId("map-selection").innerHTML = v
-    ? `<strong>${escapeHtml(v.name)}</strong> · ${human(v.operating_state)} · ${number(v.soc_pct, "%")} · ${number(v.delivery_remaining_km, " km to next stop")}`
+    ? `<strong>${escapeHtml(v.name)}</strong> · ${human(v.operating_state)} · ${number(v.soc_pct, "%")} · ${escapeHtml(nextDestination(v).name)} · ${number(nextDestination(v).distance, " km to next stop")}`
     : "Select a vehicle.";
 }
 function applyPlan(plan) {
