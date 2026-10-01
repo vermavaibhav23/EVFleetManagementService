@@ -14,6 +14,7 @@ from app.models.tariff import Tariff
 from app.models.telemetry import TelemetryEvent
 from app.models.trip import Trip, TripStatus
 from app.models.vehicle import Vehicle
+from app.services.energy import charging_seconds
 from app.services.pricing import charging_cost, price_at
 from app.services.reservations import has_reservation_conflict, intervals_overlap
 
@@ -31,11 +32,10 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 
 def _round_up(moment: datetime, slot_minutes: int) -> datetime:
-    moment = moment.astimezone(UTC).replace(second=0, microsecond=0)
-    remainder = moment.minute % slot_minutes
-    if remainder:
-        moment += timedelta(minutes=slot_minutes - remainder)
-    return moment
+    seconds = slot_minutes * 60
+    return datetime.fromtimestamp(
+        math.ceil(moment.timestamp() / seconds) * seconds, UTC
+    )
 
 
 def create_recommendation(
@@ -52,7 +52,7 @@ def create_recommendation(
     charge_soon_margin_km: float = 15,
     deadline_buffer_minutes: int = 20,
     slot_minutes: int = 15,
-    average_travel_speed_kmh: float = 30,
+    average_travel_speed_kmh: float = 35,
     charging_efficiency: float = 0.92,
 ) -> ChargingRecommendation:
     now = (now or datetime.now(UTC)).astimezone(UTC)
@@ -85,19 +85,20 @@ def create_recommendation(
     soh_pct = telemetry.soh_pct if telemetry.soh_pct is not None else 100
     effective_capacity = vehicle.usable_capacity_kwh * soh_pct / 100
     desired_margin_km = reserve_range_km + charge_soon_margin_km
-    desired_energy = min(
-        effective_capacity,
-        (float(readiness.trip_distance_km or trip.distance_km) + desired_margin_km)
-        * vehicle.consumption_kwh_per_km,
-    )
-
+    if effective_capacity <= 0:
+        return ChargingRecommendation(
+            vin=vehicle.vin,
+            readiness=readiness,
+            reason="Battery capacity is unavailable; vehicle requires service.",
+        )
     emergency_diversion = trip.status == TripStatus.IN_PROGRESS
-    deadline = (
-        now + timedelta(hours=4)
-        if emergency_diversion
-        else trip.departure_time.astimezone(UTC)
-        - timedelta(minutes=deadline_buffer_minutes)
+    # A delivery deadline, if supplied, includes the journey AFTER charging.
+    # Legacy trips without one use their scheduled journey duration plus 2 h slack.
+    delivery_deadline = trip.delivery_deadline or (
+        trip.departure_time
+        + timedelta(hours=trip.distance_km / average_travel_speed_kmh + 2)
     )
+    deadline = trip.departure_time - timedelta(minutes=deadline_buffer_minutes)
     candidates: list[CandidateCharger] = []
 
     for charger in chargers:
@@ -113,6 +114,29 @@ def create_recommendation(
         if travel_energy >= readiness.available_energy_kwh:
             continue
 
+        delivery_km = (
+            haversine_km(
+                charger.lat, charger.lon, trip.destination_lat, trip.destination_lon
+            )
+            if trip.destination_lat is not None and trip.destination_lon is not None
+            else float(readiness.trip_distance_km or trip.distance_km) + travel_distance
+        )
+        desired_energy = (
+            delivery_km + desired_margin_km
+        ) * vehicle.consumption_kwh_per_km
+        if desired_energy > effective_capacity:
+            continue
+        target_soc = math.ceil(desired_energy / effective_capacity * 1000) / 10
+        desired_energy = target_soc / 100 * effective_capacity
+        ready_deadline = (
+            delivery_deadline
+            - timedelta(
+                hours=delivery_km / average_travel_speed_kmh,
+                minutes=deadline_buffer_minutes,
+            )
+            if trip.delivery_deadline or emergency_diversion
+            else deadline
+        )
         travel_minutes = travel_distance / average_travel_speed_kmh * 60
         earliest_start = _round_up(
             now + timedelta(minutes=travel_minutes), slot_minutes
@@ -123,15 +147,18 @@ def create_recommendation(
             continue
 
         allocated_power = min(vehicle.max_charge_power_kw, charger.available_kw)
-        charging_hours = energy_required / (allocated_power * charging_efficiency)
-        if desired_energy / effective_capacity > 0.8:
-            charging_hours *= 1.1
-        duration = timedelta(hours=charging_hours)
-        latest_start = (
-            earliest_start + timedelta(minutes=30)
-            if emergency_diversion
-            else deadline - duration
+        duration = timedelta(
+            seconds=charging_seconds(
+                available_after_travel / effective_capacity * 100,
+                target_soc,
+                effective_capacity,
+                allocated_power,
+                charging_efficiency,
+            )
         )
+        # One tick of margin covers discrete arrival/plug-in in the 60x demo.
+        duration += timedelta(minutes=1)
+        latest_start = ready_deadline - duration
         if latest_start < earliest_start:
             continue
 
@@ -142,7 +169,9 @@ def create_recommendation(
             reserved_depot_power = sum(
                 reservation.reserved_power_kw
                 for reservation in reservations
-                if charger_depots.get(reservation.charger_id) == charger.depot_id
+                if reservation.status.value
+                in {"CONFIRMED", "VEHICLE_EN_ROUTE", "OCCUPIED"}
+                and charger_depots.get(reservation.charger_id) == charger.depot_id
                 and intervals_overlap(
                     slot, end, reservation.start_time, reservation.end_time
                 )
@@ -173,13 +202,14 @@ def create_recommendation(
                     depot_tariffs,
                     charger.price_per_kwh,
                     charging_efficiency,
+                    energy_required / charging_efficiency,
                 )
                 wait_minutes = max(
                     0,
                     (slot - (now + timedelta(minutes=travel_minutes))).total_seconds()
                     / 60,
                 )
-                deadline_margin = (deadline - end).total_seconds() / 60
+                deadline_margin = (ready_deadline - end).total_seconds() / 60
                 travel_cost = travel_energy * price_at(
                     slot, depot_tariffs, charger.price_per_kwh
                 )
@@ -228,6 +258,24 @@ def create_recommendation(
         )
     selected = candidates[0]
     charger = next(item for item in chargers if item.charger_id == selected.charger_id)
+    delivery_km = (
+        haversine_km(
+            charger.lat, charger.lon, trip.destination_lat, trip.destination_lon
+        )
+        if trip.destination_lat is not None and trip.destination_lon is not None
+        else float(readiness.trip_distance_km or trip.distance_km)
+        + selected.travel_distance_km
+    )
+    target_soc = (
+        math.ceil(
+            (delivery_km + desired_margin_km)
+            * vehicle.consumption_kwh_per_km
+            / effective_capacity
+            * 1000
+        )
+        / 10
+    )
+    desired_energy = target_soc / 100 * effective_capacity
     travel_energy = selected.travel_distance_km * vehicle.consumption_kwh_per_km
     available_after_travel = max(0, readiness.available_energy_kwh - travel_energy)
     energy_required = max(0, desired_energy - available_after_travel)
@@ -244,6 +292,13 @@ def create_recommendation(
         )
     plan = ChargingPlan(
         vin=vehicle.vin,
+        simulation_run_id=telemetry.simulation_run_id,
+        delivery_deadline=delivery_deadline,
+        remaining_delivery_km=round(delivery_km, 3),
+        grid_energy_kwh=round(energy_required / charging_efficiency, 3),
+        average_price_per_kwh=round(
+            selected.electricity_cost / (energy_required / charging_efficiency), 3
+        ),
         trip_id=trip.trip_id,
         charger_id=selected.charger_id,
         port_number=selected.port_number,
@@ -258,9 +313,7 @@ def create_recommendation(
         next_departure_time=trip.departure_time,
         travel_distance_km=selected.travel_distance_km,
         estimated_arrival_time=now
-        + timedelta(
-            hours=selected.travel_distance_km / average_travel_speed_kmh
-        ),
+        + timedelta(hours=selected.travel_distance_km / average_travel_speed_kmh),
         reason=reason,
         alternatives=candidates[1:4],
     )

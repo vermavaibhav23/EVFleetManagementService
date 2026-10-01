@@ -21,7 +21,6 @@ async def find_next_trip(db: Any, vin: str, now: datetime | None = None) -> Trip
             {
                 "vin": vin,
                 "status": TripStatus.PLANNED.value,
-                "departure_time": {"$gte": now},
             },
             sort=[("departure_time", 1)],
         )
@@ -43,7 +42,9 @@ async def evaluate_vehicle_readiness(
     vehicle = Vehicle(**vehicle_doc)
 
     if telemetry_event is None:
-        telemetry_doc = await db.telemetry.find_one({"vin": vin}, sort=[("ts", -1)])
+        telemetry_doc = await db.telemetry.find_one(
+            {"vin": vin}, sort=[("ts", -1), ("seq", -1)]
+        )
         if telemetry_doc is None:
             return None
         telemetry_doc.pop("_id", None)
@@ -129,9 +130,34 @@ async def update_charging_lifecycle(db: Any, event: TelemetryEvent) -> None:
     if plan is None:
         return
 
-    if event.is_plugged_in and event.charger_id == plan.get("charger_id"):
+    if not (
+        event.is_plugged_in
+        and event.charger_id == plan.get("charger_id")
+        and event.plan_id == plan.get("plan_id")
+        and event.port_number == plan.get("port_number")
+        and event.simulation_run_id == plan.get("simulation_run_id")
+        and event.ts >= plan["start_time"]
+    ):
+        return
+    reservation = await db.reservations.find_one(
+        {
+            "plan_id": plan["plan_id"],
+            "vin": event.vin,
+            "charger_id": event.charger_id,
+            "port_number": event.port_number,
+            "status": {"$in": ["CONFIRMED", "VEHICLE_EN_ROUTE", "OCCUPIED"]},
+        }
+    )
+    charger = await db.chargers.find_one({"charger_id": event.charger_id})
+    from app.services.scheduler import haversine_km
+
+    if not reservation or not charger or charger.get("status") in {"FAULTY", "OFFLINE"}:
+        return
+    if haversine_km(event.lat, event.lon, charger["lat"], charger["lon"]) > 0.08:
+        return
+    if event.is_plugged_in:
         await db.charging_plans.update_one(
-            {"plan_id": plan["plan_id"]},
+            {"plan_id": plan["plan_id"], "status": {"$in": ["APPROVED", "CHARGING"]}},
             {"$set": {"status": "CHARGING", "updated_at": datetime.now(UTC)}},
         )
         await db.reservations.update_one(
@@ -142,7 +168,7 @@ async def update_charging_lifecycle(db: Any, event: TelemetryEvent) -> None:
     if event.soc_pct >= float(plan.get("target_soc_pct", 101)):
         now = datetime.now(UTC)
         await db.charging_plans.update_one(
-            {"plan_id": plan["plan_id"]},
+            {"plan_id": plan["plan_id"], "status": {"$in": ["APPROVED", "CHARGING"]}},
             {
                 "$set": {
                     "status": "COMPLETED",
@@ -164,7 +190,7 @@ async def process_telemetry_for_operations(
     latest = await db.telemetry.find_one(
         {"vin": event.vin},
         {"event_id": 1},
-        sort=[("ts", -1)],
+        sort=[("ts", -1), ("seq", -1)],
     )
     if latest is None or latest.get("event_id") != event.event_id:
         return

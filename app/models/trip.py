@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AwareDatetime, BaseModel, Field, field_validator
 
 
 class TripStatus(StrEnum):
@@ -20,11 +20,12 @@ class Trip(BaseModel):
     origin_lon: float | None = Field(default=None, ge=-180, le=180)
     destination_lat: float | None = Field(default=None, ge=-90, le=90)
     destination_lon: float | None = Field(default=None, ge=-180, le=180)
-    departure_time: datetime
+    departure_time: AwareDatetime
+    delivery_deadline: AwareDatetime | None = None
     distance_km: float = Field(gt=0)
     service_duration_minutes: int = Field(default=20, ge=0, le=1440)
     status: TripStatus = TripStatus.PLANNED
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    created_at: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @field_validator("departure_time")
     @classmethod
@@ -35,6 +36,7 @@ class Trip(BaseModel):
 
 
 class TripUpdate(BaseModel):
-    departure_time: datetime | None = None
+    departure_time: AwareDatetime | None = None
+    delivery_deadline: AwareDatetime | None = None
     distance_km: float | None = Field(default=None, gt=0)
     status: TripStatus | None = None

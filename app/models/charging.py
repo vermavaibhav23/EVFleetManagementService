@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, Field
 
 
 class ReadinessStatus(StrEnum):
@@ -25,7 +25,7 @@ class ReadinessAssessment(BaseModel):
     required_energy_kwh: float | None = None
     energy_deficit_kwh: float = 0
     next_trip_id: str | None = None
-    next_departure_time: datetime | None = None
+    next_departure_time: AwareDatetime | None = None
     health_flags: list[str] = Field(default_factory=list)
     explanation: str
 
@@ -33,8 +33,8 @@ class ReadinessAssessment(BaseModel):
 class CandidateCharger(BaseModel):
     charger_id: str
     port_number: int
-    start_time: datetime
-    end_time: datetime
+    start_time: AwareDatetime
+    end_time: AwareDatetime
     travel_distance_km: float
     wait_minutes: float
     charging_minutes: float
@@ -59,22 +59,27 @@ class ChargingPlan(BaseModel):
     trip_id: str | None = None
     charger_id: str
     port_number: int = Field(ge=1)
-    start_time: datetime
-    end_time: datetime
+    start_time: AwareDatetime
+    end_time: AwareDatetime
     starting_soc_pct: float
     target_soc_pct: float
     energy_required_kwh: float
     allocated_power_kw: float
     estimated_cost: float
-    predicted_ready_time: datetime
-    next_departure_time: datetime | None = None
+    predicted_ready_time: AwareDatetime
+    next_departure_time: AwareDatetime | None = None
     travel_distance_km: float = Field(default=0, ge=0)
-    estimated_arrival_time: datetime | None = None
+    estimated_arrival_time: AwareDatetime | None = None
     status: ChargingPlanStatus = ChargingPlanStatus.PROPOSED
     active: bool = True
     reason: str
+    simulation_run_id: str | None = None
+    delivery_deadline: AwareDatetime | None = None
+    remaining_delivery_km: float = 0
+    grid_energy_kwh: float = 0
+    average_price_per_kwh: float = 0
     alternatives: list[CandidateCharger] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    created_at: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class ChargingRecommendation(BaseModel):

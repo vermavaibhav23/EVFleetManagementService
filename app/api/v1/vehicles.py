@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.core.dependencies import get_database, get_redis
 from app.models.vehicle import Vehicle, VehicleListResponse
+from app.services.coordination import serialized
 from app.services.fleet_readiness import (
     evaluate_vehicle_readiness,
     synchronize_readiness_alert,
@@ -13,6 +14,7 @@ router = APIRouter()
 
 
 @router.post("", response_model=Vehicle, status_code=201)
+@serialized
 async def upsert_vehicle(vehicle: Vehicle) -> Vehicle:
     db = get_database()
     await db.vehicles.update_one(
@@ -44,7 +46,7 @@ async def latest_vehicle_state(vin: str) -> dict[str, object]:
         return {"source": "redis", "vehicle": json.loads(latest)}
 
     db = get_database()
-    doc = await db.telemetry.find_one({"vin": vin}, sort=[("ts", -1)])
+    doc = await db.telemetry.find_one({"vin": vin}, sort=[("ts", -1), ("seq", -1)])
     if not doc:
         raise HTTPException(status_code=404, detail="Vehicle telemetry not found")
     doc["_id"] = str(doc["_id"])
@@ -52,6 +54,7 @@ async def latest_vehicle_state(vin: str) -> dict[str, object]:
 
 
 @router.get("/{vin}/readiness")
+@serialized
 async def vehicle_readiness(
     vin: str, synchronize_alert: bool = True
 ) -> dict[str, object]:

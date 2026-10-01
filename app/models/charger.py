@@ -21,6 +21,9 @@ class Charger(BaseModel):
     connector_type: str = "CCS2"
     port_count: int = Field(default=1, ge=1, le=20)
     status: ChargerStatus = ChargerStatus.AVAILABLE
+    occupied_ports: int = 0
+    reserved_ports: int = 0
+    free_ports: int | None = None
 
     @field_validator("status", mode="before")
     @classmethod

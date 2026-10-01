@@ -1,9 +1,12 @@
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
+from aiokafka.errors import KafkaError
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pymongo.errors import PyMongoError
+from redis.exceptions import RedisError
 
 from app.api.routes import router as api_router
 from app.core.config import settings
@@ -27,8 +30,8 @@ async def lifespan(app: FastAPI):
         consumer = AlertConsumer()
         try:
             await consumer.start()
-        except Exception as exc:
-            connection_errors["kafka_consumer"] = str(exc)
+        except Exception as exc:  # noqa: BLE001 - dependency startup boundary
+            connection_errors["kafka_consumer"] = type(exc).__name__
             consumer = None
     app.state.alert_consumer = consumer
     try:
@@ -50,11 +53,27 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 @app.exception_handler(RuntimeError)
 async def dependency_runtime_error(_: Request, exc: RuntimeError) -> JSONResponse:
-    message = str(exc)
+    message = type(exc).__name__
     unavailable = "not connected" in message.casefold()
     return JSONResponse(
         status_code=503 if unavailable else 500,
-        content={"detail": message},
+        content={
+            "detail": "Dependency unavailable; check service health"
+            if unavailable
+            else "An internal operation failed; check application logs"
+        },
+    )
+
+
+@app.exception_handler(PyMongoError)
+@app.exception_handler(RedisError)
+@app.exception_handler(KafkaError)
+async def dependency_failure(_: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": f"Service dependency unavailable ({type(exc).__name__}); retry after checking health"
+        },
     )
 
 

@@ -3,11 +3,13 @@ from pymongo import ReturnDocument
 
 from app.core.dependencies import get_database
 from app.models.trip import Trip, TripUpdate
+from app.services.coordination import serialized
 
 router = APIRouter()
 
 
 @router.post("", response_model=Trip, status_code=201)
+@serialized
 async def upsert_trip(trip: Trip) -> Trip:
     db = get_database()
     if await db.vehicles.find_one({"vin": trip.vin}) is None:
@@ -31,6 +33,7 @@ async def list_vehicle_trips(vin: str) -> list[Trip]:
 
 
 @router.patch("/{trip_id}", response_model=Trip)
+@serialized
 async def update_trip(trip_id: str, update: TripUpdate) -> Trip:
     db = get_database()
     changes = update.model_dump(mode="python", exclude_none=True)

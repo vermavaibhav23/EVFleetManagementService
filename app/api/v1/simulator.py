@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 
 from app.core.dependencies import get_database, get_kafka_bus, get_redis
 from app.models.simulator import ScenarioRequest, SimulatorStartRequest, SimulatorStatus
+from app.services.coordination import serialized
 from app.services.simulator import SimulatorManager, seed_scenario
 
 router = APIRouter()
@@ -12,13 +13,12 @@ def _manager(request: Request) -> SimulatorManager:
 
 
 @router.post("/scenarios")
+@serialized
 async def create_scenario(
     request_body: ScenarioRequest, request: Request
 ) -> dict[str, object]:
-    if _manager(request).status().running:
-        raise HTTPException(
-            status_code=409, detail="Stop the simulator before reseeding a scenario"
-        )
+    await _manager(request).stop()
+    _manager(request).reset()
     result = await seed_scenario(
         request_body,
         get_database(),

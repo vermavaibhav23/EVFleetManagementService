@@ -5,6 +5,7 @@ from pymongo import ReturnDocument
 
 from app.core.dependencies import get_database
 from app.models.alert import AlertAction, FleetAlert
+from app.services.coordination import serialized
 
 router = APIRouter()
 
@@ -24,6 +25,7 @@ async def list_alerts(
 
 
 @router.patch("/{dedupe_key}", response_model=FleetAlert)
+@serialized
 async def update_alert(dedupe_key: str, action: AlertAction) -> FleetAlert:
     db = get_database()
     changes: dict[str, object] = {

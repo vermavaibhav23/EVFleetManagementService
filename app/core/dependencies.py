@@ -28,7 +28,7 @@ async def connect_clients() -> None:
         await mongo_client.admin.command("ping")
         db = get_database()
         await db.telemetry.create_index("event_id", unique=True, sparse=True)
-        await db.telemetry.create_index([("vin", 1), ("ts", -1)])
+        await db.telemetry.create_index([("vin", 1), ("ts", -1), ("seq", -1)])
         await db.telemetry.create_index([("ts", -1)])
         await db.vehicles.create_index("vin", unique=True)
         await db.trips.create_index("trip_id", unique=True)
@@ -41,6 +41,12 @@ async def connect_clients() -> None:
             [("charger_id", 1), ("port_number", 1), ("start_time", 1), ("end_time", 1)]
         )
         await db.charging_plans.create_index("plan_id", unique=True)
+        await db.reservations.create_index(
+            "plan_id",
+            unique=True,
+            partialFilterExpression={"plan_id": {"$type": "string"}},
+            name="one_reservation_per_plan",
+        )
         await db.charging_plans.create_index(
             "vin",
             unique=True,
@@ -49,23 +55,25 @@ async def connect_clients() -> None:
         )
         await db.alerts.create_index("dedupe_key", unique=True, sparse=True)
         await db.alerts.create_index([("vin", 1), ("created_at", -1)])
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - dependency startup boundary
+        if mongo_client is not None:
+            mongo_client.close()
         mongo_client = None
-        connection_errors["mongodb"] = str(exc)
+        connection_errors["mongodb"] = type(exc).__name__
 
     try:
         redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
         await redis_client.ping()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - dependency startup boundary
         redis_client = None
-        connection_errors["redis"] = str(exc)
+        connection_errors["redis"] = type(exc).__name__
 
     try:
         kafka_bus = KafkaBus()
         await kafka_bus.start()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - dependency startup boundary
         kafka_bus = None
-        connection_errors["kafka"] = str(exc)
+        connection_errors["kafka"] = type(exc).__name__
 
 
 async def close_clients() -> None:

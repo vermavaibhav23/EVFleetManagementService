@@ -9,6 +9,7 @@ from app.models.reservation import (
     Reservation,
     ReservationUpdate,
 )
+from app.services.coordination import serialized
 
 router = APIRouter()
 
@@ -34,11 +35,19 @@ async def _conflicting_reservation(
 
 
 @router.post("", response_model=Reservation, status_code=201)
+@serialized
 async def create_reservation(reservation: Reservation) -> Reservation:
     db = get_database()
     charger = await db.chargers.find_one({"charger_id": reservation.charger_id})
     if charger is None:
         raise HTTPException(status_code=404, detail="Charger not found")
+    existing = await db.reservations.find_one(
+        {"reservation_id": reservation.reservation_id}
+    )
+    if existing:
+        return Reservation(**existing)
+    if charger["status"] != "AVAILABLE":
+        raise HTTPException(422, "Charger is not available")
     if reservation.port_number > int(charger.get("port_count", 1)):
         raise HTTPException(status_code=400, detail="Charger port does not exist")
     if await _conflicting_reservation(
@@ -75,11 +84,21 @@ async def list_reservations(
 
 
 @router.patch("/{reservation_id}", response_model=Reservation)
+@serialized
 async def update_reservation(
     reservation_id: str, update: ReservationUpdate
 ) -> Reservation:
     db = get_database()
     now = datetime.now(UTC)
+    existing = await db.reservations.find_one({"reservation_id": reservation_id})
+    if existing and existing.get("plan_id"):
+        raise HTTPException(
+            422, "Use the charging plan controls for a linked reservation"
+        )
+    if update.status.value not in {"CANCELLED", "NO_SHOW", "COMPLETED"}:
+        raise HTTPException(
+            422, "Reservation occupancy is controlled by physical vehicle arrival"
+        )
     doc = await db.reservations.find_one_and_update(
         {"reservation_id": reservation_id},
         {"$set": {"status": update.status.value, "updated_at": now}},

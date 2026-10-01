@@ -2,11 +2,13 @@ from fastapi import APIRouter
 
 from app.core.dependencies import get_database
 from app.models.depot import Depot
+from app.services.coordination import serialized
 
 router = APIRouter()
 
 
 @router.post("", response_model=Depot, status_code=201)
+@serialized
 async def upsert_depot(depot: Depot) -> Depot:
     db = get_database()
     await db.depots.update_one(

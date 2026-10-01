@@ -25,6 +25,10 @@ class SimulatorStartRequest(BaseModel):
 
 class SimulatorStatus(BaseModel):
     running: bool
+    state: str = "STOPPED"
+    error: str | None = None
+    time_scale: float = 60
+    tick_seconds: float = 1
     simulated_time: str | None = None
     tracked_vehicles: int = 0
     emitted_events: int = 0

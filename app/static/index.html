@@ -55,21 +55,26 @@
           <span><i class="legend-route"></i>Active path</span>
         </div>
       </div>
+      <p class="map-help">Geographic overview · tap or focus markers for names. Short leader lines separate clustered markers without changing distances.</p>
       <div class="map-shell">
         <svg id="fleet-map" viewBox="0 0 1000 420" role="img" aria-label="Live vehicle and charger paths"></svg>
         <p id="map-empty" class="map-empty">Seed a scenario to view fleet movement.</p>
       </div>
+      <h3>Depot and nearby chargers</h3>
+      <div class="map-shell"><svg id="depot-map" viewBox="0 0 1000 420" role="img" aria-label="Depot detail and charger locations"></svg></div>
+      <ul id="map-key" class="map-key"></ul>
+      <p class="map-help">Blue diamond: depot · gold square: charger · green circle: vehicle · small ring: destination · green path: delivery · amber path: charger</p>
     </section>
 
     <section class="workspace">
       <div class="section-heading">
-        <div><p class="eyebrow">Readiness</p><h2>Fleet risk queue</h2></div>
+        <div><p class="eyebrow">Readiness</p><h2>Fleet risk queue</h2><p id="fleet-count" class="map-help"></p></div>
         <button id="refresh-button" class="icon-button" title="Refresh data" aria-label="Refresh data">↻</button>
       </div>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Vehicle</th><th>State</th><th>Navigation</th><th>SoC</th><th>Current range</th><th>After trip</th><th>Safe margin</th><th>Readiness</th><th>Action</th></tr></thead>
-          <tbody id="vehicles-body"></tbody>
+          <tbody id="vehicles-body"><tr><td colspan="9">Loading fleet…</td></tr></tbody>
         </table>
       </div>
     </section>

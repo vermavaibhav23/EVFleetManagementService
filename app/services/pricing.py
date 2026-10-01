@@ -44,16 +44,24 @@ def charging_cost(
     tariffs: list[Tariff],
     fallback_price: float,
     efficiency: float = 0.92,
+    grid_energy_kwh: float | None = None,
 ) -> float:
     if end <= start:
         return 0
 
+    metered_power = (
+        grid_energy_kwh / ((end - start).total_seconds() / 3600)
+        if grid_energy_kwh is not None
+        else power_kw
+    )
     cursor = start
     total = 0.0
     while cursor < end:
-        segment_end = min(cursor + timedelta(minutes=15), end)
+        segment_end = min(
+            cursor.replace(second=0, microsecond=0) + timedelta(minutes=1), end
+        )
         hours = (segment_end - cursor).total_seconds() / 3600
-        delivered_energy = power_kw * efficiency * hours
+        delivered_energy = metered_power * hours
         total += delivered_energy * price_at(cursor, tariffs, fallback_price)
         cursor = segment_end
     return round(total, 2)

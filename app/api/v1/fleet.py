@@ -4,6 +4,7 @@ from typing import Any
 from fastapi import APIRouter, Query
 
 from app.core.dependencies import get_database
+from app.models.telemetry import TelemetryEvent
 from app.services.fleet_readiness import evaluate_vehicle_readiness
 
 router = APIRouter()
@@ -21,9 +22,11 @@ async def fleet_overview() -> dict[str, object]:
         {"status": {"$in": ["PROPOSED", "APPROVED", "CHARGING"]}}
     )
     chargers = await db.chargers.count_documents({})
-    available_chargers = await db.chargers.count_documents(
-        {"status": {"$in": ["AVAILABLE", "available"]}}
-    )
+    from app.api.v1.chargers import list_chargers
+
+    charger_rows = await list_chargers()
+    available_chargers = sum(1 for item in charger_rows if item.free_ports)
+    free_ports = sum(item.free_ports or 0 for item in charger_rows)
     return {
         "vehicles": vehicle_total,
         "open_alerts": open_alerts,
@@ -31,6 +34,7 @@ async def fleet_overview() -> dict[str, object]:
         "active_charging_plans": active_plans,
         "chargers": chargers,
         "available_chargers": available_chargers,
+        "free_ports": free_ports,
     }
 
 
@@ -43,12 +47,23 @@ async def fleet_vehicle_statuses(
 
     async def build_row(vehicle: dict[str, Any]) -> dict[str, object]:
         vin = vehicle["vin"]
-        telemetry = await db.telemetry.find_one({"vin": vin}, sort=[("ts", -1)])
-        assessment = await evaluate_vehicle_readiness(db, vin) if telemetry else None
+        telemetry = await db.telemetry.find_one(
+            {"vin": vin}, sort=[("ts", -1), ("seq", -1)]
+        )
+        assessment = (
+            await evaluate_vehicle_readiness(db, vin, TelemetryEvent(**telemetry))
+            if telemetry
+            else None
+        )
         return {
             "vin": vin,
             "name": vehicle.get("name", vin),
             "soc_pct": telemetry.get("soc_pct") if telemetry else None,
+            "health_flags": assessment.health_flags if assessment else [],
+            "route_remaining_km": telemetry.get("route_remaining_km")
+            if telemetry
+            else None,
+            "telemetry_time": telemetry.get("ts") if telemetry else None,
             "lat": telemetry.get("lat") if telemetry else None,
             "lon": telemetry.get("lon") if telemetry else None,
             "speed_kmh": telemetry.get("speed_kmh") if telemetry else None,
@@ -61,15 +76,9 @@ async def fleet_vehicle_statuses(
             "navigation_target": telemetry.get("navigation_target")
             if telemetry
             else None,
-            "destination_lat": telemetry.get("destination_lat")
-            if telemetry
-            else None,
-            "destination_lon": telemetry.get("destination_lon")
-            if telemetry
-            else None,
-            "distance_to_destination_km": telemetry.get(
-                "distance_to_destination_km"
-            )
+            "destination_lat": telemetry.get("destination_lat") if telemetry else None,
+            "destination_lon": telemetry.get("destination_lon") if telemetry else None,
+            "distance_to_destination_km": telemetry.get("distance_to_destination_km")
             if telemetry
             else None,
             "eta_minutes": telemetry.get("eta_minutes") if telemetry else None,
@@ -79,9 +88,7 @@ async def fleet_vehicle_statuses(
             else False,
             "readiness": assessment.status.value if assessment else "UNKNOWN",
             "current_range_km": assessment.current_range_km if assessment else None,
-            "post_trip_range_km": assessment.post_trip_range_km
-            if assessment
-            else None,
+            "post_trip_range_km": assessment.post_trip_range_km if assessment else None,
             "range_margin_km": assessment.range_margin_km if assessment else None,
             "next_departure_time": assessment.next_departure_time
             if assessment

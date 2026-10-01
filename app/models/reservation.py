@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import AwareDatetime, BaseModel, Field, field_validator, model_validator
 
 
 class ReservationStatus(StrEnum):
@@ -28,12 +28,12 @@ class Reservation(BaseModel):
     port_number: int = Field(default=1, ge=1)
     vin: str = Field(min_length=11, max_length=17)
     plan_id: str | None = None
-    start_time: datetime
-    end_time: datetime
+    start_time: AwareDatetime
+    end_time: AwareDatetime
     reserved_power_kw: float = Field(gt=0)
     status: ReservationStatus = ReservationStatus.CONFIRMED
     grace_period_minutes: int = Field(default=10, ge=0, le=60)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    created_at: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @field_validator("start_time", "end_time")
     @classmethod

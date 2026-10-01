@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, Field
 
 
 class AlertStatus(StrEnum):
@@ -24,6 +24,6 @@ class FleetAlert(BaseModel):
     status: AlertStatus = AlertStatus.OPEN
     message: str
     readiness: dict[str, object] | None = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    resolved_at: datetime | None = None
+    created_at: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))
+    resolved_at: AwareDatetime | None = None

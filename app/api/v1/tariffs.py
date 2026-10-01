@@ -2,11 +2,13 @@ from fastapi import APIRouter
 
 from app.core.dependencies import get_database
 from app.models.tariff import Tariff
+from app.services.coordination import serialized
 
 router = APIRouter()
 
 
 @router.post("", response_model=Tariff, status_code=201)
+@serialized
 async def upsert_tariff(tariff: Tariff) -> Tariff:
     db = get_database()
     await db.tariffs.update_one(

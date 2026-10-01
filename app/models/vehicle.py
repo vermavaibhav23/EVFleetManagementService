@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, Field, model_validator
 
 
 class Vehicle(BaseModel):
@@ -13,7 +13,7 @@ class Vehicle(BaseModel):
     max_charge_power_kw: float = Field(gt=0)
     connector_type: str = Field(default="CCS2", min_length=1, max_length=30)
     active: bool = True
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    created_at: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @model_validator(mode="after")
     def validate_usable_capacity(self) -> "Vehicle":

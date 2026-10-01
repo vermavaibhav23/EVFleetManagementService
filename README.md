@@ -1,6 +1,6 @@
 # EV Fleet Charging Management
 
-Stage 2 of a connected EV fleet platform. The service converts live battery telemetry and assigned trips into distance-based readiness, actionable alerts, reservation-aware charger recommendations, and approved charging plans.
+Hackathon demonstration of a connected EV fleet platform. The service converts live battery telemetry and assigned trips into distance-based readiness, actionable alerts, reservation-aware charger recommendations, and approved charging plans.
 
 ## Stage 2 capabilities
 
@@ -70,9 +70,11 @@ Open:
 4. Review the charger, charging window, target SoC, cost, and explanation.
 5. Approve the plan. This creates a confirmed port reservation.
 6. Start the simulator. One real second advances one simulated minute.
-7. Watch the vehicle move to `WAITING_TO_CHARGE`, then `CHARGING`.
+7. Watch `EN_ROUTE_TO_CHARGER`, `WAITING_FOR_CHARGER` when needed, then `CHARGING`.
 8. SoC and range rise from generated telemetry.
-9. At target SoC, the plan and reservation become `COMPLETED` and the readiness alert resolves.
+9. At target SoC, the plan and reservation become `COMPLETED`, the port releases, and the vehicle becomes `READY`.
+10. The delivery resumes from the charger (`RESUMING_TRIP`) and ends at `AT_CUSTOMER`.
+11. Stop freezes all telemetry; reseeding automatically stops and resets the disposable SIM fleet.
 
 Other scenarios:
 
@@ -131,8 +133,14 @@ PATCH /api/v1/alerts/{dedupe_key}
 ## Tests
 
 ```powershell
+pip install -r requirements-dev.txt
+python -m pytest -q
 python -m unittest discover -v
-python -m compileall app tests
+python -m ruff check app tests scripts
+python -m ruff format --check app tests scripts
+python -m compileall app tests scripts
+node --check app/static/app.js
+node --test tests/test_frontend.cjs
 ```
 
 The unit suite covers readiness, distance derivation, health flags, charger pricing versus deadlines, reservation overlap, and simulator battery physics.
@@ -163,4 +171,18 @@ For Railway Simple Kafka, `KAFKA_BOOTSTRAP_SERVERS` can reference the broker's p
 KAFKA_BOOTSTRAP_SERVERS=${{kafka-broker.KAFKA_URL}}
 ```
 
-Stage 3 will move high-volume ingestion and simulation into independently scalable workers and add authentication, tenant isolation, analytical storage, observability, and the 100,000-events/second load target.
+## Operational boundaries and measurements
+
+Deploy **one replica and one Uvicorn worker**. The in-process mutation lock orders seed, simulator ticks, telemetry consumption, approvals, and reservation interval checks. It is not a distributed lock. MongoDB unique indexes enforce one active plan per vehicle and one reservation per plan. Multiple API replicas need a distributed lease with fencing or transactional scheduling before they are safe.
+
+This is a disposable, unauthenticated hackathon demo, not a tenant-isolated production fleet service. Seed resets only SIM vehicles and their records. Kafka generation IDs and current-event checks prevent old runs from changing new plans. Redis is a latest-state cache; MongoDB remains authoritative. Publication failures stop simulation visibly; resubmitting an event repairs delivery without inserting duplicate telemetry.
+
+Distances are geodesic straight-line demo routes, not road routing. Charger coordinates are distinct real coordinates around Bengaluru, representing fictional demo stations. Charging uses a shared 80%/90% taper curve and 92% efficiency. Plans budget the charger journey, charger-to-customer journey, reserve, and a delivery deadline. Seeded deliveries have five hours of slack; other trips can specify `delivery_deadline`. Prices use metered grid kWh and applicable tariffs, with an average-rate estimate across the charging window.
+
+The fleet table displays at most 200 vehicles, with its limit clearly indicated. The simulator allows up to 1,000 for experiments; this is not a capacity claim. No 100,000-events/second throughput claim has been measured. See `docs/demo-audit.md` for test evidence and actual load results. Higher throughput needs batched ingestion, a durable transactional outbox, independently scaled producers/consumers, partitioning by vehicle, materialized latest-state reads, and distributed reservation coordination.
+
+Reproducible live acceptance (mutates the disposable SIM fleet):
+
+```sh
+python scripts/live_acceptance.py --base-url https://evfleetmanagementservice-production.up.railway.app --output evidence.json
+```

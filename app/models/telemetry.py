@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import StrEnum
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AwareDatetime, BaseModel, Field, field_validator
 
 
 class OperatingState(StrEnum):
@@ -22,7 +22,7 @@ class OperatingState(StrEnum):
 class TelemetryEvent(BaseModel):
     event_id: str = Field(default_factory=lambda: str(uuid4()))
     vin: str = Field(min_length=11, max_length=17)
-    ts: datetime
+    ts: AwareDatetime
     lat: float = Field(ge=-90, le=90)
     lon: float = Field(ge=-180, le=180)
     speed_kmh: float = Field(ge=0)
@@ -40,6 +40,9 @@ class TelemetryEvent(BaseModel):
     remaining_range_km: float | None = Field(default=None, ge=0)
     charger_id: str | None = None
     is_plugged_in: bool = False
+    simulation_run_id: str | None = None
+    plan_id: str | None = None
+    port_number: int | None = Field(default=None, ge=1)
     navigation_phase: str | None = None
     navigation_target: str | None = None
     destination_lat: float | None = Field(default=None, ge=-90, le=90)

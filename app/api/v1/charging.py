@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi import status as http_status
@@ -13,17 +13,21 @@ from app.models.reservation import ACTIVE_RESERVATION_STATUSES, Reservation
 from app.models.tariff import Tariff
 from app.models.telemetry import TelemetryEvent
 from app.models.vehicle import Vehicle
+from app.services.coordination import serialized
 from app.services.fleet_readiness import evaluate_vehicle_readiness, find_next_trip
-from app.services.reservations import shift_window_to_now
-from app.services.scheduler import create_recommendation, haversine_km
+from app.services.scheduler import create_recommendation
 
 router = APIRouter()
 
 
-async def _load_recommendation(vin: str) -> ChargingRecommendation:
+async def _load_recommendation(
+    vin: str, ignore_plan_id: str | None = None
+) -> ChargingRecommendation:
     db = get_database()
     vehicle_doc = await db.vehicles.find_one({"vin": vin})
-    telemetry_doc = await db.telemetry.find_one({"vin": vin}, sort=[("ts", -1)])
+    telemetry_doc = await db.telemetry.find_one(
+        {"vin": vin}, sort=[("ts", -1), ("seq", -1)]
+    )
     if vehicle_doc is None or telemetry_doc is None:
         raise HTTPException(status_code=404, detail="Vehicle or telemetry not found")
     vehicle_doc.pop("_id", None)
@@ -47,7 +51,8 @@ async def _load_recommendation(vin: str) -> ChargingRecommendation:
         {"status": {"$in": [status.value for status in ACTIVE_RESERVATION_STATUSES]}}
     ):
         doc.pop("_id", None)
-        reservations.append(Reservation(**doc))
+        if doc.get("plan_id") != ignore_plan_id or ignore_plan_id is None:
+            reservations.append(Reservation(**doc))
     tariffs: list[Tariff] = []
     async for doc in db.tariffs.find({}):
         doc.pop("_id", None)
@@ -81,6 +86,7 @@ async def recommend_charger(vin: str) -> ChargingRecommendation:
 
 
 @router.post("/plans/{vin}", response_model=ChargingPlan, status_code=201)
+@serialized
 async def create_plan(vin: str, response: Response) -> ChargingPlan:
     db = get_database()
     existing = await db.charging_plans.find_one(
@@ -92,7 +98,7 @@ async def create_plan(vin: str, response: Response) -> ChargingPlan:
         return ChargingPlan(**existing)
     recommendation = await _load_recommendation(vin)
     if recommendation.plan is None:
-        raise HTTPException(status_code=409, detail=recommendation.reason)
+        raise HTTPException(status_code=422, detail=recommendation.reason)
     try:
         await db.charging_plans.insert_one(
             recommendation.plan.model_dump(mode="python")
@@ -124,90 +130,26 @@ async def list_plans(
 
 
 @router.post("/plans/{plan_id}/approve", response_model=ChargingPlan)
+@serialized
 async def approve_plan(plan_id: str) -> ChargingPlan:
     db = get_database()
     plan_doc = await db.charging_plans.find_one({"plan_id": plan_id})
     if plan_doc is None:
         raise HTTPException(status_code=404, detail="Charging plan not found")
-    if plan_doc.get("status") != ChargingPlanStatus.PROPOSED.value:
-        raise HTTPException(
-            status_code=409, detail="Only proposed plans can be approved"
-        )
-
-    telemetry_doc = await db.telemetry.find_one(
-        {"vin": plan_doc["vin"]}, sort=[("ts", -1)]
-    )
-    approval_time = (
-        telemetry_doc["ts"]
-        if telemetry_doc and telemetry_doc.get("ts")
-        else datetime.now(UTC)
-    )
-    charger_doc = await db.chargers.find_one({"charger_id": plan_doc["charger_id"]})
-    travel_distance_km = 0.0
-    if telemetry_doc and charger_doc:
-        travel_distance_km = haversine_km(
-            float(telemetry_doc["lat"]),
-            float(telemetry_doc["lon"]),
-            float(charger_doc["lat"]),
-            float(charger_doc["lon"]),
-        )
-    estimated_arrival_time = approval_time + timedelta(
-        hours=travel_distance_km / 35
-    )
-    start_time, end_time = shift_window_to_now(
-        plan_doc["start_time"], plan_doc["end_time"], estimated_arrival_time
-    )
-    plan_doc["start_time"] = start_time
-    plan_doc["end_time"] = end_time
-    plan_doc["predicted_ready_time"] = end_time
-    plan_doc["travel_distance_km"] = travel_distance_km
-    plan_doc["estimated_arrival_time"] = estimated_arrival_time
-
-    conflict = await db.reservations.find_one(
-        {
-            "charger_id": plan_doc["charger_id"],
-            "port_number": plan_doc["port_number"],
-            "status": {"$in": [status.value for status in ACTIVE_RESERVATION_STATUSES]},
-            "start_time": {"$lt": plan_doc["end_time"]},
-            "end_time": {"$gt": plan_doc["start_time"]},
-        }
-    )
-    if conflict:
-        raise HTTPException(
-            status_code=409,
-            detail="The selected charger interval is no longer available",
-        )
-
-    if charger_doc:
-        depot = await db.depots.find_one({"depot_id": charger_doc.get("depot_id")})
-        if depot:
-            charger_ids = [
-                doc["charger_id"]
-                async for doc in db.chargers.find(
-                    {"depot_id": charger_doc.get("depot_id")}, {"charger_id": 1}
-                )
-            ]
-            reserved_power = 0.0
-            cursor = db.reservations.find(
-                {
-                    "charger_id": {"$in": charger_ids},
-                    "status": {
-                        "$in": [status.value for status in ACTIVE_RESERVATION_STATUSES]
-                    },
-                    "start_time": {"$lt": plan_doc["end_time"]},
-                    "end_time": {"$gt": plan_doc["start_time"]},
-                }
-            )
-            async for existing_reservation in cursor:
-                reserved_power += float(existing_reservation["reserved_power_kw"])
-            if reserved_power + float(plan_doc["allocated_power_kw"]) > float(
-                depot["power_limit_kw"]
-            ):
-                raise HTTPException(
-                    status_code=409,
-                    detail="The depot power limit is no longer available for this plan",
-                )
-
+    if plan_doc.get("status") in {"APPROVED", "CHARGING", "COMPLETED"}:
+        return ChargingPlan(**plan_doc)
+    if plan_doc.get("status") != "PROPOSED":
+        raise HTTPException(422, "This plan is closed. Generate a new plan.")
+    recommendation = await _load_recommendation(plan_doc["vin"], ignore_plan_id=plan_id)
+    if recommendation.plan is None:
+        raise HTTPException(422, recommendation.reason)
+    refreshed = recommendation.plan.model_dump(mode="python")
+    refreshed["plan_id"] = plan_id
+    refreshed["created_at"] = plan_doc["created_at"]
+    plan_doc = refreshed
+    start_time, end_time = plan_doc["start_time"], plan_doc["end_time"]
+    travel_distance_km = plan_doc["travel_distance_km"]
+    estimated_arrival_time = plan_doc["estimated_arrival_time"]
     reservation = Reservation(
         charger_id=plan_doc["charger_id"],
         port_number=plan_doc["port_number"],
@@ -217,12 +159,17 @@ async def approve_plan(plan_id: str) -> ChargingPlan:
         end_time=plan_doc["end_time"],
         reserved_power_kw=plan_doc["allocated_power_kw"],
     )
-    await db.reservations.insert_one(reservation.model_dump(mode="python"))
+    await db.reservations.update_one(
+        {"plan_id": plan_id},
+        {"$set": reservation.model_dump(mode="python")},
+        upsert=True,
+    )
     now = datetime.now(UTC)
     await db.charging_plans.update_one(
         {"plan_id": plan_id},
         {
             "$set": {
+                **plan_doc,
                 "status": ChargingPlanStatus.APPROVED.value,
                 "start_time": start_time,
                 "end_time": end_time,
@@ -242,23 +189,32 @@ async def approve_plan(plan_id: str) -> ChargingPlan:
     return ChargingPlan(**plan_doc)
 
 
+@serialized
 async def _set_plan_status(plan_id: str, status: ChargingPlanStatus) -> ChargingPlan:
     db = get_database()
     now = datetime.now(UTC)
-    updates: dict[str, object] = {"status": status.value, "updated_at": now}
-    if status in {ChargingPlanStatus.REJECTED, ChargingPlanStatus.CANCELLED}:
-        updates["active"] = False
+    existing = await db.charging_plans.find_one({"plan_id": plan_id})
+    if existing is None:
+        raise HTTPException(404, "Charging plan not found")
+    if existing["status"] == status.value:
+        return ChargingPlan(**existing)
+    allowed = (
+        {"PROPOSED"}
+        if status == ChargingPlanStatus.REJECTED
+        else {"PROPOSED", "APPROVED", "CHARGING"}
+    )
+    if existing["status"] not in allowed:
+        raise HTTPException(
+            422, "This plan is already closed; generate a new plan if needed"
+        )
     doc = await db.charging_plans.find_one_and_update(
-        {"plan_id": plan_id, "status": {"$in": ["PROPOSED", "APPROVED"]}},
-        {"$set": updates},
+        {"plan_id": plan_id},
+        {"$set": {"status": status.value, "active": False, "updated_at": now}},
         return_document=ReturnDocument.AFTER,
     )
-    if doc is None:
-        raise HTTPException(status_code=404, detail="Mutable charging plan not found")
-    if status == ChargingPlanStatus.CANCELLED:
-        await db.reservations.update_one(
-            {"plan_id": plan_id}, {"$set": {"status": "CANCELLED", "updated_at": now}}
-        )
+    await db.reservations.update_many(
+        {"plan_id": plan_id}, {"$set": {"status": "CANCELLED", "updated_at": now}}
+    )
     doc.pop("_id", None)
     return ChargingPlan(**doc)
 

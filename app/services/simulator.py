@@ -1,20 +1,23 @@
 import asyncio
+import logging
 import math
 import random
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import uuid4
 
 from app.core.config import settings
 from app.models.charger import Charger, ChargerStatus
 from app.models.depot import Depot
-from app.models.reservation import Reservation
+from app.models.reservation import ACTIVE_RESERVATION_STATUSES, Reservation
 from app.models.simulator import ScenarioRequest, SimulationScenario, SimulatorStatus
 from app.models.tariff import Tariff
 from app.models.telemetry import OperatingState, TelemetryEvent
 from app.models.trip import Trip, TripStatus
 from app.models.vehicle import Vehicle
+from app.services.coordination import serialized
 from app.services.reservations import shift_window_to_now
 from app.services.scheduler import haversine_km
 from app.services.telemetry import store_telemetry
@@ -33,6 +36,8 @@ class VehicleSimulationState:
     route_remaining_km: float | None = None
     trip_id: str | None = None
     resume_pending: bool = False
+    arrived: bool = False
+    simulation_run_id: str | None = None
 
 
 def advance_driving_state(
@@ -43,10 +48,18 @@ def advance_driving_state(
     distance_km = min(
         state.route_remaining_km or 0,
         speed_kmh * elapsed_seconds / 3600,
+        state.vehicle.usable_capacity_kwh
+        * state.soh_pct
+        / 100
+        * state.soc_pct
+        / 100
+        / state.vehicle.consumption_kwh_per_km,
     )
     energy_used_kwh = distance_km * state.vehicle.consumption_kwh_per_km
     effective_capacity = state.vehicle.usable_capacity_kwh * state.soh_pct / 100
-    state.soc_pct = max(0, state.soc_pct - energy_used_kwh / effective_capacity * 100)
+    state.soc_pct = max(
+        0, state.soc_pct - energy_used_kwh / max(effective_capacity, 1e-9) * 100
+    )
     state.odometer_km += distance_km
     state.route_remaining_km = max(0, (state.route_remaining_km or 0) - distance_km)
     return distance_km
@@ -58,19 +71,17 @@ def advance_charging_state(
     allocated_power_kw: float,
     target_soc_pct: float,
 ) -> float:
-    effective_capacity = state.vehicle.usable_capacity_kwh * state.soh_pct / 100
-    taper = 1.0 if state.soc_pct < 80 else 0.6 if state.soc_pct < 90 else 0.3
-    delivered_kwh = (
-        allocated_power_kw
-        * taper
-        * settings.charging_efficiency
-        * elapsed_seconds
-        / 3600
+    from app.services.energy import charge_for_seconds
+
+    state.soc_pct, delivered = charge_for_seconds(
+        state.soc_pct,
+        target_soc_pct,
+        state.vehicle.usable_capacity_kwh * state.soh_pct / 100,
+        allocated_power_kw,
+        settings.charging_efficiency,
+        elapsed_seconds,
     )
-    state.soc_pct = min(
-        target_soc_pct, 100, state.soc_pct + delivered_kwh / effective_capacity * 100
-    )
-    return delivered_kwh
+    return delivered
 
 
 def demo_departure_time(seed_time: datetime, vehicle_index: int) -> datetime:
@@ -103,17 +114,26 @@ def advance_toward_location(
     elapsed_seconds: float,
     speed_kmh: float,
 ) -> tuple[float, float]:
-    remaining_km = haversine_km(
-        state.lat, state.lon, destination_lat, destination_lon
+    remaining_km = haversine_km(state.lat, state.lon, destination_lat, destination_lon)
+    distance_km = min(
+        remaining_km,
+        speed_kmh * elapsed_seconds / 3600,
+        state.vehicle.usable_capacity_kwh
+        * state.soh_pct
+        / 100
+        * state.soc_pct
+        / 100
+        / state.vehicle.consumption_kwh_per_km,
     )
-    distance_km = min(remaining_km, speed_kmh * elapsed_seconds / 3600)
     if remaining_km > 0:
         fraction = distance_km / remaining_km
         state.lat += (destination_lat - state.lat) * fraction
         state.lon += (destination_lon - state.lon) * fraction
     energy_used_kwh = distance_km * state.vehicle.consumption_kwh_per_km
     effective_capacity = state.vehicle.usable_capacity_kwh * state.soh_pct / 100
-    state.soc_pct = max(0, state.soc_pct - energy_used_kwh / effective_capacity * 100)
+    state.soc_pct = max(
+        0, state.soc_pct - energy_used_kwh / max(effective_capacity, 1e-9) * 100
+    )
     state.odometer_km += distance_km
     return distance_km, max(0, remaining_km - distance_km)
 
@@ -128,6 +148,9 @@ async def seed_scenario(
     now = datetime.now(UTC).replace(second=0, microsecond=0)
     depot_id = "SIM-DEPOT-01"
 
+    run_id = str(uuid4())
+    async for key in redis.scan_iter(match="vehicle:SIM*:latest"):
+        await redis.delete(key)
     simulation_filter = {"vin": {"$regex": "^SIM"}}
     await db.telemetry.delete_many(simulation_filter)
     await db.trips.delete_many(simulation_filter)
@@ -152,10 +175,10 @@ async def seed_scenario(
     chargers = [
         Charger(
             charger_id="SIM-CHARGER-FAST",
-            name="Depot Fast Charger",
+            name="North Hub Fast Charger",
             depot_id=depot_id,
-            lat=12.9716,
-            lon=77.5946,
+            lat=13.0060,
+            lon=77.6000,
             available_kw=90,
             price_per_kwh=10.8,
             connector_type="CCS2",
@@ -165,8 +188,8 @@ async def seed_scenario(
             charger_id="SIM-CHARGER-CHEAP",
             name="Solar Canopy Charger",
             depot_id=depot_id,
-            lat=12.9730,
-            lon=77.5960,
+            lat=12.9830,
+            lon=77.6410,
             available_kw=60,
             price_per_kwh=7.2,
             connector_type="CCS2",
@@ -176,8 +199,8 @@ async def seed_scenario(
             charger_id="SIM-CHARGER-SLOW",
             name="Overflow Charger",
             depot_id=depot_id,
-            lat=12.9685,
-            lon=77.5900,
+            lat=12.9440,
+            lon=77.5670,
             available_kw=30,
             price_per_kwh=8.5,
             connector_type="CCS2",
@@ -230,6 +253,7 @@ async def seed_scenario(
                 "seed": request.seed,
                 "scenario": request.scenario.value,
                 "created_at": now,
+                "run_id": run_id,
             }
         },
         upsert=True,
@@ -252,10 +276,11 @@ async def seed_scenario(
         distance_km = round(rng.uniform(45, 85), 1)
         if index == 0 and request.scenario in {
             SimulationScenario.LOW_BATTERY_BEFORE_TRIP,
-            SimulationScenario.UNEXPECTED_LONG_TRIP,
             SimulationScenario.CHARGER_CONGESTION,
         }:
             distance_km = 95
+        if index == 0 and request.scenario == SimulationScenario.UNEXPECTED_LONG_TRIP:
+            distance_km = 55
         destination_lat, destination_lon = point_at_distance(
             depot.lat,
             depot.lon,
@@ -272,22 +297,26 @@ async def seed_scenario(
             destination_lat=destination_lat,
             destination_lon=destination_lon,
             departure_time=demo_departure_time(now, index),
+            delivery_deadline=now + timedelta(hours=5),
             distance_km=distance_km,
             service_duration_minutes=20,
         )
         soc_pct = round(rng.uniform(55, 85), 1)
         if index == 0 and request.scenario != SimulationScenario.NORMAL_DAY:
             soc_pct = 20
+        if index == 0 and request.scenario == SimulationScenario.UNEXPECTED_LONG_TRIP:
+            soc_pct = 45
         temperature = (
             48
             if index == 0 and request.scenario == SimulationScenario.BATTERY_OVERHEATING
             else 31
         )
         telemetry = TelemetryEvent(
+            simulation_run_id=run_id,
             vin=vin,
             ts=now,
-            lat=12.9716 + rng.uniform(-0.002, 0.002),
-            lon=77.5946 + rng.uniform(-0.002, 0.002),
+            lat=depot.lat,
+            lon=depot.lon,
             speed_kmh=0,
             soc_pct=soc_pct,
             soh_pct=round(rng.uniform(88, 98), 1),
@@ -324,7 +353,10 @@ async def seed_scenario(
         await store_telemetry(telemetry, db, redis, kafka)
 
     await asyncio.gather(
-        *(persist_seed_record(vehicle, trip, telemetry) for vehicle, trip, telemetry in seed_records)
+        *(
+            persist_seed_record(vehicle, trip, telemetry)
+            for vehicle, trip, telemetry in seed_records
+        )
     )
 
     if request.scenario == SimulationScenario.CHARGER_CONGESTION:
@@ -363,7 +395,11 @@ class SimulatorManager:
         self._redis: Any = None
         self._kafka: Any = None
         self._rng = random.Random(42)
+        self._error: str | None = None
+        self._scenario: str | None = None
+        self._charger_locks: dict[str, asyncio.Lock] = {}
 
+    @serialized
     async def start(
         self,
         db: Any,
@@ -379,20 +415,28 @@ class SimulatorManager:
         self._time_scale = time_scale
         config = await db.simulation.find_one({"simulation_id": "active"}) or {}
         self._rng = random.Random(int(config.get("seed", 42)))
+        self._scenario = config.get("scenario")
         latest_telemetry_time = await self._load_states()
         if self._simulated_time is None:
             self._simulated_time = max(
                 datetime.now(UTC),
                 latest_telemetry_time or datetime.min.replace(tzinfo=UTC),
             )
+        if not self._states:
+            from fastapi import HTTPException
+
+            raise HTTPException(422, "Seed a scenario before starting the simulator")
+        self._error = None
         self._task = asyncio.create_task(self._run(), name="ev-simulator")
         return self.status()
 
     def reset(self) -> None:
         self._states.clear()
+        self._error = None
         self._simulated_time = None
         self._emitted_events = 0
 
+    @serialized
     async def stop(self) -> SimulatorStatus:
         if self._task:
             self._task.cancel()
@@ -404,6 +448,14 @@ class SimulatorManager:
     def status(self) -> SimulatorStatus:
         return SimulatorStatus(
             running=self._task is not None and not self._task.done(),
+            state="FAILED"
+            if self._error
+            else "RUNNING"
+            if self._task and not self._task.done()
+            else "STOPPED",
+            error=self._error,
+            time_scale=self._time_scale,
+            tick_seconds=self._tick_seconds,
             simulated_time=self._simulated_time.isoformat()
             if self._simulated_time
             else None,
@@ -420,14 +472,13 @@ class SimulatorManager:
             vehicle_doc.pop("_id", None)
             vehicle = Vehicle(**vehicle_doc)
             telemetry_doc = await self._db.telemetry.find_one(
-                {"vin": vehicle.vin}, sort=[("ts", -1)]
+                {"vin": vehicle.vin}, sort=[("ts", -1), ("seq", -1)]
             )
             if telemetry_doc is None:
                 continue
             telemetry_time = telemetry_doc.get("ts")
             if telemetry_time is not None and (
-                latest_telemetry_time is None
-                or telemetry_time > latest_telemetry_time
+                latest_telemetry_time is None or telemetry_time > latest_telemetry_time
             ):
                 latest_telemetry_time = telemetry_time
             self._states[vehicle.vin] = VehicleSimulationState(
@@ -443,36 +494,98 @@ class SimulatorManager:
                 ),
                 route_remaining_km=telemetry_doc.get("route_remaining_km"),
                 trip_id=telemetry_doc.get("trip_id"),
+                resume_pending=telemetry_doc.get("operating_state")
+                in {"READY", "RESUMING_TRIP"},
+                arrived=telemetry_doc.get("operating_state") == "AT_CUSTOMER",
+                simulation_run_id=telemetry_doc.get("simulation_run_id"),
             )
         return latest_telemetry_time
 
     async def _run(self) -> None:
-        while True:
-            await self._tick()
-            await asyncio.sleep(self._tick_seconds)
+        try:
+            while True:
+                await self._tick()
+                await asyncio.sleep(self._tick_seconds)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - Task boundary: make failure observable without secrets.
+            self._error = f"Simulation failed ({type(exc).__name__}). Check dependency health and restart."
+            logging.getLogger(__name__).error(
+                "Simulator stopped: %s", type(exc).__name__
+            )
 
+    @serialized
     async def _tick(self) -> None:
         assert self._simulated_time is not None
         elapsed_simulated_seconds = self._tick_seconds * self._time_scale
         self._simulated_time += timedelta(seconds=elapsed_simulated_seconds)
-        await asyncio.gather(
+        results = await asyncio.gather(
             *(
                 self._advance_vehicle(state, elapsed_simulated_seconds)
                 for state in self._states.values()
-            )
+            ),
+            return_exceptions=True,
         )
+        # Drain siblings before reporting a failure; stop must freeze ALL telemetry.
+        for result in results:
+            if isinstance(result, Exception):
+                raise result
 
     async def _advance_vehicle(
         self, state: VehicleSimulationState, elapsed_seconds: float
     ) -> None:
+        # Serialize physical occupancy decisions within each depot. Vehicles still
+        # move concurrently unless they have a charging plan in the same depot.
+        plan = await self._db.charging_plans.find_one(
+            {"vin": state.vehicle.vin, "status": {"$in": ["APPROVED", "CHARGING"]}}
+        )
+        if plan:
+            charger = await self._db.chargers.find_one(
+                {"charger_id": plan["charger_id"]}
+            )
+            key = (
+                charger.get("depot_id", plan["charger_id"])
+                if charger
+                else plan["charger_id"]
+            )
+            lock = self._charger_locks.setdefault(key, asyncio.Lock())
+            async with lock:
+                await self._advance_vehicle_unlocked(state, elapsed_seconds)
+        else:
+            await self._advance_vehicle_unlocked(state, elapsed_seconds)
+
+    async def _advance_vehicle_unlocked(
+        self, state: VehicleSimulationState, elapsed_seconds: float
+    ) -> None:
         assert self._simulated_time is not None
         now = self._simulated_time
+        if (
+            self._scenario == "UNEXPECTED_LONG_TRIP"
+            and state.vehicle.vin == "SIM00000000000001"
+            and state.sequence == 4
+        ):
+            destination = point_at_distance(12.9716, 77.5946, 140, 25)
+            state.route_remaining_km = haversine_km(state.lat, state.lon, *destination)
+            await self._db.trips.update_one(
+                {"trip_id": state.trip_id},
+                {
+                    "$set": {
+                        "distance_km": 140,
+                        "destination_lat": destination[0],
+                        "destination_lon": destination[1],
+                        "destination": "Urgent extended delivery",
+                        "status": "IN_PROGRESS",
+                    }
+                },
+            )
         plan = await self._db.charging_plans.find_one(
             {"vin": state.vehicle.vin, "status": {"$in": ["APPROVED", "CHARGING"]}},
             sort=[("created_at", -1)],
         )
 
-        operating_state = OperatingState.PARKED
+        operating_state = (
+            OperatingState.AT_CUSTOMER if state.arrived else OperatingState.PARKED
+        )
         speed_kmh = 0.0
         power_kw = 0.0
         charger_id = None
@@ -490,6 +603,27 @@ class SimulatorManager:
             charger = await self._db.chargers.find_one({"charger_id": charger_id})
 
         if plan and charger:
+            own_reservation = await self._db.reservations.find_one(
+                {
+                    "plan_id": plan["plan_id"],
+                    "charger_id": charger_id,
+                    "port_number": plan["port_number"],
+                    "status": {
+                        "$in": [item.value for item in ACTIVE_RESERVATION_STATUSES]
+                    },
+                }
+            )
+            if charger.get("status") in {"FAULTY", "OFFLINE"} or not own_reservation:
+                await self._db.charging_plans.update_one(
+                    {"plan_id": plan["plan_id"]},
+                    {"$set": {"status": "CANCELLED", "active": False}},
+                )
+                await self._db.reservations.update_many(
+                    {"plan_id": plan["plan_id"]}, {"$set": {"status": "CANCELLED"}}
+                )
+                plan = None
+
+        if plan and charger:
             destination_lat = float(charger["lat"])
             destination_lon = float(charger["lon"])
             navigation_target = charger.get("name", charger_id)
@@ -497,7 +631,7 @@ class SimulatorManager:
                 state.lat, state.lon, destination_lat, destination_lon
             )
 
-            if distance_to_destination_km > 0.08:
+            if distance_to_destination_km > 0.000001:
                 navigation_phase = "TO_CHARGER"
                 eta_minutes = distance_to_destination_km / 35 * 60
                 if state.soc_pct <= 0:
@@ -518,7 +652,7 @@ class SimulatorManager:
                     eta_minutes = distance_to_destination_km / speed_kmh * 60
             else:
                 state.lat, state.lon = destination_lat, destination_lon
-                if now > plan["end_time"]:
+                if now > plan["end_time"] and plan["status"] != "CHARGING":
                     start_time, end_time = shift_window_to_now(
                         plan["start_time"], plan["end_time"], now
                     )
@@ -543,12 +677,20 @@ class SimulatorManager:
                         "charger_id": charger_id,
                         "port_number": plan["port_number"],
                         "plan_id": {"$ne": plan["plan_id"]},
-                        "status": {"$in": ["APPROVED", "OCCUPIED"]},
-                        "start_time": {"$lte": now},
-                        "end_time": {"$gt": now},
+                        "status": {
+                            "$in": [item.value for item in ACTIVE_RESERVATION_STATUSES]
+                        },
+                        "$or": [
+                            {"status": "OCCUPIED"},
+                            {"start_time": {"$lte": now}, "end_time": {"$gt": now}},
+                        ],
                     }
                 )
-                if now < plan["start_time"] or blocking_reservation:
+                if (
+                    now < plan["start_time"]
+                    or blocking_reservation
+                    or state.battery_temperature_c >= 45
+                ):
                     operating_state = OperatingState.WAITING_FOR_CHARGER
                     navigation_phase = "AT_CHARGER"
                     eta_minutes = max(
@@ -596,6 +738,8 @@ class SimulatorManager:
                         operating_state = OperatingState.READY
                         navigation_phase = "READY"
                         state.resume_pending = True
+                        is_plugged_in = False
+                        power_kw = 0.0
                         completed_at = datetime.now(UTC)
                         await self._db.charging_plans.update_one(
                             {"plan_id": plan["plan_id"]},
@@ -639,6 +783,7 @@ class SimulatorManager:
                         {"$set": {"status": TripStatus.IN_PROGRESS.value}},
                     )
                     state.trip_id = trip.trip_id
+                    state.arrived = False
                     state.route_remaining_km = trip.distance_km
                 navigation_phase = (
                     "RESUMING_DELIVERY" if state.resume_pending else "DELIVERY"
@@ -679,11 +824,12 @@ class SimulatorManager:
                         else None
                     )
                     state.battery_temperature_c = min(
-                        43, state.battery_temperature_c + 0.01
+                        max(43, state.battery_temperature_c),
+                        state.battery_temperature_c + 0.01,
                     )
                 if (
                     state.route_remaining_km is not None
-                    and state.route_remaining_km <= 0.08
+                    and state.route_remaining_km <= 0.000001
                 ):
                     await self._db.trips.update_one(
                         {"trip_id": trip.trip_id},
@@ -692,6 +838,8 @@ class SimulatorManager:
                     state.trip_id = None
                     state.route_remaining_km = 0
                     state.resume_pending = False
+                    state.arrived = True
+                    speed_kmh = 0.0
                     operating_state = OperatingState.AT_CUSTOMER
                     navigation_phase = "ARRIVED"
                     distance_to_destination_km = 0.0
@@ -701,6 +849,13 @@ class SimulatorManager:
                     28, state.battery_temperature_c - 0.02
                 )
 
+        if state.soc_pct <= 1e-8 and operating_state in {
+            OperatingState.DRIVING,
+            OperatingState.RESUMING_TRIP,
+            OperatingState.EN_ROUTE_TO_CHARGER,
+        }:
+            operating_state = OperatingState.STRANDED
+            speed_kmh = 0.0
         state.sequence += 1
         effective_capacity = state.vehicle.usable_capacity_kwh * state.soh_pct / 100
         remaining_range = (
@@ -727,6 +882,9 @@ class SimulatorManager:
             remaining_range_km=round(remaining_range, 2),
             charger_id=charger_id,
             is_plugged_in=is_plugged_in,
+            simulation_run_id=state.simulation_run_id,
+            plan_id=plan["plan_id"] if plan else None,
+            port_number=plan["port_number"] if plan else None,
             navigation_phase=navigation_phase,
             navigation_target=navigation_target,
             destination_lat=destination_lat,

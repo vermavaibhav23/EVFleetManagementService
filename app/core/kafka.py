@@ -22,6 +22,9 @@ class KafkaBus:
     async def stop(self) -> None:
         await self._producer.stop()
 
+    async def health(self) -> None:
+        await self._producer.send_and_wait("fleet.health.v1", b'{"type":"readiness"}')
+
     async def publish(
         self, topic: str, payload: dict[str, Any], key: str | None = None
     ) -> None:
@@ -36,8 +39,8 @@ def build_consumer(topic: str) -> AIOKafkaConsumer:
     return AIOKafkaConsumer(
         topic,
         group_id=settings.kafka_consumer_group,
-        enable_auto_commit=True,
-        auto_offset_reset="latest",
+        enable_auto_commit=False,
+        auto_offset_reset="earliest",
         value_deserializer=lambda value: json.loads(value.decode("utf-8")),
         **settings.kafka_config,
     )
