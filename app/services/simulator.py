@@ -312,11 +312,14 @@ class SimulatorManager:
         self._db, self._redis, self._kafka = db, redis, kafka
         self._tick_seconds = tick_seconds
         self._time_scale = time_scale
-        if self._simulated_time is None:
-            self._simulated_time = datetime.now(UTC)
         config = await db.simulation.find_one({"simulation_id": "active"}) or {}
         self._rng = random.Random(int(config.get("seed", 42)))
-        await self._load_states()
+        latest_telemetry_time = await self._load_states()
+        if self._simulated_time is None:
+            self._simulated_time = max(
+                datetime.now(UTC),
+                latest_telemetry_time or datetime.min.replace(tzinfo=UTC),
+            )
         self._task = asyncio.create_task(self._run(), name="ev-simulator")
         return self.status()
 
@@ -343,8 +346,9 @@ class SimulatorManager:
             emitted_events=self._emitted_events,
         )
 
-    async def _load_states(self) -> None:
+    async def _load_states(self) -> datetime | None:
         self._states.clear()
+        latest_telemetry_time: datetime | None = None
         async for vehicle_doc in self._db.vehicles.find(
             {"vin": {"$regex": "^SIM"}, "active": True}
         ):
@@ -355,6 +359,12 @@ class SimulatorManager:
             )
             if telemetry_doc is None:
                 continue
+            telemetry_time = telemetry_doc.get("ts")
+            if telemetry_time is not None and (
+                latest_telemetry_time is None
+                or telemetry_time > latest_telemetry_time
+            ):
+                latest_telemetry_time = telemetry_time
             self._states[vehicle.vin] = VehicleSimulationState(
                 vehicle=vehicle,
                 soc_pct=float(telemetry_doc["soc_pct"]),
@@ -369,6 +379,7 @@ class SimulatorManager:
                 route_remaining_km=telemetry_doc.get("route_remaining_km"),
                 trip_id=telemetry_doc.get("trip_id"),
             )
+        return latest_telemetry_time
 
     async def _run(self) -> None:
         while True:

@@ -19,7 +19,24 @@ function setMessage(text, error = false) {
   byId("message").classList.toggle("error", error);
 }
 
-async function refresh() {
+let refreshInFlight = null;
+
+async function refresh(force = false) {
+  if (refreshInFlight) {
+    await refreshInFlight;
+    if (!force) return;
+  }
+
+  const currentRefresh = loadDashboard();
+  refreshInFlight = currentRefresh;
+  try {
+    await currentRefresh;
+  } finally {
+    if (refreshInFlight === currentRefresh) refreshInFlight = null;
+  }
+}
+
+async function loadDashboard() {
   try {
     const [overview, fleet, alerts, plans, simulator] = await Promise.all([
       request("/fleet/overview"),
@@ -101,7 +118,7 @@ async function seedScenario() {
       body: JSON.stringify({scenario: byId("scenario").value, vehicle_count: Number(byId("vehicle-count").value), seed: 42}),
     });
     setMessage(`Seeded ${result.vehicles_seeded} vehicles. Demo vehicle: ${result.primary_demo_vin}`);
-    await refresh();
+    await refresh(true);
   } catch (error) { setMessage(error.message, true); }
 }
 
@@ -109,12 +126,12 @@ async function startSimulation() {
   try {
     await request("/simulator/start", {method: "POST", body: JSON.stringify({tick_seconds: 1, time_scale: 60})});
     setMessage("Simulation started at 60× time.");
-    await refresh();
+    await refresh(true);
   } catch (error) { setMessage(error.message, true); }
 }
 
 async function stopSimulation() {
-  try { await request("/simulator/stop", {method: "POST"}); setMessage("Simulation stopped. Latest telemetry is frozen; Start resumes from this point."); await refresh(); }
+  try { await request("/simulator/stop", {method: "POST"}); setMessage("Simulation stopped. Latest telemetry is frozen; Start resumes from this point."); await refresh(true); }
   catch (error) { setMessage(error.message, true); }
 }
 
@@ -122,7 +139,7 @@ async function generatePlan(vin) {
   try {
     const plan = await request(`/charging/plans/${vin}`, {method: "POST"});
     setMessage(`Plan ${plan.plan_id} is ready for review.`);
-    await refresh();
+    await refresh(true);
     viewPlan(vin);
   }
   catch (error) { setMessage(error.message, true); }
@@ -139,7 +156,7 @@ function viewPlan(vin) {
 }
 
 async function approvePlan(planId) {
-  try { await request(`/charging/plans/${planId}/approve`, {method: "POST"}); setMessage("Plan approved and charger reserved."); await refresh(); }
+  try { await request(`/charging/plans/${planId}/approve`, {method: "POST"}); setMessage("Plan approved and charger reserved."); await refresh(true); }
   catch (error) { setMessage(error.message, true); }
 }
 
