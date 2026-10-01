@@ -41,6 +41,12 @@ async def connect_clients() -> None:
             [("charger_id", 1), ("port_number", 1), ("start_time", 1), ("end_time", 1)]
         )
         await db.charging_plans.create_index("plan_id", unique=True)
+        await db.charging_plans.create_index(
+            "vin",
+            unique=True,
+            partialFilterExpression={"active": True},
+            name="one_active_plan_per_vehicle",
+        )
         await db.alerts.create_index("dedupe_key", unique=True, sparse=True)
         await db.alerts.create_index([("vin", 1), ("created_at", -1)])
     except Exception as exc:

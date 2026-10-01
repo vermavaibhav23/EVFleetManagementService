@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi import status as http_status
 from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 
 from app.core.config import settings
 from app.core.dependencies import get_database
@@ -90,7 +91,19 @@ async def create_plan(vin: str, response: Response) -> ChargingPlan:
     recommendation = await _load_recommendation(vin)
     if recommendation.plan is None:
         raise HTTPException(status_code=409, detail=recommendation.reason)
-    await db.charging_plans.insert_one(recommendation.plan.model_dump(mode="python"))
+    try:
+        await db.charging_plans.insert_one(
+            recommendation.plan.model_dump(mode="python")
+        )
+    except DuplicateKeyError:
+        existing = await db.charging_plans.find_one(
+            {"vin": vin, "active": True}, sort=[("created_at", -1)]
+        )
+        if existing is None:
+            raise
+        existing.pop("_id", None)
+        response.status_code = http_status.HTTP_200_OK
+        return ChargingPlan(**existing)
     return recommendation.plan
 
 
@@ -192,9 +205,12 @@ async def approve_plan(plan_id: str) -> ChargingPlan:
 async def _set_plan_status(plan_id: str, status: ChargingPlanStatus) -> ChargingPlan:
     db = get_database()
     now = datetime.now(UTC)
+    updates: dict[str, object] = {"status": status.value, "updated_at": now}
+    if status in {ChargingPlanStatus.REJECTED, ChargingPlanStatus.CANCELLED}:
+        updates["active"] = False
     doc = await db.charging_plans.find_one_and_update(
         {"plan_id": plan_id, "status": {"$in": ["PROPOSED", "APPROVED"]}},
-        {"$set": {"status": status.value, "updated_at": now}},
+        {"$set": updates},
         return_document=ReturnDocument.AFTER,
     )
     if doc is None:

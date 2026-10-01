@@ -5,9 +5,11 @@ from app.models.reservation import Reservation
 from app.models.vehicle import Vehicle
 from app.services.reservations import has_reservation_conflict, intervals_overlap
 from app.services.simulator import (
+    SimulatorManager,
     VehicleSimulationState,
     advance_charging_state,
     advance_driving_state,
+    demo_departure_time,
 )
 
 
@@ -78,6 +80,25 @@ class SimulatorPhysicsTests(unittest.TestCase):
         advance_charging_state(self.state, 600, 60, 80)
         self.assertGreater(self.state.soc_pct, 50)
         self.assertLessEqual(self.state.soc_pct, 80)
+
+    def test_demo_departures_begin_within_six_simulated_minutes(self) -> None:
+        seed_time = datetime(2026, 10, 1, 10, 0, tzinfo=UTC)
+        departures = [demo_departure_time(seed_time, index) for index in range(10)]
+
+        self.assertEqual(seed_time + timedelta(minutes=1), departures[0])
+        self.assertLessEqual(max(departures), seed_time + timedelta(minutes=6))
+
+    def test_reset_clears_runtime_state(self) -> None:
+        manager = SimulatorManager()
+        manager._states[self.state.vehicle.vin] = self.state
+        manager._simulated_time = datetime.now(UTC)
+        manager._emitted_events = 25
+
+        manager.reset()
+
+        self.assertEqual({}, manager._states)
+        self.assertIsNone(manager._simulated_time)
+        self.assertEqual(0, manager._emitted_events)
 
 
 if __name__ == "__main__":

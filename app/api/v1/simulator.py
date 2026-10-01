@@ -19,12 +19,14 @@ async def create_scenario(
         raise HTTPException(
             status_code=409, detail="Stop the simulator before reseeding a scenario"
         )
-    return await seed_scenario(
+    result = await seed_scenario(
         request_body,
         get_database(),
         get_redis(),
         get_kafka_bus(),
     )
+    _manager(request).reset()
+    return result
 
 
 @router.post("/start", response_model=SimulatorStatus)

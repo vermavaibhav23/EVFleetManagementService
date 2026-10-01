@@ -69,6 +69,7 @@ class ChargingPlan(BaseModel):
     predicted_ready_time: datetime
     next_departure_time: datetime | None = None
     status: ChargingPlanStatus = ChargingPlanStatus.PROPOSED
+    active: bool = True
     reason: str
     alternatives: list[CandidateCharger] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

@@ -114,7 +114,7 @@ async function startSimulation() {
 }
 
 async function stopSimulation() {
-  try { await request("/simulator/stop", {method: "POST"}); setMessage("Simulation stopped."); await refresh(); }
+  try { await request("/simulator/stop", {method: "POST"}); setMessage("Simulation stopped. Latest telemetry is frozen; Start resumes from this point."); await refresh(); }
   catch (error) { setMessage(error.message, true); }
 }
 
@@ -151,4 +151,4 @@ window.generatePlan = generatePlan;
 window.approvePlan = approvePlan;
 window.viewPlan = viewPlan;
 refresh();
-setInterval(refresh, 5000);
+setInterval(refresh, 2000);

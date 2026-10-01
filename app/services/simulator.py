@@ -69,6 +69,10 @@ def advance_charging_state(
     return delivered_kwh
 
 
+def demo_departure_time(seed_time: datetime, vehicle_index: int) -> datetime:
+    return seed_time + timedelta(minutes=1 + vehicle_index % 6)
+
+
 async def seed_scenario(
     request: ScenarioRequest,
     db: Any,
@@ -215,7 +219,7 @@ async def seed_scenario(
             vin=vin,
             origin="Simulation Depot",
             destination=f"Customer {index + 1:03d}",
-            departure_time=now + timedelta(hours=2, minutes=index % 6 * 5),
+            departure_time=demo_departure_time(now, index),
             distance_km=distance_km,
             service_duration_minutes=20,
         )
@@ -308,12 +312,18 @@ class SimulatorManager:
         self._db, self._redis, self._kafka = db, redis, kafka
         self._tick_seconds = tick_seconds
         self._time_scale = time_scale
-        self._simulated_time = datetime.now(UTC)
+        if self._simulated_time is None:
+            self._simulated_time = datetime.now(UTC)
         config = await db.simulation.find_one({"simulation_id": "active"}) or {}
         self._rng = random.Random(int(config.get("seed", 42)))
         await self._load_states()
         self._task = asyncio.create_task(self._run(), name="ev-simulator")
         return self.status()
+
+    def reset(self) -> None:
+        self._states.clear()
+        self._simulated_time = None
+        self._emitted_events = 0
 
     async def stop(self) -> SimulatorStatus:
         if self._task:

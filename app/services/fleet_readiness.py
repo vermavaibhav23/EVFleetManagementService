@@ -143,7 +143,14 @@ async def update_charging_lifecycle(db: Any, event: TelemetryEvent) -> None:
         now = datetime.now(UTC)
         await db.charging_plans.update_one(
             {"plan_id": plan["plan_id"]},
-            {"$set": {"status": "COMPLETED", "completed_at": now, "updated_at": now}},
+            {
+                "$set": {
+                    "status": "COMPLETED",
+                    "active": False,
+                    "completed_at": now,
+                    "updated_at": now,
+                }
+            },
         )
         await db.reservations.update_one(
             {"plan_id": plan["plan_id"]},
