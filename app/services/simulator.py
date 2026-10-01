@@ -562,6 +562,27 @@ class SimulatorManager:
                     eta_minutes = 0.0
                     power_kw = float(plan["allocated_power_kw"])
                     is_plugged_in = True
+                    if plan.get("status") != "CHARGING":
+                        lifecycle_updated_at = datetime.now(UTC)
+                        await self._db.charging_plans.update_one(
+                            {"plan_id": plan["plan_id"]},
+                            {
+                                "$set": {
+                                    "status": "CHARGING",
+                                    "updated_at": lifecycle_updated_at,
+                                }
+                            },
+                        )
+                        await self._db.reservations.update_one(
+                            {"plan_id": plan["plan_id"]},
+                            {
+                                "$set": {
+                                    "status": "OCCUPIED",
+                                    "updated_at": lifecycle_updated_at,
+                                }
+                            },
+                        )
+                        plan["status"] = "CHARGING"
                     advance_charging_state(
                         state,
                         elapsed_seconds,

@@ -161,6 +161,14 @@ async def update_charging_lifecycle(db: Any, event: TelemetryEvent) -> None:
 async def process_telemetry_for_operations(
     db: Any, event: TelemetryEvent, kafka: Any | None = None
 ) -> None:
+    latest = await db.telemetry.find_one(
+        {"vin": event.vin},
+        {"event_id": 1},
+        sort=[("ts", -1)],
+    )
+    if latest is None or latest.get("event_id") != event.event_id:
+        return
+
     await update_charging_lifecycle(db, event)
     assessment = await evaluate_vehicle_readiness(db, event.vin, event)
     if assessment is not None:
