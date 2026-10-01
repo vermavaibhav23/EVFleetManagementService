@@ -1,4 +1,5 @@
 import asyncio
+import math
 import random
 from contextlib import suppress
 from dataclasses import dataclass
@@ -15,6 +16,7 @@ from app.models.telemetry import OperatingState, TelemetryEvent
 from app.models.trip import Trip, TripStatus
 from app.models.vehicle import Vehicle
 from app.services.reservations import shift_window_to_now
+from app.services.scheduler import haversine_km
 from app.services.telemetry import store_telemetry
 
 
@@ -30,6 +32,7 @@ class VehicleSimulationState:
     battery_temperature_c: float
     route_remaining_km: float | None = None
     trip_id: str | None = None
+    resume_pending: bool = False
 
 
 def advance_driving_state(
@@ -72,6 +75,47 @@ def advance_charging_state(
 
 def demo_departure_time(seed_time: datetime, vehicle_index: int) -> datetime:
     return seed_time + timedelta(minutes=1 + vehicle_index % 6)
+
+
+def point_at_distance(
+    lat: float, lon: float, distance_km: float, bearing_degrees: float
+) -> tuple[float, float]:
+    radius_km = 6371.0
+    angular_distance = distance_km / radius_km
+    bearing = math.radians(bearing_degrees)
+    lat1 = math.radians(lat)
+    lon1 = math.radians(lon)
+    lat2 = math.asin(
+        math.sin(lat1) * math.cos(angular_distance)
+        + math.cos(lat1) * math.sin(angular_distance) * math.cos(bearing)
+    )
+    lon2 = lon1 + math.atan2(
+        math.sin(bearing) * math.sin(angular_distance) * math.cos(lat1),
+        math.cos(angular_distance) - math.sin(lat1) * math.sin(lat2),
+    )
+    return math.degrees(lat2), math.degrees(lon2)
+
+
+def advance_toward_location(
+    state: VehicleSimulationState,
+    destination_lat: float,
+    destination_lon: float,
+    elapsed_seconds: float,
+    speed_kmh: float,
+) -> tuple[float, float]:
+    remaining_km = haversine_km(
+        state.lat, state.lon, destination_lat, destination_lon
+    )
+    distance_km = min(remaining_km, speed_kmh * elapsed_seconds / 3600)
+    if remaining_km > 0:
+        fraction = distance_km / remaining_km
+        state.lat += (destination_lat - state.lat) * fraction
+        state.lon += (destination_lon - state.lon) * fraction
+    energy_used_kwh = distance_km * state.vehicle.consumption_kwh_per_km
+    effective_capacity = state.vehicle.usable_capacity_kwh * state.soh_pct / 100
+    state.soc_pct = max(0, state.soc_pct - energy_used_kwh / effective_capacity * 100)
+    state.odometer_km += distance_km
+    return distance_km, max(0, remaining_km - distance_km)
 
 
 async def seed_scenario(
@@ -212,11 +256,21 @@ async def seed_scenario(
             SimulationScenario.CHARGER_CONGESTION,
         }:
             distance_km = 95
+        destination_lat, destination_lon = point_at_distance(
+            depot.lat,
+            depot.lon,
+            distance_km,
+            25 + (index * 67) % 320,
+        )
         trip = Trip(
             trip_id=f"SIM-TRIP-{index + 1:04d}",
             vin=vin,
             origin="Simulation Depot",
             destination=f"Customer {index + 1:03d}",
+            origin_lat=depot.lat,
+            origin_lon=depot.lon,
+            destination_lat=destination_lat,
+            destination_lon=destination_lon,
             departure_time=demo_departure_time(now, index),
             distance_km=distance_km,
             service_duration_minutes=20,
@@ -423,54 +477,126 @@ class SimulatorManager:
         power_kw = 0.0
         charger_id = None
         is_plugged_in = False
+        navigation_phase = "IDLE"
+        navigation_target = None
+        destination_lat = None
+        destination_lon = None
+        distance_to_destination_km = None
+        eta_minutes = None
 
-        if plan and now > plan["end_time"]:
-            start_time, end_time = shift_window_to_now(
-                plan["start_time"], plan["end_time"], now
-            )
-            plan["start_time"] = start_time
-            plan["end_time"] = end_time
-            plan["predicted_ready_time"] = end_time
-            await self._db.charging_plans.update_one(
-                {"plan_id": plan["plan_id"]},
-                {
-                    "$set": {
-                        "start_time": start_time,
-                        "end_time": end_time,
-                        "predicted_ready_time": end_time,
-                        "updated_at": datetime.now(UTC),
-                    }
-                },
-            )
-            await self._db.reservations.update_one(
-                {"plan_id": plan["plan_id"]},
-                {
-                    "$set": {
-                        "start_time": start_time,
-                        "end_time": end_time,
-                        "updated_at": datetime.now(UTC),
-                    }
-                },
-            )
-
-        if plan and plan["start_time"] <= now <= plan["end_time"]:
-            operating_state = OperatingState.CHARGING
-            power_kw = float(plan["allocated_power_kw"])
-            charger_id = plan["charger_id"]
-            is_plugged_in = True
-            advance_charging_state(
-                state, elapsed_seconds, power_kw, float(plan["target_soc_pct"])
-            )
-            state.battery_temperature_c = min(44, state.battery_temperature_c + 0.03)
-            charger = await self._db.chargers.find_one({"charger_id": charger_id})
-            if charger:
-                state.lat, state.lon = float(charger["lat"]), float(charger["lon"])
-        elif plan and now < plan["start_time"]:
-            operating_state = OperatingState.WAITING_TO_CHARGE
+        charger = None
+        if plan:
             charger_id = plan["charger_id"]
             charger = await self._db.chargers.find_one({"charger_id": charger_id})
-            if charger:
-                state.lat, state.lon = float(charger["lat"]), float(charger["lon"])
+
+        if plan and charger:
+            destination_lat = float(charger["lat"])
+            destination_lon = float(charger["lon"])
+            navigation_target = charger.get("name", charger_id)
+            distance_to_destination_km = haversine_km(
+                state.lat, state.lon, destination_lat, destination_lon
+            )
+
+            if distance_to_destination_km > 0.08:
+                navigation_phase = "TO_CHARGER"
+                eta_minutes = distance_to_destination_km / 35 * 60
+                if state.soc_pct <= 0:
+                    operating_state = OperatingState.STRANDED
+                else:
+                    operating_state = OperatingState.EN_ROUTE_TO_CHARGER
+                    speed_kmh = 35.0
+                    distance, distance_to_destination_km = advance_toward_location(
+                        state,
+                        destination_lat,
+                        destination_lon,
+                        elapsed_seconds,
+                        speed_kmh,
+                    )
+                    power_kw = -(distance * state.vehicle.consumption_kwh_per_km) / (
+                        elapsed_seconds / 3600
+                    )
+                    eta_minutes = distance_to_destination_km / speed_kmh * 60
+            else:
+                state.lat, state.lon = destination_lat, destination_lon
+                if now > plan["end_time"]:
+                    start_time, end_time = shift_window_to_now(
+                        plan["start_time"], plan["end_time"], now
+                    )
+                    plan["start_time"] = start_time
+                    plan["end_time"] = end_time
+                    plan["predicted_ready_time"] = end_time
+                    updates = {
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "updated_at": datetime.now(UTC),
+                    }
+                    await self._db.charging_plans.update_one(
+                        {"plan_id": plan["plan_id"]},
+                        {"$set": {**updates, "predicted_ready_time": end_time}},
+                    )
+                    await self._db.reservations.update_one(
+                        {"plan_id": plan["plan_id"]}, {"$set": updates}
+                    )
+
+                blocking_reservation = await self._db.reservations.find_one(
+                    {
+                        "charger_id": charger_id,
+                        "port_number": plan["port_number"],
+                        "plan_id": {"$ne": plan["plan_id"]},
+                        "status": {"$in": ["APPROVED", "OCCUPIED"]},
+                        "start_time": {"$lte": now},
+                        "end_time": {"$gt": now},
+                    }
+                )
+                if now < plan["start_time"] or blocking_reservation:
+                    operating_state = OperatingState.WAITING_FOR_CHARGER
+                    navigation_phase = "AT_CHARGER"
+                    eta_minutes = max(
+                        0, (plan["start_time"] - now).total_seconds() / 60
+                    )
+                    distance_to_destination_km = 0.0
+                else:
+                    operating_state = OperatingState.CHARGING
+                    navigation_phase = "CHARGING"
+                    distance_to_destination_km = 0.0
+                    eta_minutes = 0.0
+                    power_kw = float(plan["allocated_power_kw"])
+                    is_plugged_in = True
+                    advance_charging_state(
+                        state,
+                        elapsed_seconds,
+                        power_kw,
+                        float(plan["target_soc_pct"]),
+                    )
+                    state.battery_temperature_c = min(
+                        44, state.battery_temperature_c + 0.03
+                    )
+                    if state.soc_pct >= float(plan["target_soc_pct"]):
+                        operating_state = OperatingState.READY
+                        navigation_phase = "READY"
+                        state.resume_pending = True
+                        completed_at = datetime.now(UTC)
+                        await self._db.charging_plans.update_one(
+                            {"plan_id": plan["plan_id"]},
+                            {
+                                "$set": {
+                                    "status": "COMPLETED",
+                                    "active": False,
+                                    "completed_at": completed_at,
+                                    "updated_at": completed_at,
+                                }
+                            },
+                        )
+                        await self._db.reservations.update_one(
+                            {"plan_id": plan["plan_id"]},
+                            {
+                                "$set": {
+                                    "status": "COMPLETED",
+                                    "completed_at": completed_at,
+                                    "updated_at": completed_at,
+                                }
+                            },
+                        )
         else:
             trip_doc = await self._db.trips.find_one(
                 {
@@ -493,26 +619,51 @@ class SimulatorManager:
                     )
                     state.trip_id = trip.trip_id
                     state.route_remaining_km = trip.distance_km
+                navigation_phase = (
+                    "RESUMING_DELIVERY" if state.resume_pending else "DELIVERY"
+                )
+                navigation_target = trip.destination
+                destination_lat = trip.destination_lat
+                destination_lon = trip.destination_lon
                 if state.soc_pct <= 0:
                     operating_state = OperatingState.STRANDED
                     distance = 0.0
                 else:
-                    operating_state = OperatingState.DRIVING
-                    speed_kmh = self._rng.uniform(32, 48)
-                    distance = advance_driving_state(
-                        state, elapsed_seconds, speed_kmh
+                    operating_state = (
+                        OperatingState.RESUMING_TRIP
+                        if state.resume_pending
+                        else OperatingState.DRIVING
                     )
+                    state.resume_pending = False
+                    speed_kmh = self._rng.uniform(32, 48)
+                    if destination_lat is not None and destination_lon is not None:
+                        distance, distance_to_destination_km = advance_toward_location(
+                            state,
+                            destination_lat,
+                            destination_lon,
+                            elapsed_seconds,
+                            speed_kmh,
+                        )
+                        state.route_remaining_km = distance_to_destination_km
+                    else:
+                        distance = advance_driving_state(
+                            state, elapsed_seconds, speed_kmh
+                        )
+                        distance_to_destination_km = state.route_remaining_km
                     power_kw = -(distance * state.vehicle.consumption_kwh_per_km) / (
                         elapsed_seconds / 3600
                     )
-                    state.lat += distance / 111 * 0.7
-                    state.lon += distance / 111 * 0.3
+                    eta_minutes = (
+                        distance_to_destination_km / speed_kmh * 60
+                        if distance_to_destination_km is not None
+                        else None
+                    )
                     state.battery_temperature_c = min(
                         43, state.battery_temperature_c + 0.01
                     )
                 if (
                     state.route_remaining_km is not None
-                    and state.route_remaining_km <= 0.001
+                    and state.route_remaining_km <= 0.08
                 ):
                     await self._db.trips.update_one(
                         {"trip_id": trip.trip_id},
@@ -521,12 +672,13 @@ class SimulatorManager:
                     state.trip_id = None
                     state.route_remaining_km = 0
                     operating_state = OperatingState.AT_CUSTOMER
+                    navigation_phase = "ARRIVED"
+                    distance_to_destination_km = 0.0
+                    eta_minutes = 0.0
             else:
                 state.battery_temperature_c = max(
                     28, state.battery_temperature_c - 0.02
                 )
-                if plan and now < plan["start_time"]:
-                    operating_state = OperatingState.WAITING_TO_CHARGE
 
         state.sequence += 1
         effective_capacity = state.vehicle.usable_capacity_kwh * state.soh_pct / 100
@@ -554,6 +706,14 @@ class SimulatorManager:
             remaining_range_km=round(remaining_range, 2),
             charger_id=charger_id,
             is_plugged_in=is_plugged_in,
+            navigation_phase=navigation_phase,
+            navigation_target=navigation_target,
+            destination_lat=destination_lat,
+            destination_lon=destination_lon,
+            distance_to_destination_km=round(distance_to_destination_km, 2)
+            if distance_to_destination_km is not None
+            else None,
+            eta_minutes=round(eta_minutes, 1) if eta_minutes is not None else None,
         )
         await store_telemetry(event, self._db, self._redis, self._kafka)
         self._emitted_events += 1

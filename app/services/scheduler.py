@@ -256,6 +256,11 @@ def create_recommendation(
         estimated_cost=selected.electricity_cost,
         predicted_ready_time=selected.end_time,
         next_departure_time=trip.departure_time,
+        travel_distance_km=selected.travel_distance_km,
+        estimated_arrival_time=now
+        + timedelta(
+            hours=selected.travel_distance_km / average_travel_speed_kmh
+        ),
         reason=reason,
         alternatives=candidates[1:4],
     )

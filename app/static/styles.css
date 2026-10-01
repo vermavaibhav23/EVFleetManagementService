@@ -61,8 +61,28 @@ button.danger { color: #9d3029; border-color: #d7a29e; }
 .workspace { padding-top: 26px; }
 .section-heading { display: flex; align-items: end; justify-content: space-between; margin-bottom: 10px; }
 .icon-button { width: 38px; padding: 0; font-size: 20px; }
+.map-workspace { padding-top: 18px; }
+.map-shell { position: relative; width: 100%; aspect-ratio: 2.38 / 1; min-height: 260px; max-height: 440px; border: 1px solid #cbd4d7; background: #eef3f2; overflow: hidden; }
+#fleet-map { display: block; width: 100%; height: 100%; }
+.map-grid { stroke: #d9e2e1; stroke-width: 1; }
+.map-route { stroke-width: 3; stroke-dasharray: 7 5; opacity: 0.85; }
+.delivery-route { stroke: #41857f; }
+.charger-route { stroke: #d39722; }
+.map-vehicle { fill: #16766f; stroke: #fff; stroke-width: 3; }
+.map-vehicle.critical-vehicle { fill: #c9473d; }
+.map-charger { fill: #e4b63f; stroke: #4b5558; stroke-width: 2; }
+.map-label { fill: #40565c; font-size: 12px; font-weight: 650; }
+.vehicle-label { fill: #172026; font-size: 11px; }
+.map-empty { position: absolute; inset: 0; display: grid; place-items: center; color: #60747a; font-size: 13px; pointer-events: none; }
+.map-empty[hidden] { display: none; }
+.map-legend { display: flex; align-items: center; gap: 14px; color: #60747a; font-size: 11px; }
+.map-legend span { display: flex; align-items: center; gap: 5px; }
+.map-legend i { display: inline-block; width: 10px; height: 10px; }
+.legend-vehicle { border-radius: 50%; background: #16766f; }
+.legend-charger { background: #e4b63f; border: 1px solid #4b5558; }
+.legend-route { width: 18px !important; height: 0 !important; border-top: 3px dashed #41857f; }
 .table-wrap { overflow-x: auto; border-top: 2px solid #5f767d; background: #fff; }
-table { width: 100%; border-collapse: collapse; min-width: 850px; table-layout: fixed; }
+table { width: 100%; border-collapse: collapse; min-width: 1050px; table-layout: fixed; }
 th, td { padding: 11px 12px; text-align: left; border-bottom: 1px solid #e0e6e8; font-size: 13px; overflow-wrap: anywhere; }
 th { color: #52686f; background: #edf1f2; font-size: 11px; text-transform: uppercase; }
 tbody tr:hover { background: #f7f9f9; }
@@ -79,6 +99,11 @@ tr.attention td {
 .badge.APPROVED, .badge.CHARGING, .badge.ACTION_SCHEDULED { color: #185a75; background: #dceff7; }
 .table-action { height: 30px; padding: 0 9px; font-size: 12px; }
 .muted { color: #77898f; }
+.state-label { font-weight: 650; }
+.state-label.EN_ROUTE_TO_CHARGER { color: #99690a; }
+.state-label.WAITING_FOR_CHARGER { color: #805a08; }
+.state-label.CHARGING, .state-label.READY { color: #126249; }
+.state-label.STRANDED { color: #9d3029; }
 
 @media (max-width: 850px) {
   .topbar { align-items: flex-start; }
@@ -86,4 +111,6 @@ tr.attention td {
   .metrics div, .metrics div:first-child { padding: 14px 10px; border-bottom: 1px solid #cbd4d7; }
   #sim-clock { width: 100%; margin-left: 0; text-align: left; }
   select { min-width: min(100%, 280px); }
+  .map-legend { display: none; }
+  .map-shell { min-height: 230px; }
 }

@@ -16,6 +16,10 @@ class Trip(BaseModel):
     vin: str = Field(min_length=11, max_length=17)
     origin: str = Field(min_length=1, max_length=150)
     destination: str = Field(min_length=1, max_length=150)
+    origin_lat: float | None = Field(default=None, ge=-90, le=90)
+    origin_lon: float | None = Field(default=None, ge=-180, le=180)
+    destination_lat: float | None = Field(default=None, ge=-90, le=90)
+    destination_lon: float | None = Field(default=None, ge=-180, le=180)
     departure_time: datetime
     distance_km: float = Field(gt=0)
     service_duration_minutes: int = Field(default=20, ge=0, le=1440)

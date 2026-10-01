@@ -49,9 +49,34 @@ async def fleet_vehicle_statuses(
             "vin": vin,
             "name": vehicle.get("name", vin),
             "soc_pct": telemetry.get("soc_pct") if telemetry else None,
+            "lat": telemetry.get("lat") if telemetry else None,
+            "lon": telemetry.get("lon") if telemetry else None,
+            "speed_kmh": telemetry.get("speed_kmh") if telemetry else None,
             "operating_state": telemetry.get("operating_state")
             if telemetry
             else "OFFLINE",
+            "navigation_phase": telemetry.get("navigation_phase")
+            if telemetry
+            else None,
+            "navigation_target": telemetry.get("navigation_target")
+            if telemetry
+            else None,
+            "destination_lat": telemetry.get("destination_lat")
+            if telemetry
+            else None,
+            "destination_lon": telemetry.get("destination_lon")
+            if telemetry
+            else None,
+            "distance_to_destination_km": telemetry.get(
+                "distance_to_destination_km"
+            )
+            if telemetry
+            else None,
+            "eta_minutes": telemetry.get("eta_minutes") if telemetry else None,
+            "charger_id": telemetry.get("charger_id") if telemetry else None,
+            "is_plugged_in": telemetry.get("is_plugged_in", False)
+            if telemetry
+            else False,
             "readiness": assessment.status.value if assessment else "UNKNOWN",
             "current_range_km": assessment.current_range_km if assessment else None,
             "post_trip_range_km": assessment.post_trip_range_km

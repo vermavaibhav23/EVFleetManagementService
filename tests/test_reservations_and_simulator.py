@@ -8,12 +8,15 @@ from app.services.reservations import (
     intervals_overlap,
     shift_window_to_now,
 )
+from app.services.scheduler import haversine_km
 from app.services.simulator import (
     SimulatorManager,
     VehicleSimulationState,
     advance_charging_state,
     advance_driving_state,
+    advance_toward_location,
     demo_departure_time,
+    point_at_distance,
 )
 
 
@@ -102,6 +105,27 @@ class SimulatorPhysicsTests(unittest.TestCase):
 
         self.assertEqual(seed_time + timedelta(minutes=1), departures[0])
         self.assertLessEqual(max(departures), seed_time + timedelta(minutes=6))
+
+    def test_generated_customer_is_requested_distance_from_depot(self) -> None:
+        destination = point_at_distance(12.9716, 77.5946, 50, 45)
+
+        self.assertAlmostEqual(
+            50,
+            haversine_km(12.9716, 77.5946, *destination),
+            places=2,
+        )
+
+    def test_geo_movement_updates_position_soc_and_remaining_distance(self) -> None:
+        destination = point_at_distance(self.state.lat, self.state.lon, 10, 90)
+        starting_soc = self.state.soc_pct
+
+        travelled, remaining = advance_toward_location(
+            self.state, *destination, elapsed_seconds=360, speed_kmh=50
+        )
+
+        self.assertAlmostEqual(5, travelled, places=2)
+        self.assertAlmostEqual(5, remaining, places=2)
+        self.assertLess(self.state.soc_pct, starting_soc)
 
     def test_reset_clears_runtime_state(self) -> None:
         manager = SimulatorManager()

@@ -68,6 +68,8 @@ class ChargingPlan(BaseModel):
     estimated_cost: float
     predicted_ready_time: datetime
     next_departure_time: datetime | None = None
+    travel_distance_km: float = Field(default=0, ge=0)
+    estimated_arrival_time: datetime | None = None
     status: ChargingPlanStatus = ChargingPlanStatus.PROPOSED
     active: bool = True
     reason: str

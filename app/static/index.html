@@ -46,6 +46,21 @@
 
     <p id="message" role="status"></p>
 
+    <section class="workspace map-workspace">
+      <div class="section-heading">
+        <div><p class="eyebrow">Movement</p><h2>Live fleet paths</h2></div>
+        <div class="map-legend" aria-label="Map legend">
+          <span><i class="legend-vehicle"></i>Vehicle</span>
+          <span><i class="legend-charger"></i>Charger</span>
+          <span><i class="legend-route"></i>Active path</span>
+        </div>
+      </div>
+      <div class="map-shell">
+        <svg id="fleet-map" viewBox="0 0 1000 420" role="img" aria-label="Live vehicle and charger paths"></svg>
+        <p id="map-empty" class="map-empty">Seed a scenario to view fleet movement.</p>
+      </div>
+    </section>
+
     <section class="workspace">
       <div class="section-heading">
         <div><p class="eyebrow">Readiness</p><h2>Fleet risk queue</h2></div>
@@ -53,7 +68,7 @@
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Vehicle</th><th>State</th><th>SoC</th><th>Current range</th><th>After trip</th><th>Safe margin</th><th>Readiness</th><th>Action</th></tr></thead>
+          <thead><tr><th>Vehicle</th><th>State</th><th>Navigation</th><th>SoC</th><th>Current range</th><th>After trip</th><th>Safe margin</th><th>Readiness</th><th>Action</th></tr></thead>
           <tbody id="vehicles-body"></tbody>
         </table>
       </div>
@@ -73,7 +88,7 @@
       <div class="section-heading"><div><p class="eyebrow">Charging</p><h2>Plans and reservations</h2></div></div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Vehicle</th><th>Charger</th><th>Window</th><th>Target</th><th>Cost</th><th>Status</th><th>Action</th></tr></thead>
+          <thead><tr><th>Vehicle</th><th>Charger</th><th>Journey</th><th>Window</th><th>Target</th><th>Cost</th><th>Status</th><th>Action</th></tr></thead>
           <tbody id="plans-body"></tbody>
         </table>
       </div>

@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi import status as http_status
@@ -15,7 +15,7 @@ from app.models.telemetry import TelemetryEvent
 from app.models.vehicle import Vehicle
 from app.services.fleet_readiness import evaluate_vehicle_readiness, find_next_trip
 from app.services.reservations import shift_window_to_now
-from app.services.scheduler import create_recommendation
+from app.services.scheduler import create_recommendation, haversine_km
 
 router = APIRouter()
 
@@ -138,14 +138,30 @@ async def approve_plan(plan_id: str) -> ChargingPlan:
         {"vin": plan_doc["vin"]}, sort=[("ts", -1)]
     )
     approval_time = (
-        telemetry_doc["ts"] if telemetry_doc and telemetry_doc.get("ts") else datetime.now(UTC)
+        telemetry_doc["ts"]
+        if telemetry_doc and telemetry_doc.get("ts")
+        else datetime.now(UTC)
+    )
+    charger_doc = await db.chargers.find_one({"charger_id": plan_doc["charger_id"]})
+    travel_distance_km = 0.0
+    if telemetry_doc and charger_doc:
+        travel_distance_km = haversine_km(
+            float(telemetry_doc["lat"]),
+            float(telemetry_doc["lon"]),
+            float(charger_doc["lat"]),
+            float(charger_doc["lon"]),
+        )
+    estimated_arrival_time = approval_time + timedelta(
+        hours=travel_distance_km / 35
     )
     start_time, end_time = shift_window_to_now(
-        plan_doc["start_time"], plan_doc["end_time"], approval_time
+        plan_doc["start_time"], plan_doc["end_time"], estimated_arrival_time
     )
     plan_doc["start_time"] = start_time
     plan_doc["end_time"] = end_time
     plan_doc["predicted_ready_time"] = end_time
+    plan_doc["travel_distance_km"] = travel_distance_km
+    plan_doc["estimated_arrival_time"] = estimated_arrival_time
 
     conflict = await db.reservations.find_one(
         {
@@ -162,7 +178,6 @@ async def approve_plan(plan_id: str) -> ChargingPlan:
             detail="The selected charger interval is no longer available",
         )
 
-    charger_doc = await db.chargers.find_one({"charger_id": plan_doc["charger_id"]})
     if charger_doc:
         depot = await db.depots.find_one({"depot_id": charger_doc.get("depot_id")})
         if depot:
@@ -212,6 +227,8 @@ async def approve_plan(plan_id: str) -> ChargingPlan:
                 "start_time": start_time,
                 "end_time": end_time,
                 "predicted_ready_time": end_time,
+                "travel_distance_km": travel_distance_km,
+                "estimated_arrival_time": estimated_arrival_time,
                 "updated_at": now,
             }
         },

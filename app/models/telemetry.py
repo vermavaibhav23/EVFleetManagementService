@@ -8,6 +8,9 @@ from pydantic import BaseModel, Field, field_validator
 class OperatingState(StrEnum):
     PARKED = "PARKED"
     DRIVING = "DRIVING"
+    EN_ROUTE_TO_CHARGER = "EN_ROUTE_TO_CHARGER"
+    WAITING_FOR_CHARGER = "WAITING_FOR_CHARGER"
+    RESUMING_TRIP = "RESUMING_TRIP"
     AT_CUSTOMER = "AT_CUSTOMER"
     WAITING_TO_CHARGE = "WAITING_TO_CHARGE"
     CHARGING = "CHARGING"
@@ -37,6 +40,12 @@ class TelemetryEvent(BaseModel):
     remaining_range_km: float | None = Field(default=None, ge=0)
     charger_id: str | None = None
     is_plugged_in: bool = False
+    navigation_phase: str | None = None
+    navigation_target: str | None = None
+    destination_lat: float | None = Field(default=None, ge=-90, le=90)
+    destination_lon: float | None = Field(default=None, ge=-180, le=180)
+    distance_to_destination_km: float | None = Field(default=None, ge=0)
+    eta_minutes: float | None = Field(default=None, ge=0)
 
     @field_validator("ts")
     @classmethod
