@@ -554,11 +554,33 @@ async def seed_scenario(request, db, redis, kafka):
             ts[0].distance_km = haversine_km(
                 c.lat, c.lon, ts[0].destination_lat, ts[0].destination_lon
             )
-    for v, ts, e in records:
-        await db.vehicles.insert_one(v.model_dump(mode="python"))
-        if ts:
-            await db.trips.insert_many([t.model_dump(mode="python") for t in ts])
-        await store_telemetry(e, db, redis, kafka)
+    seed_limit = asyncio.Semaphore(20)
+
+    async def persist_record(v, ts, e):
+        async with seed_limit:
+            if ts:
+                e.route_remaining_km = haversine_km(
+                    e.lat, e.lon, ts[0].destination_lat, ts[0].destination_lon
+                )
+            e.remaining_range_km = (
+                v.usable_capacity_kwh
+                * (e.soh_pct or 100)
+                / 100
+                * e.soc_pct
+                / 100
+                / v.consumption_kwh_per_km
+            )
+            await db.vehicles.insert_one(v.model_dump(mode="python"))
+            if ts:
+                await db.trips.insert_many([t.model_dump(mode="python") for t in ts])
+            await store_telemetry(e, db, redis, kafka)
+
+    results = await asyncio.gather(
+        *(persist_record(*record) for record in records), return_exceptions=True
+    )
+    for result in results:
+        if isinstance(result, Exception):
+            raise result
     return {
         "scenario": scenario,
         "vehicles_seeded": len(records),
@@ -1005,7 +1027,11 @@ class SimulatorManager:
             )
             recovery = last_trip and last_trip.get("recovery_requested")
             hold = False
-            if trip_doc and not trip_doc.get("reserve_exception"):
+            if (
+                trip_doc
+                and trip_doc["status"] == "PLANNED"
+                and not trip_doc.get("reserve_exception")
+            ):
                 from app.services.scheduler import escape_km
 
                 t = Trip(**trip_doc)
