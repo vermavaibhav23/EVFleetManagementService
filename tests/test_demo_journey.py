@@ -514,3 +514,23 @@ class DemoJourneyTests(unittest.IsolatedAsyncioTestCase):
         elapsed = (self.manager._simulated_time - before).total_seconds()
         self.assertGreaterEqual(elapsed, 120)
         self.assertLess(elapsed, 125)
+
+    async def test_legacy_charger_without_port_count_keeps_dashboard_available(self):
+        await self.db.chargers.insert_one(
+            {
+                "charger_id": "LEGACY",
+                "name": "Legacy charger",
+                "lat": 12.9716,
+                "lon": 77.5946,
+                "available_kw": 60,
+                "price_per_kwh": 8,
+                "status": "available",
+            }
+        )
+        response = await self.client.get("/chargers")
+        self.assertEqual(200, response.status_code, response.text)
+        legacy = next(c for c in response.json() if c["charger_id"] == "LEGACY")
+        self.assertEqual(1, legacy["port_count"])
+        self.assertEqual(1, legacy["free_ports"])
+        overview = await self.client.get("/fleet/overview")
+        self.assertEqual(200, overview.status_code, overview.text)

@@ -38,7 +38,7 @@ async def list_chargers() -> list[Charger]:
         doc["occupied_ports"] = len(occupied)
         doc["reserved_ports"] = len(reserved)
         doc["free_ports"] = (
-            max(0, doc["port_count"] - len(set(occupied)))
+            max(0, doc.get("port_count", 1) - len(set(occupied)))
             if str(doc["status"]).upper() == "AVAILABLE"
             else 0
         )
