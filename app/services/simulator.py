@@ -297,7 +297,12 @@ async def seed_scenario(
             destination_lat=destination_lat,
             destination_lon=destination_lon,
             departure_time=demo_departure_time(now, index),
-            delivery_deadline=now + timedelta(hours=5),
+            delivery_deadline=now
+            + timedelta(
+                hours=6
+                if request.scenario == SimulationScenario.UNEXPECTED_LONG_TRIP
+                else 5
+            ),
             distance_km=distance_km,
             service_duration_minutes=20,
         )

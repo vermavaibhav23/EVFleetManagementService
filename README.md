@@ -177,7 +177,7 @@ Deploy **one replica and one Uvicorn worker**. The in-process mutation lock orde
 
 This is a disposable, unauthenticated hackathon demo, not a tenant-isolated production fleet service. Seed resets only SIM vehicles and their records. Kafka generation IDs and current-event checks prevent old runs from changing new plans. Redis is a latest-state cache; MongoDB remains authoritative. Publication failures stop simulation visibly; resubmitting an event repairs delivery without inserting duplicate telemetry.
 
-Distances are geodesic straight-line demo routes, not road routing. Charger coordinates are distinct real coordinates around Bengaluru, representing fictional demo stations. Charging uses a shared 80%/90% taper curve and 92% efficiency. Plans budget the charger journey, charger-to-customer journey, reserve, and a delivery deadline. Seeded deliveries have five hours of slack; other trips can specify `delivery_deadline`. Prices use metered grid kWh and applicable tariffs, with an average-rate estimate across the charging window.
+Distances are geodesic straight-line demo routes, not road routing. Charger coordinates are distinct real coordinates around Bengaluru, representing fictional demo stations. Charging uses a shared 80%/90% taper curve and 92% efficiency. Plans budget the charger journey, charger-to-customer journey, reserve, and a delivery deadline. Seeded deliveries have a five-hour delivery window (six hours for the unexpected 140 km trip); other trips can specify `delivery_deadline`. Prices use metered grid kWh and applicable tariffs, with an average-rate estimate across the charging window.
 
 The fleet table displays at most 200 vehicles, with its limit clearly indicated. The simulator allows up to 1,000 for experiments; this is not a capacity claim. No 100,000-events/second throughput claim has been measured. See `docs/demo-audit.md` for test evidence and actual load results. Higher throughput needs batched ingestion, a durable transactional outbox, independently scaled producers/consumers, partitioning by vehicle, materialized latest-state reads, and distributed reservation coordination.
 
@@ -185,4 +185,6 @@ Reproducible live acceptance (mutates the disposable SIM fleet):
 
 ```sh
 python scripts/live_acceptance.py --base-url https://evfleetmanagementservice-production.up.railway.app --output evidence.json
+python scripts/live_scenarios.py --base-url https://evfleetmanagementservice-production.up.railway.app --output scenarios.json
+python scripts/demo_load.py --base-url https://evfleetmanagementservice-production.up.railway.app --output load.json --seconds 60 --vehicles 10 50
 ```

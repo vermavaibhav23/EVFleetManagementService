@@ -385,6 +385,16 @@ class DemoJourneyTests(unittest.IsolatedAsyncioTestCase):
                     (await self.latest())["battery_temperature_c"], 45
                 )
 
+    async def test_long_trip_has_feasible_emergency_plan_after_route_extension(self):
+        await self.seed(SimulationScenario.UNEXPECTED_LONG_TRIP, count=1)
+        self.manager._time_scale = 300
+        for _ in range(6):
+            await self.manager._tick()
+        plan = await self.plan()
+        self.assertGreater(plan["remaining_delivery_km"], 130)
+        approval = await self.client.post(f"/charging/plans/{plan['plan_id']}/approve")
+        self.assertEqual(200, approval.status_code, approval.text)
+
     async def test_zero_energy_stops_at_actual_range(self):
         state = self.manager._states[self.vin]
         state.soc_pct = 0.01
