@@ -169,10 +169,10 @@ GET  /api/v1/health/ready
 
 ## Tests
 
-Latest recorded verification passed **69 Python unittest tests** and **20 frontend tests**. Coverage includes full timetables, disruptions, manager choices, duplicate/replayed telemetry, conflicting reservations, approval responsiveness and charger-route display. These are functional checks, not production performance measurements. Node.js is required for the frontend tests; Python integration tests use an in-memory MongoDB substitute and service doubles.
+The Python and frontend regression suites cover the current demo workflow. Coverage includes full timetables, disruptions, manager choices, duplicate/replayed telemetry, conflicting reservations, approval responsiveness and charger-route display. These are functional checks, not production performance measurements. Node.js is required for the frontend tests; Python integration tests use an in-memory MongoDB substitute and service doubles.
 
 ```powershell
-pip install -r requirements-dev.txt
+pip install -r requirements.txt -r requirements-dev.txt
 python -m pytest -q
 python -m unittest discover -s tests -v
 python -m ruff check app tests scripts
@@ -218,7 +218,7 @@ This is a disposable, unauthenticated hackathon demo, not a tenant-isolated prod
 
 Routes are straight-line geography at a modelled 35 km/h, not road routing or live traffic predictions. The SVG map uses simulated coordinates and the dashboard polls approximately every three seconds. Charger coordinates are distinct locations around Bengaluru representing fictional stations. Charging uses a shared 80%/90% taper curve and 92% efficiency. The normal policy protects 15 km reserve and a 20-minute traffic buffer; new proposals also budget five simulated minutes for review. Deadlines vary by scenario and the fixed timetable includes later deliveries and charging. Overheating and unexpected-long-trip presets are absent from the current menu. Prices use metered grid kWh and applicable tariffs, with an average-rate estimate across the charging window.
 
-The portal accepts 10-100 vehicles and is demonstrated with 10. The simulator API accepts up to 1,000 for experiments; this is not validated capacity. No production throughput, latency percentiles, availability, financial savings or emissions reduction has been established. [Earlier audit notes](docs/demo-audit.md) are historical; use the [current scenario guide](docs/manager-demo.md) for the present demo. Future work includes real vehicle and charger feeds, road-based travel estimates, authenticated fleet access, durable coordination and a measured operator pilot.
+The portal accepts 10-100 vehicles and is demonstrated with 10. The simulator API accepts up to 1,000 for experiments; this is not validated capacity. No production throughput, latency percentiles, availability, financial savings or emissions reduction has been established. Use the [current scenario guide](docs/manager-demo.md) for the present demo. Future work includes real vehicle and charger feeds, road-based travel estimates, authenticated fleet access, durable coordination and a measured operator pilot.
 
 Reproducible live acceptance (mutates the disposable SIM fleet):
 
@@ -227,3 +227,19 @@ python scripts/live_acceptance.py --base-url https://evfleetmanagementservice-pr
 python scripts/live_scenarios.py --base-url https://evfleetmanagementservice-production.up.railway.app --output scenarios.json
 python scripts/demo_load.py --base-url https://evfleetmanagementservice-production.up.railway.app --output load.json --seconds 60 --vehicles 10 50
 ```
+
+## Repository layout and data model
+
+- `app/api/v1/`: fleet, charging, telemetry, simulator and health endpoints.
+- `app/models/`: validated API contracts and persisted operational records.
+- `app/services/`: readiness, scheduling, tariffs, reservations, journey tracking and simulation.
+- `app/static/`: the current manager portal.
+- `tests/`: domain, API, complete-journey and frontend regression tests.
+- `scripts/`: repeatable live journey, scenario and load checks.
+- `docs/manager-demo.md`: the current panel demonstration guide.
+
+MongoDB stores vehicles, trips, depots, chargers, tariffs, reservations, charging plans, telemetry, alerts, simulation state, simulation events and manager decisions. These collections support the current workflow. Journey history is embedded in telemetry. Run IDs, event IDs, sequence numbers, processing markers, parent plans and handover links are required for replay protection and operational continuity.
+
+Charger occupancy counts are calculated from reservations when read, not saved as charger configuration. The unused telemetry `evt` and reservation `grace_period_minutes` fields have been removed from the models. Older documents remain readable; loading a scenario replaces its SIM telemetry and reservations with the current schema and refreshes its charger configuration. Historical non-SIM records are not rewritten by a demo reset.
+
+The older `LOW_BATTERY_BEFORE_TRIP` and `UNREACHABLE_CHARGER` presets remain for journey acceptance and edge-case regression coverage; the portal presents the current 15 scenarios. Earlier phase notes and one-off sample seed scripts are available in Git history.

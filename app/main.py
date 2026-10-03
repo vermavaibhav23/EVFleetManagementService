@@ -13,7 +13,6 @@ from app.core.config import settings
 from app.core.dependencies import (
     close_clients,
     connect_clients,
-    connection_errors,
     is_kafka_connected,
 )
 from app.services.alert_consumer import AlertConsumer
@@ -30,8 +29,7 @@ async def lifespan(app: FastAPI):
         consumer = AlertConsumer()
         try:
             await consumer.start()
-        except Exception as exc:  # noqa: BLE001 - dependency startup boundary
-            connection_errors["kafka_consumer"] = type(exc).__name__
+        except Exception:  # noqa: BLE001 - dependency startup boundary
             consumer = None
     app.state.alert_consumer = consumer
     try:

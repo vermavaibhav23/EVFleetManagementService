@@ -592,6 +592,64 @@ class DemoJourneyTests(unittest.IsolatedAsyncioTestCase):
         elapsed = (self.manager._simulated_time - before).total_seconds()
         self.assertEqual(elapsed, 60)
 
+    async def test_charger_counts_are_derived_and_not_saved_from_input(self):
+        plan = await self.plan()
+        approved = await self.client.post(f"/charging/plans/{plan['plan_id']}/approve")
+        self.assertEqual(200, approved.status_code, approved.text)
+        charger_id = approved.json()["charger_id"]
+        doc = await self.db.chargers.find_one({"charger_id": charger_id}, {"_id": 0})
+        stale = {"occupied_ports": 99, "reserved_ports": 99, "free_ports": 99}
+        await self.db.chargers.update_one({"charger_id": charger_id}, {"$set": stale})
+        response = await self.client.post("/chargers", json={**doc, **stale})
+        self.assertEqual(200, response.status_code, response.text)
+        stored = await self.db.chargers.find_one({"charger_id": charger_id})
+        self.assertTrue(set(stale).isdisjoint(stored))
+        rows = (await self.client.get("/chargers")).json()
+        row = next(c for c in rows if c["charger_id"] == charger_id)
+        self.assertEqual(0, row["occupied_ports"])
+        self.assertEqual(1, row["reserved_ports"])
+        self.assertEqual(doc["port_count"], row["free_ports"])
+
+    async def test_reset_replaces_obsolete_sim_fields_and_keeps_other_records(self):
+        from app.models.reservation import Reservation
+
+        plan = await self.plan()
+        await self.client.post(f"/charging/plans/{plan['plan_id']}/approve")
+        reservation = await self.db.reservations.find_one({"plan_id": plan["plan_id"]})
+        legacy = {**reservation, "grace_period_minutes": 10}
+        self.assertNotIn("grace_period_minutes", Reservation(**legacy).model_dump())
+        event = {**(await self.latest()), "evt": "TELEMETRY"}
+        self.assertNotIn("evt", TelemetryEvent(**event).model_dump())
+        await self.db.telemetry.update_many({}, {"$set": {"evt": "TELEMETRY"}})
+        await self.db.reservations.update_many(
+            {}, {"$set": {"grace_period_minutes": 10}}
+        )
+        await self.db.chargers.update_many({}, {"$set": {"occupied_ports": 99}})
+        await self.db.telemetry.insert_one(
+            {"vin": "EXTERNAL", "event_id": "external", "evt": "TELEMETRY"}
+        )
+        await self.seed(SimulationScenario.CHARGER_CONGESTION)
+        self.assertEqual(
+            0,
+            await self.db.telemetry.count_documents(
+                {"vin": {"$regex": "^SIM"}, "evt": {"$exists": True}}
+            ),
+        )
+        self.assertGreater(await self.db.reservations.count_documents({}), 0)
+        self.assertEqual(
+            0,
+            await self.db.reservations.count_documents(
+                {"grace_period_minutes": {"$exists": True}}
+            ),
+        )
+        self.assertEqual(
+            0,
+            await self.db.chargers.count_documents(
+                {"occupied_ports": {"$exists": True}}
+            ),
+        )
+        self.assertIsNotNone(await self.db.telemetry.find_one({"event_id": "external"}))
+
     async def test_legacy_charger_without_port_count_keeps_dashboard_available(self):
         await self.db.chargers.insert_one(
             {

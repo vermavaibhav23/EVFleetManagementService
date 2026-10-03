@@ -10,7 +10,6 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "EV Fleet Charging Management"
-    app_env: str = "development"
     api_v1_prefix: str = "/api/v1"
 
     mongodb_uri: str = "mongodb://localhost:27017"
@@ -28,7 +27,6 @@ class Settings(BaseSettings):
     kafka_username: str | None = None
     kafka_password: str | None = None
 
-    low_soc_alert_threshold: int = Field(default=20, ge=0, le=100)
     reserve_range_km: float = Field(default=15, ge=0, le=200)
     charge_soon_margin_km: float = Field(default=15, ge=0, le=200)
     charging_deadline_buffer_minutes: int = Field(default=20, ge=0, le=240)

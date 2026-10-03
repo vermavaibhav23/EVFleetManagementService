@@ -10,8 +10,7 @@ from app.models.vehicle import Vehicle
 from app.services.readiness import assess_readiness
 
 
-async def find_next_trip(db: Any, vin: str, now: datetime | None = None) -> Trip | None:
-    now = now or datetime.now(UTC)
+async def find_next_trip(db: Any, vin: str) -> Trip | None:
     doc = await db.trips.find_one(
         {
             "vin": vin,
@@ -56,7 +55,7 @@ async def evaluate_vehicle_readiness(
         telemetry_doc.pop("ingested_at", None)
         telemetry_event = TelemetryEvent(**telemetry_doc)
 
-    trip = await find_next_trip(db, vin, telemetry_event.ts)
+    trip = await find_next_trip(db, vin)
     return assess_readiness(
         vehicle,
         telemetry_event,

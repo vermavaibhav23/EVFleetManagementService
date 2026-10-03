@@ -34,7 +34,6 @@ class TelemetryEvent(BaseModel):
     soc_pct: float = Field(ge=0, le=100)
     soh_pct: float | None = Field(default=None, ge=0, le=100)
     odo_km: float = Field(ge=0)
-    evt: str = "TELEMETRY"
     seq: int = Field(ge=0)
     dtc: list[str] = Field(default_factory=list)
     battery_temperature_c: float | None = Field(default=None, ge=-50, le=100)

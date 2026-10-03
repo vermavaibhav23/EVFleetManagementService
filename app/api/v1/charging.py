@@ -62,7 +62,7 @@ async def _load_recommendation(
         depot_docs,
         future_docs,
     ) = await asyncio.gather(
-        find_next_trip(db, vin, telemetry.ts),
+        find_next_trip(db, vin),
         collect(db.chargers.find(charger_query)),
         collect(
             db.reservations.find(
@@ -382,7 +382,7 @@ async def _decision_context(vin):
     if not vdoc or not edoc:
         raise HTTPException(404, "Vehicle telemetry unavailable")
     v, e = Vehicle(**vdoc), TelemetryEvent(**edoc)
-    t = await find_next_trip(db, vin, e.ts)
+    t = await find_next_trip(db, vin)
     if not t:
         raise HTTPException(422, "No current delivery")
     future = [

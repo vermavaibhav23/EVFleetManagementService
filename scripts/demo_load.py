@@ -104,7 +104,7 @@ async def main(args):
                 "POST",
                 "/simulator/scenarios",
                 json={
-                    "scenario": "LOW_BATTERY_BEFORE_TRIP",
+                    "scenario": "NONFINAL_RELAXED",
                     "vehicle_count": 10,
                     "seed": 42,
                 },

@@ -10,13 +10,10 @@ from app.core.kafka import KafkaBus
 mongo_client: AsyncIOMotorClient | None = None
 redis_client: Redis | None = None
 kafka_bus: KafkaBus | None = None
-connection_errors: dict[str, str] = {}
 
 
 async def connect_clients() -> None:
     global kafka_bus, mongo_client, redis_client
-
-    connection_errors.clear()
 
     try:
         mongo_client = AsyncIOMotorClient(
@@ -55,25 +52,22 @@ async def connect_clients() -> None:
         )
         await db.alerts.create_index("dedupe_key", unique=True, sparse=True)
         await db.alerts.create_index([("vin", 1), ("created_at", -1)])
-    except Exception as exc:  # noqa: BLE001 - dependency startup boundary
+    except Exception:  # noqa: BLE001 - dependency startup boundary
         if mongo_client is not None:
             mongo_client.close()
         mongo_client = None
-        connection_errors["mongodb"] = type(exc).__name__
 
     try:
         redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
         await redis_client.ping()
-    except Exception as exc:  # noqa: BLE001 - dependency startup boundary
+    except Exception:  # noqa: BLE001 - dependency startup boundary
         redis_client = None
-        connection_errors["redis"] = type(exc).__name__
 
     try:
         kafka_bus = KafkaBus()
         await kafka_bus.start()
-    except Exception as exc:  # noqa: BLE001 - dependency startup boundary
+    except Exception:  # noqa: BLE001 - dependency startup boundary
         kafka_bus = None
-        connection_errors["kafka"] = type(exc).__name__
 
 
 async def close_clients() -> None:
@@ -112,7 +106,3 @@ def get_kafka_bus() -> KafkaBus:
 
 def is_kafka_connected() -> bool:
     return kafka_bus is not None
-
-
-def get_connection_errors() -> dict[str, str]:
-    return dict(connection_errors)

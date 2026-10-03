@@ -32,7 +32,6 @@ class Reservation(BaseModel):
     end_time: AwareDatetime
     reserved_power_kw: float = Field(gt=0)
     status: ReservationStatus = ReservationStatus.CONFIRMED
-    grace_period_minutes: int = Field(default=10, ge=0, le=60)
     created_at: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @field_validator("start_time", "end_time")

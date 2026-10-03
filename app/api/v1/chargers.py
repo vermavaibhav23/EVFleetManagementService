@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
 from app.core.dependencies import get_database
-from app.models.charger import Charger
+from app.models.charger import Charger, ChargerAvailability
 from app.services.coordination import serialized
 
 router = APIRouter()
@@ -13,16 +13,19 @@ async def upsert_charger(charger: Charger) -> Charger:
     db = get_database()
     await db.chargers.update_one(
         {"charger_id": charger.charger_id},
-        {"$set": charger.model_dump(mode="python")},
+        {
+            "$set": charger.model_dump(mode="python"),
+            "$unset": {"occupied_ports": "", "reserved_ports": "", "free_ports": ""},
+        },
         upsert=True,
     )
     return charger
 
 
-@router.get("/chargers", response_model=list[Charger])
-async def list_chargers() -> list[Charger]:
+@router.get("/chargers", response_model=list[ChargerAvailability])
+async def list_chargers() -> list[ChargerAvailability]:
     db = get_database()
-    chargers: list[Charger] = []
+    chargers: list[ChargerAvailability] = []
     async for doc in db.chargers.find({}).sort("available_kw", -1):
         doc.pop("_id", None)
         occupied = await db.reservations.distinct(
@@ -42,5 +45,5 @@ async def list_chargers() -> list[Charger]:
             if str(doc["status"]).upper() == "AVAILABLE"
             else 0
         )
-        chargers.append(Charger(**doc))
+        chargers.append(ChargerAvailability(**doc))
     return chargers

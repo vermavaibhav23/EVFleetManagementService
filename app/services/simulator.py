@@ -232,7 +232,14 @@ async def seed_scenario(request, db, redis, kafka):
     for c in chargers:
         await db.chargers.update_one(
             {"charger_id": c.charger_id},
-            {"$set": c.model_dump(mode="python")},
+            {
+                "$set": c.model_dump(mode="python"),
+                "$unset": {
+                    "occupied_ports": "",
+                    "reserved_ports": "",
+                    "free_ports": "",
+                },
+            },
             upsert=True,
         )
         # Station rates stay ordered through midnight so the scenario works at any current IST time.

@@ -21,9 +21,6 @@ class Charger(BaseModel):
     connector_type: str = "CCS2"
     port_count: int = Field(default=1, ge=1, le=20)
     status: ChargerStatus = ChargerStatus.AVAILABLE
-    occupied_ports: int = 0
-    reserved_ports: int = 0
-    free_ports: int | None = None
 
     @field_validator("status", mode="before")
     @classmethod
@@ -31,8 +28,9 @@ class Charger(BaseModel):
         return value.upper() if isinstance(value, str) else value
 
 
-class ChargerRecommendation(BaseModel):
-    vin: str
-    recommendation: str
-    charger: Charger | None = None
-    reason: str | None = None
+class ChargerAvailability(Charger):
+    """Live reservation counts returned by the API, never charger configuration."""
+
+    occupied_ports: int = 0
+    reserved_ports: int = 0
+    free_ports: int = 0
