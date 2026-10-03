@@ -1,245 +1,100 @@
 # EV Fleet Charging Management
 
-**[Launch the application](https://evfleetmanagementservice-production.up.railway.app/portal)** · [API documentation](https://evfleetmanagementservice-production.up.railway.app/docs) · [Scenario guide](docs/manager-demo.md)
+Full-journey planning, manager approval and deterministic simulation. A journey contains the fixed customer sequence, zero or more charging visits, and an explicit return to the depot. Charging can happen before, between or after deliveries. Completing a charge never completes the journey.
 
-A working hackathon demo that helps fleet managers decide **when, where and how much to charge** around a delivery timetable. It compares battery range, queues, prices and deadlines, explains its recommendation, and executes the approved plan in a running simulation. The hosted demo uses simulated vehicles, customers and charging stations; no installation is needed to try it.
+The portal retains the original map-based interface: **Overview**, **Vehicles**, **Chargers**, and **Plans & Decisions**, with the same green styling, attention queue, vehicle details and interactive map. The new planner is integrated into those screens. The map shows the selected journey's complete remaining route, including every charging visit and the depot return; proposed and approved routes have different styles. Drag to pan, scroll or use +/− to zoom, and use **Fit fleet** to reset the view.
 
-## Manager portal
+Live portal: [EV Fleet on Railway](https://evfleetmanagementservice-production.up.railway.app/portal).
 
-Open the **[live manager portal](https://evfleetmanagementservice-production.up.railway.app/portal)** for **Overview**, **Vehicles**, **Chargers**, and **Plans & Decisions**. Choose a grouped **Scenario**, keep the fleet size at 10, and click **Load / reset**. Selecting a name alone does not load its starting conditions. Review Van 001 and approve the charging plan or manager decision. Every load starts paused at current IST; press **Start** to run it.
+## Run locally
 
-Fifteen scenarios are arranged into four compact groups. Non-final cases execute a connected six-stop timetable, including later reserved charging sessions. The planner charges toward full within the protected departure window, preserves reserve by default, and checks continuation through later deliveries. Priority cases offer an explicit reserve exception with recovery requested and feasible package handover/reassignment, or accepting a charging delay while retaining original deadlines.
-
-The city map shows fixed, separated stations, distributed customers, individually selectable cars, green charging pulses and gray waiting vehicles. Port occupancy and queues come from actual simulation sessions. See [the demonstration guide](docs/manager-demo.md) for the full scenario table and limits.
-
-## Current capabilities
-
-- Persistent vehicles, daily trips, chargers, tariffs, reservations, alerts, and charging plans.
-- Depot power limits enforced across simultaneous charger reservations.
-- Idempotent telemetry ingestion into MongoDB, latest-state caching in Redis, and Kafka publication.
-- Readiness calculated from available energy, trip distance, vehicle efficiency, and a configurable reserve.
-- Fleet-facing distance values: current range, post-trip range, and safe range margin.
-- Separate battery-health flags for temperature, state of health, and diagnostic trouble codes.
-- Deduplicated `CRITICAL` and `CHARGE_SOON` alerts with an operational lifecycle.
-- Charger selection that checks connector compatibility, reachability, port reservations, waiting time, tariffs, charging duration, delivery deadlines and later stops.
-- Serialized proposed-plan approval that revalidates and reserves current and later charging slots.
-- Repeatable simulation with battery consumption while driving, no gain while waiting, and charging that follows the same efficiency and taper model as planning.
-- Manager choices for charging with accepted delay, or an eligible priority delivery with recovery requested and remaining work reassigned, including package collection.
-- Charger-failure and queue-overrun handling that invalidates affected bookings and requests a new decision.
-- Per-delivery journey tracking, observed interruptions and recent delivery history.
-- Fifteen grouped demo scenarios and an accelerated simulation clock.
-- Manual fleet portal at `/portal` and interactive OpenAPI documentation at `/docs`.
-
-## Architecture
-
-```text
-Simulator / vehicle client
-          |
-          v
-FastAPI telemetry API --> MongoDB telemetry history
-          |           --> Redis latest state + immediate operational readiness
-          v
-        Kafka
-          |
-          v
-Consumer --> process unapplied events / skip already-applied operations
-
-Manager dashboard --> charging scheduler --> proposed plan
-          --> approval revalidation --> current and later reservations
-          |
-          v
-New telemetry confirms charging and automatically completes the plan
-```
-
-The backend uses **Python, FastAPI, Pydantic and Uvicorn**. The frontend uses **HTML, CSS, JavaScript and SVG**. MongoDB is the authoritative store; Redis caches the latest vehicle update; Kafka carries VIN-keyed events for background processing and replay. Decisions use explicit rules and calculations, not an LLM or trained model.
-
-Energy remains the backend source of truth. Distance values are derived for operators:
-
-```text
-available energy = usable capacity * battery health * SoC
-current range = available energy / expected consumption per km
-safe range margin = current range - trip distance - reserve distance
-```
-
-## Local setup
-
-Install Docker with Docker Compose, then run from the repository root:
+Python 3.13 and MongoDB 7+ are required. MongoDB may be standalone; replica-set transactions are not required.
 
 ```sh
-docker compose up --build
+pip install -r requirements.txt
+uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Compose starts the API, MongoDB, Redis and Kafka with their internal connection settings. Wait for dependency readiness before loading a scenario. For Python development or tests on Windows, use Python 3.11+:
+Alternatively, `docker compose up --build` starts the API and MongoDB. Open `/portal` for the manager dashboard and `/docs` for the API. Configuration is in `.env.example`. Redis is no longer required. Optional Kafka ingress accepts the new run-scoped telemetry contract on `vehicle.telemetry.v2`; enable it only when a broker is configured.
 
-```powershell
-python -m venv .venv
-.venv\Scripts\activate
-python -m pip install -r requirements.txt -r requirements-dev.txt
-Copy-Item .env.example .env
-```
+## Manager workflow
 
-Open:
+1. Load `NORMAL_DAY` or `EDGE_CASE_DAY`, specifying a seed and an IST start time. The default start is deliberately fixed for reproducibility. Edge-case coverage requires at least 12 vehicles; all begin at the depot.
+2. Keep the clock paused and choose **Plan fleet**, or select a vehicle in the attention queue/map and choose **Review journey**. Under **Plans & Decisions**, use **Find normal journey** for individual alternatives. Planning runs in a separate, cancellable process; its status and cancellation control appear under **Planner jobs**. Fleet planning serves vehicles with fewer reachable chargers first, then earlier deadlines.
+3. Review every delivery, charging stop and return, arrival deadlines, service completion, reserve, energy purchases and total cost. Choose the exact alternative to approve. Individual planning also searches for an earlier-completion alternative, including different energy amounts at the same station. **Vehicles** keeps the original fixed delivery timetable visible independently of charging proposals.
+4. Approve the complete journey. Its full reservation chain becomes visible atomically. Then start or step the simulated clock.
+5. Incidents interrupt affected journeys safely. Request a fresh normal plan or recovery options. Recovery shows the number of late stops, maximum delay, total delay and reserve floor, and requires explicit acknowledgement. No recovery is auto-approved.
 
-- [Local fleet portal](http://localhost:8000/portal)
-- [Local API documentation](http://localhost:8000/docs)
-- [Local readiness check](http://localhost:8000/api/v1/health/ready)
+Under **Chargers**, daily price charts always show 00:00–24:00 IST, exact tariff boundaries and all ports, with separate proposal, confirmed, active/releasing, completed and cancelled styles. The date control navigates other days. Tables provide the same information without relying on chart colour or hover. Use the global speed selector with **Start**; **+5 min** advances a paused clock. The two supported scenarios replace the old list of single-incident presets.
 
-If running the API outside Compose, configure reachable dependency addresses in `.env`; Kafka must advertise an address reachable by that client. The Compose API installs its own Python dependencies.
+## Railway deployment
 
-## Fastest manual demo
+This repository's deployment branch is `main`. Push the reviewed changes to GitHub's `main` branch for the connected Railway service to build and deploy them. A localhost preview does not update Railway. The repository includes a Python 3.13 Dockerfile and `railway.toml`; Railway starts one Uvicorn worker on its assigned `$PORT` and checks `/api/v1/health/ready`.
 
-1. Open the **[live application](https://evfleetmanagementservice-production.up.railway.app/portal)** or your local portal.
-2. Select **Charge Ahead for Later Stops** and click **Load / reset** with 10 vehicles.
-3. Van 001 appears as **Charging required**; click **Review options**.
-4. Review the charger, charging window, target SoC, cost, and explanation.
-5. Approve the plan. This creates a confirmed port reservation.
-6. Press **Start** if paused. The default 60x setting requests one simulated minute per tick; processing and database time can slow the actual wall-clock cadence.
-7. Watch `EN_ROUTE_TO_CHARGER`, `WAITING_FOR_CHARGER` when needed, then `CHARGING`.
-8. SoC and range rise from generated telemetry.
-9. At target SoC, the plan and reservation become `COMPLETED`, the port releases, and the vehicle becomes `READY`.
-10. The delivery resumes from the charger (`RESUMING_TRIP`) and ends at `AT_CUSTOMER`.
-11. **Pause** freezes telemetry; **Start** resumes. **Load / reset** stops and replaces the shared SIM fleet. Finished timetables remain complete while other vehicles and the clock continue.
+Set `MONGODB_URI` to the Railway-reachable MongoDB connection and `MONGODB_DB` to the intended database. Kafka is optional and disabled by default; Redis is not used. Retain the existing MongoDB settings when upgrading. Do not point a local test suite at the deployed database.
 
-For a short cost-versus-deadline comparison, load **Busy Chargers - Save Money**, then **Busy Chargers - Protect Deadline**. The first can wait for cheaper East Solar; the second selects more expensive North Hub because the cheaper queue would miss delivery. Use **Manager choices** in a priority-delivery case to see the available exceptions and their consequences before approval.
+After the first v2 deployment, open `/portal` and load **Normal day** or **Edge-case day** to create the new run ledger, then plan and approve journeys. Legacy simulation collections are preserved and are not silently imported into the new contract. Later restarts reuse the persisted v2 run. Confirm `/api/v1/health/live` reports `schema_version: 2` and readiness succeeds. The portal's asset URLs use a new version to refresh cached JavaScript and CSS.
 
-After approval, the map highlights the route to the charger in blue. **Next stop** shows that charger and the remaining distance; the customer is displayed as the following delivery with a dashed route. Once charging ends, the customer becomes the active destination again. Green glowing vehicles are charging, gray vehicles are waiting, and purple diamonds are customer stops. Use **Fit fleet**, **+ / -**, scrolling or drag-to-pan to explore.
+## Model and safety
 
-Journey progress records actual stages, skips inapplicable stages and starts a new leg for the next delivery. **Why this plan?** and **Other stations** stay expanded through polling until closed, reloaded or reset. **Review plan** remains available during other requests. Approval shows **Approving...**, prevents duplicate submissions and displays its returned result without waiting for another dashboard refresh. Temporary missed updates show stale-data status; sustained failures disable actions that change fleet state.
+The optimizer uses SciPy's `milp` interface to HiGHS. Binary decisions select charging visits and ports and encode piecewise charging/tariff segments and reservation ordering. Energy quantities and timestamps are continuous. There is no recursive search over target SoC percentages.
 
-Scenario groups: **Normal Operations**, **Charger Scenarios**, **Non-final Deliveries**, and **Final Delivery**. The [demonstration guide](docs/manager-demo.md) lists all 15 cases and station-failure variations. Presets configure starting conditions; all vehicles use shared runtime planning. Reviewing options leaves the simulation running. The selected vehicle’s journey tracker records real transitions for each leg.
+Normal planning first enforces customer order, readiness, arrival deadlines, service completion, travel energy, compatible available ports, depot power and battery reserve. It then minimizes whole-journey metered energy cost, followed by return completion time. Recovery keeps physical safety hard and minimizes late-stop count, maximum lateness, total lateness, cost, then completion time. Original deadlines never change.
 
-| Group | Scenarios |
+Charging uses 100%, 60% and 30% of rated power in the 0–80%, 80–90% and 90–100% effective battery-capacity bands. Efficiency separates stored energy from billed grid energy. Tariff integration follows actual draw through these bands, including crossings during a session. Travel, unloading, acceptance windows, waiting allowance, connection, release and review lead time are explicit.
+
+The current **bounded model** permits at most one charging visit per gap between customers, including the first and final gaps. Default bounds are 8 customers, the nearest 4 available compatible stations, a 12-hour horizon, and 8 solver seconds per optimization. Ports are exclusive and each session reserves its full chosen rated power for its entire occupation, including setup/release. This conservative allocation does not optimize shared variable power. Idle vehicle energy and auxiliary loads are not modelled. See [model details](docs/model.md).
+
+Fleet coordination is **constrained-first sequential allocation**, with each provisional journey reserved while solving the following vehicle. It prevents the simple flexible-vehicle/unique-charger conflict and limits solve size. It is not a proof of fleet-wide minimum cost. A different processing order or joint fleet model can improve fleet cost or feasibility.
+
+Every candidate is independently forward-validated before publication and again at approval. Valid incumbents are returned as `FEASIBLE`; `OPTIMAL_MODEL` means all lexicographic phases are proven optimal within the stated single-vehicle model. Other statuses distinguish bounded infeasibility, no incumbent before a time limit, solver errors and validation rejection. A simple station-first fallback is offered after a time limit only if the independent validator accepts the complete journey.
+
+## Persistence and execution
+
+`fleet_ledger/_id=active` is the sole scheduling authority. The run contains vehicles, resources, operations, bookings, event progress, jobs and the simulated clock. Every operational writer uses a MongoDB compare-and-swap on `run_id` and `revision`. Approving or replacing a complete journey is one atomic document replacement, not a sequence of independent reservation inserts. A losing concurrent writer receives HTTP 409. Retrying an approved journey ID is idempotent, including after a lost response.
+
+Physical charging occupation survives cancellation until release completes. Resource/telemetry changes stop affected journeys and invalidate proposals; expired plans cannot silently shift into later reservations. The event-driven executor carries unused tick time into subsequent operations, so tick size does not add artificial time. Service in progress survives replanning. A lease allows only one clock owner across API processes; another process can take over after expiry. Pause/resume and process restarts reuse persisted time, service and operation progress.
+
+Reset swaps in a new run atomically. Old jobs and telemetry cannot mutate it; active solver processes discard results and terminate when their run changes. No unrelated collection is deleted. The document is limited to 12 MiB, vehicles to 100, recent operational messages to 1,000 and retained jobs to 20. Plans are retained for review until reset; reaching the document cap returns an explicit error instead of silently deleting history.
+
+## API contracts
+
+Base path: `/api/v1` (the OpenAPI service version is 2.0).
+
+| Endpoint | Purpose |
 |---|---|
-| Normal Operations | Smooth Deliveries; Charging Needed Later |
-| Charger Scenarios | Busy Chargers - Save Money; Busy Chargers - Protect Deadline; Charger Unavailable / Offline / Faulty / Incompatible Connector; Charger Fails During Journey; Queue Takes Longer |
-| Non-final Deliveries | Charge Ahead for Later Stops; Tight Next Deadline; Priority Delivery - Reserve Exception; Priority Delivery - No Safe Continuation; Timetable Conflict |
-| Final Delivery | Time to Top Up; Deadline First; Priority Final Stop |
+| `POST /simulator/load` | Atomically load/reset a scenario |
+| `POST /simulator/start`, `/pause`, `/tick` | Run-scoped clock controls |
+| `GET /fleet`, `/simulator/state` | Authoritative full-run snapshot |
+| `POST /journeys/plan` | Queue coordinated fleet planning |
+| `POST /vehicles/{vin}/journeys/plan` | Queue normal/recovery alternatives |
+| `GET /jobs/{id}`, `POST /jobs/{id}/cancel` | Inspect/cancel solver work |
+| `POST /journeys/{id}/approve` | Approve exact run, plan ID and version |
+| `POST /journeys/{id}/cancel` | Cancel remaining work, retain physical release |
+| `PUT /resources/{id}` | Update a station or depot power through the same authority |
+| `POST /telemetry` | Run/sequence-fenced energy and health update |
+| `GET /day-view?day=YYYY-MM-DD` | Full IST day tariffs and port history |
+| `GET /health/live`, `/health/ready` | Process and MongoDB readiness |
 
-## Core endpoints
+This is an intentional schema/API revision. Old independent trip, charging-plan and reservation CRUD routes are retired. Old collection contents are preserved but do not participate in v2 simulation. Do not run old and new scheduling writers against the same operational fleet. See [migration and removed logic](docs/migration.md).
 
-### Fleet data
-
-```text
-POST  /api/v1/vehicles
-GET   /api/v1/vehicles
-GET   /api/v1/vehicles/{vin}/latest
-GET   /api/v1/vehicles/{vin}/readiness
-POST  /api/v1/trips
-GET   /api/v1/trips/vehicle/{vin}
-PATCH /api/v1/trips/{trip_id}
-```
-
-### Charging operations
-
-```text
-POST  /api/v1/chargers
-GET   /api/v1/chargers
-POST  /api/v1/depots
-GET   /api/v1/depots
-POST  /api/v1/tariffs
-GET   /api/v1/tariffs
-POST  /api/v1/reservations
-GET   /api/v1/reservations
-PATCH /api/v1/reservations/{reservation_id}
-GET   /api/v1/charging/recommendations/{vin}
-GET   /api/v1/charging/manager-decisions/{vin}
-POST  /api/v1/charging/manager-decisions/{vin}/{choice}
-POST  /api/v1/charging/plans/{vin}
-POST  /api/v1/charging/plans/{plan_id}/approve
-POST  /api/v1/charging/plans/{plan_id}/reject
-POST  /api/v1/charging/plans/{plan_id}/cancel
-```
-
-### Simulation and monitoring
-
-```text
-POST /api/v1/telemetry
-POST /api/v1/simulator/scenarios
-POST /api/v1/simulator/start
-POST /api/v1/simulator/stop
-GET  /api/v1/simulator/status
-GET  /api/v1/fleet/overview
-GET  /api/v1/fleet/manager
-GET  /api/v1/fleet/vehicles
-GET  /api/v1/alerts
-PATCH /api/v1/alerts/{dedupe_key}
-GET  /api/v1/health/live
-GET  /api/v1/health/ready
-```
-
-## Tests
-
-The Python and frontend regression suites cover the current demo workflow. Coverage includes full timetables, disruptions, manager choices, duplicate/replayed telemetry, conflicting reservations, approval responsiveness and charger-route display. These are functional checks, not production performance measurements. Node.js is required for the frontend tests; Python integration tests use an in-memory MongoDB substitute and service doubles.
-
-```powershell
-pip install -r requirements.txt -r requirements-dev.txt
-python -m pytest -q
-python -m unittest discover -s tests -v
-python -m ruff check app tests scripts
-python -m ruff format --check app tests scripts
-python -m compileall app tests scripts
-node --check app/static/app.js
-node --test tests/test_frontend.cjs
-```
-
-Manager decision choices are `accept-delay` and `deliver-now`; requests must include the reviewed decision context shown in OpenAPI. A stale approval requires a fresh review rather than silently changing the booked option.
-
-## Railway configuration
-
-Railway hosts one application service with MongoDB, Redis and Kafka as backing services. Set their connection values in Railway variables:
-
-```env
-MONGODB_URI=mongodb://...
-REDIS_URL=redis://...
-KAFKA_BOOTSTRAP_SERVERS=...
-KAFKA_SECURITY_PROTOCOL=PLAINTEXT
-KAFKA_SASL_MECHANISM=
-KAFKA_USERNAME=
-KAFKA_PASSWORD=
-
-RESERVE_RANGE_KM=15
-CHARGE_SOON_MARGIN_KM=15
-CHARGING_DEADLINE_BUFFER_MINUTES=20
-SCHEDULER_SLOT_MINUTES=1
-CHARGING_EFFICIENCY=0.92
-```
-
-For Railway Simple Kafka, `KAFKA_BOOTSTRAP_SERVERS` can reference the broker's private URL:
-
-```env
-KAFKA_BOOTSTRAP_SERVERS=${{kafka-broker.KAFKA_URL}}
-```
-
-## Operational boundaries and measurements
-
-Deploy **one replica and one Uvicorn worker**, as configured in [railway.toml](railway.toml). Process-local locks coordinate simulation mutations, approvals and reservations; physical port and power transitions remain ordered while independent vehicle telemetry writes can run concurrently. These are not distributed locks. Multiple API replicas need distributed coordination or transactional scheduling. A deployment restart pauses simulation; press Start to resume the stored fleet.
-
-This is a disposable, unauthenticated hackathon demo, not a tenant-isolated production fleet service. Seed resets only SIM vehicles and their records. Kafka generation IDs and current-event checks prevent old runs from changing new plans. Redis is a latest-state cache; MongoDB remains authoritative. Publication failures stop simulation visibly; resubmitting an event repairs delivery without inserting duplicate telemetry.
-
-Routes are straight-line geography at a modelled 35 km/h, not road routing or live traffic predictions. The SVG map uses simulated coordinates and the dashboard polls approximately every three seconds. Charger coordinates are distinct locations around Bengaluru representing fictional stations. Charging uses a shared 80%/90% taper curve and 92% efficiency. The normal policy protects 15 km reserve and a 20-minute traffic buffer; new proposals also budget five simulated minutes for review. Deadlines vary by scenario and the fixed timetable includes later deliveries and charging. Overheating and unexpected-long-trip presets are absent from the current menu. Prices use metered grid kWh and applicable tariffs, with an average-rate estimate across the charging window.
-
-The portal accepts 10-100 vehicles and is demonstrated with 10. The simulator API accepts up to 1,000 for experiments; this is not validated capacity. No production throughput, latency percentiles, availability, financial savings or emissions reduction has been established. Use the [current scenario guide](docs/manager-demo.md) for the present demo. Future work includes real vehicle and charger feeds, road-based travel estimates, authenticated fleet access, durable coordination and a measured operator pilot.
-
-Reproducible live acceptance (mutates the disposable SIM fleet):
+## Verification
 
 ```sh
-python scripts/live_acceptance.py --base-url https://evfleetmanagementservice-production.up.railway.app --output evidence.json
-python scripts/live_scenarios.py --base-url https://evfleetmanagementservice-production.up.railway.app --output scenarios.json
-python scripts/demo_load.py --base-url https://evfleetmanagementservice-production.up.railway.app --output load.json --seconds 60 --vehicles 10 50
+pip install -r requirements-dev.txt
+python -m pytest -q
+node --test tests/test_frontend.cjs
+ruff check app tests scripts
 ```
 
-## Repository layout and data model
+Set `FLEET_TEST_MONGO` to a disposable local MongoDB URI to enable the real-database tests. They create uniquely named test databases and delete only those databases. These tests include competing OS-process approvals, a crash immediately after commit, retry, reset fencing, HTTP execution and solver-process cancellation. Without that environment variable they are explicitly skipped.
 
-- `app/api/v1/`: fleet, charging, telemetry, simulator and health endpoints.
-- `app/models/`: validated API contracts and persisted operational records.
-- `app/services/`: readiness, scheduling, tariffs, reservations, journey tracking and simulation.
-- `app/static/`: the current manager portal.
-- `tests/`: domain, API, complete-journey and frontend regression tests.
-- `scripts/`: repeatable live journey, scenario and load checks.
-- `docs/manager-demo.md`: the current panel demonstration guide.
+The arithmetic fixture buys 28 kWh at ₹20 and 15 kWh at ₹10 for **₹710**, meeting B's 10:40 deadline. Independent enumeration verifies that buying 13 + 30 arrives at 11:10 and buying all 43 at the expensive charger costs ₹860. Additional tests cover taper billing, tariff precedence, fixed order, delivery-first/after-last charging, alternatives, reserves, service, contention, power loss, both scenarios and tick-size invariance.
 
-MongoDB stores vehicles, trips, depots, chargers, tariffs, reservations, charging plans, telemetry, alerts, simulation state, simulation events and manager decisions. These collections support the current workflow. Journey history is embedded in telemetry. Run IDs, event IDs, sequence numbers, processing markers, parent plans and handover links are required for replay protection and operational continuity.
+For reproducible timing and status counts:
 
-Charger occupancy counts are calculated from reservations when read, not saved as charger configuration. The unused telemetry `evt` and reservation `grace_period_minutes` fields have been removed from the models. Older documents remain readable; loading a scenario replaces its SIM telemetry and reservations with the current schema and refreshes its charger configuration. Historical non-SIM records are not rewritten by a demo reset.
+```sh
+python scripts/benchmark.py --counts 12 24 --seconds 5 --output benchmark.json
+```
 
-The older `LOW_BATTERY_BEFORE_TRIP` and `UNREACHABLE_CHARGER` presets remain for journey acceptance and edge-case regression coverage; the portal presents the current 15 scenarios. Earlier phase notes and one-off sample seed scripts are available in Git history.
+See [verification results](docs/verification.md) for the measured environment and limits. No remote deployment is performed by the test or benchmark scripts.

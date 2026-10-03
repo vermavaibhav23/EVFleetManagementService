@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#103d36" />
     <title>EV Fleet</title>
-    <link rel="stylesheet" href="/static/styles.css?v=journey-1" />
+    <link rel="stylesheet" href="/static/styles.css?v=journey-2-map" />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to fleet workspace</a>
@@ -25,20 +25,38 @@
     <main id="main">
       <section class="control-band" aria-label="Global demo controls">
         <label
-          >Scenario<select id="scenario"><optgroup label="Normal Operations"><option value="NORMAL_DAY">Smooth Deliveries</option><option value="NORMAL_LATER">Charging Needed Later</option></optgroup><optgroup label="Charger Scenarios"><option value="CHARGER_RELAXED">Busy Chargers - Save Money</option><option value="CHARGER_CONGESTION">Busy Chargers - Protect Deadline</option><option value="CHARGER_FAILURE">Charger Unavailable / Offline / Faulty / Incompatible Connector</option><option value="CHARGER_INTERRUPTION">Charger Fails During Journey</option><option value="QUEUE_OVERRUN">Queue Takes Longer</option></optgroup><optgroup label="Non-final Deliveries"><option value="NONFINAL_RELAXED">Charge Ahead for Later Stops</option><option value="NONFINAL_TIGHT">Tight Next Deadline</option><option value="NONFINAL_PRIORITY">Priority Delivery - Reserve Exception</option><option value="NONFINAL_CONTINUATION">Priority Delivery - No Safe Continuation</option><option value="NONFINAL_CONFLICT">Timetable Conflict</option></optgroup><optgroup label="Final Delivery"><option value="FINAL_RELAXED">Time to Top Up</option><option value="FINAL_TIGHT">Deadline First</option><option value="FINAL_PRIORITY">Priority Final Stop</option></optgroup></select></label
+          >Scenario<select id="scenario">
+            <option value="NORMAL_DAY">Normal day</option>
+            <option value="EDGE_CASE_DAY">Edge-case day</option>
+          </select></label
         >
-        <label id="variant-control" hidden>Variation<select id="scenario-variant"></select></label><label
+        <label
           >Fleet size<input
             id="vehicle-count"
             type="number"
-            min="10"
+            min="1"
             max="100"
-            value="10"
+            value="12"
         /></label>
-        <button id="seed-button">Load / reset</button
+        <label>Seed<input id="seed" type="number" value="42" /></label
+        ><label
+          >Start (IST)<input
+            id="start"
+            type="datetime-local"
+            value="2026-10-04T08:00" /></label
+        ><button id="seed-button">Load / reset</button
         ><span class="control-divider"></span>
         <button id="start-button" class="primary">▶ Start</button
         ><button id="stop-button">Ⅱ Pause</button>
+        <label
+          >Speed<select id="speed">
+            <option value="1">1×</option>
+            <option value="10">10×</option>
+            <option value="30" selected>30×</option>
+            <option value="60">60×</option>
+          </select></label
+        ><button id="step">+5 min</button
+        ><button id="plan-fleet">Plan fleet</button>
         <div id="sim-clock" class="clock">Loading simulation clock…</div>
       </section>
       <div id="message" class="message" role="status" aria-live="polite"></div>
@@ -77,11 +95,11 @@
               ><select id="readiness-filter">
                 <option value="all">All readiness states</option>
                 <option value="attention">Needs attention</option>
-                <option value="NORMAL">Normal</option>
-                <option value="NEEDS_CHARGING">Charging required</option>
+                <option value="NORMAL">Journey approved</option>
+                <option value="NEEDS_CHARGING">Needs planning / review</option>
                 <option value="EMERGENCY">Energy emergency</option>
-                <option value="BLOCKED">Charging blocked</option>
-                <option value="COMPLETE">Delivery complete</option>
+                <option value="BLOCKED">Health blocked</option>
+                <option value="COMPLETE">Returned to depot</option>
               </select></label
             >
             <div id="attention-list" class="attention-list">
@@ -97,7 +115,12 @@
               <span class="badge neutral">Straight-line demo</span>
             </div>
             <div class="map-tools">
-              <button data-map="fit">Fit fleet</button><button data-map="in" aria-label="Zoom in" title="Zoom in">+</button><button data-map="out" aria-label="Zoom out" title="Zoom out">−</button>
+              <button data-map="fit">Fit fleet</button
+              ><button data-map="in" aria-label="Zoom in" title="Zoom in">
+                +</button
+              ><button data-map="out" aria-label="Zoom out" title="Zoom out">
+                −
+              </button>
             </div>
             <div class="map-shell">
               <svg
@@ -164,40 +187,39 @@
         </div>
       </section>
       <section id="chargers-panel" data-panel="chargers" hidden>
-        <div id="charger-cards" class="charger-grid"></div>
+        <section class="workspace">
+          <div class="section-heading">
+            <h2>Daily tariffs &amp; port timetable</h2>
+            <div class="actions">
+              <button id="prev-day" aria-label="Previous day">←</button
+              ><label>Day (IST) <input id="day" type="date" /></label
+              ><button id="next-day" aria-label="Next day">→</button>
+            </div>
+          </div>
+          <p class="footnote">
+            00:00–24:00 IST · dotted: proposed · blue: confirmed · striped:
+            active / releasing · grey: completed · dashed grey: cancelled · red
+            line: simulation time
+          </p>
+          <div id="charts">
+            <p class="empty">Load a scenario to see stations and tariffs.</p>
+          </div>
+        </section>
       </section>
       <section id="plans-panel" data-panel="plans" hidden>
-        <div class="workspace decision-header">
-          <div>
-            <h2 id="decision-title">Select a vehicle</h2>
-            <p id="decision-subtitle"></p>
-          </div>
-          <div id="decision-actions" class="actions"></div>
-        </div>
-        <div id="option-cards" class="option-grid"></div>
-        <div id="decision-reasoning"></div>
+        <section class="workspace" id="review">
+          <p class="empty">Select a vehicle to review its complete journey.</p>
+        </section>
+        <section class="workspace history">
+          <div class="section-heading"><h2>Planner jobs</h2></div>
+          <div id="jobs"></div>
+        </section>
         <section class="workspace history">
           <div class="section-heading">
-            <div>
-              <h2>Plans &amp; outcomes</h2>
-            </div>
-            <span class="badge neutral">Current demo run</span>
+            <h2>Plans &amp; outcomes</h2>
+            <span class="badge neutral">Current run</span>
           </div>
-
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Vehicle / station</th>
-                  <th>Decision</th>
-                  <th>Charging window</th>
-                  <th>Target / cost</th>
-                  <th>Outcome &amp; action</th>
-                </tr>
-              </thead>
-              <tbody id="plans-body"></tbody>
-            </table>
-          </div>
+          <div id="history"></div>
         </section>
       </section>
       <footer>
@@ -205,6 +227,6 @@
         ><span id="freshness">Waiting for first snapshot</span>
       </footer>
     </main>
-    <script src="/static/app.js?v=journey-1"></script>
+    <script src="/static/app.js?v=journey-2-map"></script>
   </body>
 </html>

@@ -1833,23 +1833,275 @@ details summary {
 }
 
 /* Event-backed progress for the selected delivery leg. */
-.key.customer-diamond { width:9px; height:9px; background:#8954de; border:0; border-radius:0; transform:rotate(45deg); }
-.journey-progress { margin-top:18px; padding-top:16px; border-top:1px solid #dce6eb; }
-.journey-progress h3 { margin:0 0 6px; font-size:15px; }
-.journey-leg,.journey-extra { margin:5px 0; font-size:12px; color:#5d7380; }
-.journey-status { display:block; color:#16765e; margin:10px 0; }
-.journey-status.warning { color:#b14822; }
-.journey-steps { list-style:none; padding:0; margin:10px 0; max-height:310px; overflow:auto; }
-.journey-steps li { display:grid; grid-template-columns:22px 1fr auto; gap:5px; align-items:start; padding:8px 6px; border-left:2px solid #dce6eb; margin-left:8px; font-size:12px; }
-.journey-steps li.current { background:#eaf4ff; border-color:#318ae0; border-radius:5px; font-weight:600; }
-.journey-steps li.stage-charging.current { background:#dcf8e9; border-color:#18a970; }
-.journey-steps li.done { color:#16765e; }
-.journey-steps li.warning { color:#a64920; background:#fff5e8; }
-.journey-steps li.upcoming { color:#94a3ac; }
-.journey-steps small { display:block; margin-top:3px; font-size:10px; font-weight:400; }
-.journey-steps time { font-size:9px; color:#6b7f8d; }
-.journey-symbol { text-align:center; }
-.journey-progress details { font-size:11px; }
-.control-band select#scenario { max-width:290px; }
-.control-band [hidden] { display:none !important; }
-@media (prefers-reduced-motion:no-preference) { .stage-charging.current .journey-symbol { animation:chargePulse 1.8s ease-in-out infinite; } }
+.key.customer-diamond {
+  width: 9px;
+  height: 9px;
+  background: #8954de;
+  border: 0;
+  border-radius: 0;
+  transform: rotate(45deg);
+}
+.journey-progress {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid #dce6eb;
+}
+.journey-progress h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+.journey-leg,
+.journey-extra {
+  margin: 5px 0;
+  font-size: 12px;
+  color: #5d7380;
+}
+.journey-status {
+  display: block;
+  color: #16765e;
+  margin: 10px 0;
+}
+.journey-status.warning {
+  color: #b14822;
+}
+.journey-steps {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0;
+  max-height: 310px;
+  overflow: auto;
+}
+.journey-steps li {
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  gap: 5px;
+  align-items: start;
+  padding: 8px 6px;
+  border-left: 2px solid #dce6eb;
+  margin-left: 8px;
+  font-size: 12px;
+}
+.journey-steps li.current {
+  background: #eaf4ff;
+  border-color: #318ae0;
+  border-radius: 5px;
+  font-weight: 600;
+}
+.journey-steps li.stage-charging.current {
+  background: #dcf8e9;
+  border-color: #18a970;
+}
+.journey-steps li.done {
+  color: #16765e;
+}
+.journey-steps li.warning {
+  color: #a64920;
+  background: #fff5e8;
+}
+.journey-steps li.upcoming {
+  color: #94a3ac;
+}
+.journey-steps small {
+  display: block;
+  margin-top: 3px;
+  font-size: 10px;
+  font-weight: 400;
+}
+.journey-steps time {
+  font-size: 9px;
+  color: #6b7f8d;
+}
+.journey-symbol {
+  text-align: center;
+}
+.journey-progress details {
+  font-size: 11px;
+}
+.control-band select#scenario {
+  max-width: 290px;
+}
+.control-band [hidden] {
+  display: none !important;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .stage-charging.current .journey-symbol {
+    animation: chargePulse 1.8s ease-in-out infinite;
+  }
+}
+
+/* Whole-journey review and daily timetables extend the original portal. */
+.vehicle-pin > line,
+.vehicle-pin > circle {
+  pointer-events: none;
+}
+#seed {
+  width: 48px;
+}
+#start {
+  max-width: 165px;
+}
+#review,
+#charts,
+.station {
+  min-width: 0;
+}
+.controls,
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 14px 0;
+}
+.section-head {
+  justify-content: space-between;
+}
+.controls label {
+  font-size: 12px;
+  color: var(--muted);
+}
+.plan {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 18px;
+  margin: 18px 0;
+}
+.plan.chosen {
+  border: 2px solid var(--green);
+  padding: 17px;
+}
+.plan-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 16px;
+}
+.plan-head input {
+  accent-color: var(--green);
+}
+.plan-head label {
+  font-weight: 600;
+}
+.plan small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.plan .price {
+  font-size: 24px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.plan .price small {
+  font-size: 11px;
+  font-weight: 400;
+}
+.journey-metrics {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin: 18px 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.journey-metrics b {
+  display: block;
+  color: var(--ink);
+  margin-top: 5px;
+}
+.plan .table-wrap {
+  margin: 16px 0;
+}
+.plan table {
+  min-width: 750px;
+}
+.bad {
+  color: #a33222;
+  background: #fff0eb;
+  padding: 10px;
+  border-radius: 6px;
+}
+.ack {
+  display: block;
+  background: #fff3d8;
+  padding: 12px;
+  margin: 12px 0;
+}
+.station {
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+  margin-top: 20px;
+}
+.station h3 {
+  margin: 4px 0;
+}
+.chart-scroll {
+  overflow-x: auto;
+  margin: 8px 0;
+}
+.chart {
+  width: 100%;
+  min-width: 850px;
+  display: block;
+}
+.chart text {
+  font-family: Inter, "Segoe UI", sans-serif;
+  fill: #516675;
+  font-size: 13px;
+}
+.rates {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 12px 0;
+}
+.rates span {
+  font-size: 12px;
+  background: var(--soft);
+  border-radius: 5px;
+  padding: 6px 9px;
+}
+.history-row {
+  display: grid;
+  grid-template-columns: 100px 110px 1fr;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.statusline {
+  font-size: 12px;
+  padding: 12px;
+  background: var(--soft);
+  margin: 10px 0;
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+.statusline p {
+  margin: 8px 0 0;
+}
+#day {
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+@media (max-width: 650px) {
+  .plan-head {
+    flex-wrap: wrap;
+  }
+  .journey-metrics {
+    gap: 12px;
+  }
+  .plan {
+    padding: 12px;
+  }
+  .plan.chosen {
+    padding: 11px;
+  }
+  .history-row {
+    grid-template-columns: 85px 1fr;
+  }
+  .history-row span:last-child {
+    grid-column: 1/-1;
+  }
+}

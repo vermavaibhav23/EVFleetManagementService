@@ -1,46 +1,13 @@
-import json
-from contextlib import suppress
-from typing import Any
-
-from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
+from aiokafka import AIOKafkaConsumer
 
 from app.core.config import settings
 
 
-class KafkaBus:
-    def __init__(self) -> None:
-        self._producer = AIOKafkaProducer(**settings.kafka_config)
-
-    async def start(self) -> None:
-        try:
-            await self._producer.start()
-        except Exception:
-            with suppress(Exception):
-                await self._producer.stop()
-            raise
-
-    async def stop(self) -> None:
-        await self._producer.stop()
-
-    async def health(self) -> None:
-        await self._producer.send_and_wait("fleet.health.v1", b'{"type":"readiness"}')
-
-    async def publish(
-        self, topic: str, payload: dict[str, Any], key: str | None = None
-    ) -> None:
-        await self._producer.send_and_wait(
-            topic,
-            json.dumps(payload, default=str).encode("utf-8"),
-            key=key.encode("utf-8") if key else None,
-        )
-
-
-def build_consumer(topic: str) -> AIOKafkaConsumer:
+def build_consumer(topic):
     return AIOKafkaConsumer(
         topic,
         group_id=settings.kafka_consumer_group,
         enable_auto_commit=False,
         auto_offset_reset="earliest",
-        value_deserializer=lambda value: json.loads(value.decode("utf-8")),
         **settings.kafka_config,
     )

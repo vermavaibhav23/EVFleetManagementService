@@ -1,0 +1,1311 @@
+{
+  "recorded_at": "2026-10-03T22:36:49.282192+00:00",
+  "results": [
+    {
+      "scenario": "NORMAL_DAY",
+      "vehicles": 12,
+      "per_vehicle_seconds": 5.0,
+      "elapsed_seconds": 28.220752399996854,
+      "statuses": {
+        "OPTIMAL_MODEL": 7,
+        "FEASIBLE": 5
+      },
+      "results": [
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 2.8586326999939047,
+          "vin": "SIM-002",
+          "cost": 32.08808491666667,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 2.854870999988634,
+            "phases": [
+              0,
+              0
+            ],
+            "variables": 872,
+            "binaries": 627,
+            "gap": 0.0,
+            "bound": 32.088084929290915,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 4.982258100004401,
+          "vin": "SIM-004",
+          "cost": 60.08989366666667,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 4.976068900024984,
+            "phases": [
+              1,
+              0
+            ],
+            "variables": 1088,
+            "binaries": 787,
+            "gap": 0.3550939941814637,
+            "bound": 38.75233334011148,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.0043735000072047114,
+          "vin": "SIM-003",
+          "cost": 0,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "proof": "Nonnegative-cost lower bound; direct route, earliest service",
+            "elapsed_seconds": 0,
+            "variables": 0,
+            "binaries": 0,
+            "gap": 0
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.005565800005570054,
+          "vin": "SIM-001",
+          "cost": 0,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "proof": "Nonnegative-cost lower bound; direct route, earliest service",
+            "elapsed_seconds": 0,
+            "variables": 0,
+            "binaries": 0,
+            "gap": 0
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 5.068771299964283,
+          "vin": "SIM-008",
+          "cost": 49.981883979264694,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 5.067457899975125,
+            "phases": [
+              0,
+              1
+            ],
+            "variables": 1092,
+            "binaries": 791,
+            "gap": 0.0,
+            "bound": 49.981873979265075,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.0011267999652773142,
+          "vin": "SIM-005",
+          "cost": 0,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "proof": "Nonnegative-cost lower bound; direct route, earliest service",
+            "elapsed_seconds": 0,
+            "variables": 0,
+            "binaries": 0,
+            "gap": 0
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.0010249000042676926,
+          "vin": "SIM-007",
+          "cost": 0,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "proof": "Nonnegative-cost lower bound; direct route, earliest service",
+            "elapsed_seconds": 0,
+            "variables": 0,
+            "binaries": 0,
+            "gap": 0
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.001074400031939149,
+          "vin": "SIM-006",
+          "cost": 0,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "proof": "Nonnegative-cost lower bound; direct route, earliest service",
+            "elapsed_seconds": 0,
+            "variables": 0,
+            "binaries": 0,
+            "gap": 0
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 5.061295400024392,
+          "vin": "SIM-012",
+          "cost": 61.76414229828307,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 5.0566204999922775,
+            "phases": [
+              0,
+              1
+            ],
+            "variables": 1096,
+            "binaries": 795,
+            "gap": 0.0,
+            "bound": 61.76415229662915,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 5.057745700003579,
+          "vin": "SIM-011",
+          "cost": 67.57666690266805,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 5.05651389999548,
+            "phases": [
+              0,
+              1
+            ],
+            "variables": 1100,
+            "binaries": 799,
+            "gap": 0.0,
+            "bound": 67.5766718899341,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 5.134241499996278,
+          "vin": "SIM-009",
+          "cost": 16.54121733333333,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 5.1246474999934435,
+            "phases": [
+              0,
+              1
+            ],
+            "variables": 1104,
+            "binaries": 803,
+            "gap": 0.0,
+            "bound": 16.541215460143235,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.007939400034956634,
+          "vin": "SIM-010",
+          "cost": 0,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "proof": "Nonnegative-cost lower bound; direct route, earliest service",
+            "elapsed_seconds": 0,
+            "variables": 0,
+            "binaries": 0,
+            "gap": 0
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "EDGE_CASE_DAY",
+      "vehicles": 12,
+      "per_vehicle_seconds": 5.0,
+      "elapsed_seconds": 36.17073509999318,
+      "statuses": {
+        "INFEASIBLE_MODEL": 3,
+        "FEASIBLE": 7,
+        "OPTIMAL_MODEL": 2
+      },
+      "results": [
+        {
+          "status": "INFEASIBLE_MODEL",
+          "reason": "The problem is infeasible. (HiGHS Status 8: model_status is Infeasible; primal_status is None)",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.015300400031264871,
+          "vin": "SIM-001"
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 5.0542480000294745,
+          "vin": "SIM-002",
+          "cost": 263.28150658333334,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 5.053136700007599,
+            "phases": [
+              0,
+              1
+            ],
+            "variables": 1104,
+            "binaries": 803,
+            "gap": 0.0,
+            "bound": 263.28150666920885,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 5.072987999999896,
+          "vin": "SIM-006",
+          "cost": 259.0051553333333,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 5.070609199989121,
+            "phases": [
+              0,
+              1
+            ],
+            "variables": 1336,
+            "binaries": 979,
+            "gap": 0.0,
+            "bound": 259.0051704757662,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "INFEASIBLE_MODEL",
+          "reason": "The problem is infeasible. (HiGHS Status 8: model_status is Infeasible; primal_status is None)",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.5373691999702714,
+          "vin": "SIM-003"
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 5.062029300024733,
+          "vin": "SIM-012",
+          "cost": 61.76415229745923,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 5.060823199979495,
+            "phases": [
+              0,
+              1
+            ],
+            "variables": 1340,
+            "binaries": 983,
+            "gap": 0.0,
+            "bound": 61.76415229745421,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 5.045117000001483,
+          "vin": "SIM-004",
+          "cost": 50.607080805555555,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 5.0443087000167,
+            "phases": [
+              0,
+              1
+            ],
+            "variables": 1344,
+            "binaries": 987,
+            "gap": 0.0,
+            "bound": 50.60708082946175,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 5.202182100038044,
+          "vin": "SIM-008",
+          "cost": 49.98188397926526,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 5.201368000009097,
+            "phases": [
+              0,
+              1
+            ],
+            "variables": 1568,
+            "binaries": 1155,
+            "gap": 0.0,
+            "bound": 49.981873979266595,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.0011803999659605324,
+          "vin": "SIM-005",
+          "cost": 0,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "proof": "Nonnegative-cost lower bound; direct route, earliest service",
+            "elapsed_seconds": 0,
+            "variables": 0,
+            "binaries": 0,
+            "gap": 0
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.0006199999479576945,
+          "vin": "SIM-007",
+          "cost": 0,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "proof": "Nonnegative-cost lower bound; direct route, earliest service",
+            "elapsed_seconds": 0,
+            "variables": 0,
+            "binaries": 0,
+            "gap": 0
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 5.088212099974044,
+          "vin": "SIM-011",
+          "cost": 67.57667190177713,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 5.087284799956251,
+            "phases": [
+              0,
+              1
+            ],
+            "variables": 1572,
+            "binaries": 1159,
+            "gap": 0.0,
+            "bound": 67.57667181237306,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 5.065188099979423,
+          "vin": "SIM-009",
+          "cost": 16.541156278556024,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 5.064137900015339,
+            "phases": [
+              0,
+              1
+            ],
+            "variables": 1592,
+            "binaries": 1179,
+            "gap": 0.0,
+            "bound": 16.541217460144026,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "INFEASIBLE_MODEL",
+          "reason": "Vehicle requires physical assistance or health clearance",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 5.299982149153948e-06,
+          "vin": "SIM-010"
+        }
+      ]
+    },
+    {
+      "scenario": "NORMAL_DAY",
+      "vehicles": 24,
+      "per_vehicle_seconds": 5.0,
+      "elapsed_seconds": 63.70954819995677,
+      "statuses": {
+        "OPTIMAL_MODEL": 14,
+        "FEASIBLE": 10
+      },
+      "results": [
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 2.39143050002167,
+          "vin": "SIM-002",
+          "cost": 32.08808491666667,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 2.390676600043662,
+            "phases": [
+              0,
+              0
+            ],
+            "variables": 872,
+            "binaries": 627,
+            "gap": 0.0,
+            "bound": 32.088084929290915,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 5.069150199997239,
+          "vin": "SIM-004",
+          "cost": 50.607080805555555,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 5.068456900015008,
+            "phases": [
+              0,
+              1
+            ],
+            "variables": 1088,
+            "binaries": 787,
+            "gap": 0.0,
+            "bound": 50.60708082944953,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.0006626999820582569,
+          "vin": "SIM-003",
+          "cost": 0,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "proof": "Nonnegative-cost lower bound; direct route, earliest service",
+            "elapsed_seconds": 0,
+            "variables": 0,
+            "binaries": 0,
+            "gap": 0
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.0007195000071078539,
+          "vin": "SIM-001",
+          "cost": 0,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "proof": "Nonnegative-cost lower bound; direct route, earliest service",
+            "elapsed_seconds": 0,
+            "variables": 0,
+            "binaries": 0,
+            "gap": 0
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 4.285313600033987,
+          "vin": "SIM-008",
+          "cost": 49.981873866666675,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 4.284379800024908,
+            "phases": [
+              0,
+              0
+            ],
+            "variables": 1304,
+            "binaries": 947,
+            "gap": 0.0,
+            "bound": 49.98187397926637,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.0008170999935828149,
+          "vin": "SIM-005",
+          "cost": 0,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "proof": "Nonnegative-cost lower bound; direct route, earliest service",
+            "elapsed_seconds": 0,
+            "variables": 0,
+            "binaries": 0,
+            "gap": 0
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.0007812000112608075,
+          "vin": "SIM-007",
+          "cost": 0,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "proof": "Nonnegative-cost lower bound; direct route, earliest service",
+            "elapsed_seconds": 0,
+            "variables": 0,
+            "binaries": 0,
+            "gap": 0
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.0007243000436574221,
+          "vin": "SIM-006",
+          "cost": 0,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "proof": "Nonnegative-cost lower bound; direct route, earliest service",
+            "elapsed_seconds": 0,
+            "variables": 0,
+            "binaries": 0,
+            "gap": 0
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 5.040589999989606,
+          "vin": "SIM-012",
+          "cost": 61.76415129745931,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 5.0396751999505796,
+            "phases": [
+              0,
+              1
+            ],
+            "variables": 1308,
+            "binaries": 951,
+            "gap": 0.0,
+            "bound": 61.76415129745931,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 5.042521600029431,
+          "vin": "SIM-011",
+          "cost": 67.5766719026679,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 5.041333300003316,
+            "phases": [
+              0,
+              1
+            ],
+            "variables": 1312,
+            "binaries": 955,
+            "gap": 0.0,
+            "bound": 67.57667190266787,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 3.8682105999905616,
+          "vin": "SIM-009",
+          "cost": 16.54121733333333,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 3.8674356999690644,
+            "phases": [
+              0,
+              0
+            ],
+            "variables": 1316,
+            "binaries": 959,
+            "gap": 0.0,
+            "bound": 16.541217460138103,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.0007013999857008457,
+          "vin": "SIM-010",
+          "cost": 0,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "proof": "Nonnegative-cost lower bound; direct route, earliest service",
+            "elapsed_seconds": 0,
+            "variables": 0,
+            "binaries": 0,
+            "gap": 0
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 5.061688599991612,
+          "vin": "SIM-014",
+          "cost": 47.22923475,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 5.060568600019906,
+            "phases": [
+              0,
+              1
+            ],
+            "variables": 1532,
+            "binaries": 1119,
+            "gap": 3.008910004436285e-16,
+            "bound": 47.2292447904715,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 5.19693679996999,
+          "vin": "SIM-013",
+          "cost": 18.190982238098986,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 5.194920199981425,
+            "phases": [
+              0,
+              1
+            ],
+            "variables": 1536,
+            "binaries": 1123,
+            "gap": 0.0,
+            "bound": 18.19098223809874,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 6.738496700010728,
+          "vin": "SIM-015",
+          "cost": 9.860079333333315,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 6.73574189998908,
+            "phases": [
+              0,
+              1
+            ],
+            "variables": 1540,
+            "binaries": 1127,
+            "gap": 0.0,
+            "bound": 9.860079451252602,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.00631309999153018,
+          "vin": "SIM-016",
+          "cost": 0,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "proof": "Nonnegative-cost lower bound; direct route, earliest service",
+            "elapsed_seconds": 0,
+            "variables": 0,
+            "binaries": 0,
+            "gap": 0
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 5.0837374000111595,
+          "vin": "SIM-020",
+          "cost": 60.70936413333336,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 5.082209099957254,
+            "phases": [
+              1,
+              1
+            ],
+            "variables": 1544,
+            "binaries": 1131,
+            "gap": 0.13807884707955387,
+            "bound": 52.32667657964348,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 6.056273400026839,
+          "vin": "SIM-019",
+          "cost": 8.086423884547537,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 6.054537800024264,
+            "phases": [
+              0,
+              1
+            ],
+            "variables": 1552,
+            "binaries": 1139,
+            "gap": 0.0,
+            "bound": 8.086423884547457,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.0018859999836422503,
+          "vin": "SIM-018",
+          "cost": 0,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "proof": "Nonnegative-cost lower bound; direct route, earliest service",
+            "elapsed_seconds": 0,
+            "variables": 0,
+            "binaries": 0,
+            "gap": 0
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.0016337999841198325,
+          "vin": "SIM-017",
+          "cost": 0,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "proof": "Nonnegative-cost lower bound; direct route, earliest service",
+            "elapsed_seconds": 0,
+            "variables": 0,
+            "binaries": 0,
+            "gap": 0
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 4.833012700022664,
+          "vin": "SIM-021",
+          "cost": 72.09057479999998,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 4.830932500015479,
+            "phases": [
+              1,
+              0
+            ],
+            "variables": 1584,
+            "binaries": 1171,
+            "gap": 0.11188983789201577,
+            "bound": 64.02437208262137,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 4.892217799962964,
+          "vin": "SIM-024",
+          "cost": 43.08570106874616,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 4.890138799964916,
+            "phases": [
+              1,
+              0
+            ],
+            "variables": 1588,
+            "binaries": 1175,
+            "gap": 0.42819074843120963,
+            "bound": 24.63678342112759,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.0016812999965623021,
+          "vin": "SIM-022",
+          "cost": 0,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "proof": "Nonnegative-cost lower bound; direct route, earliest service",
+            "elapsed_seconds": 0,
+            "variables": 0,
+            "binaries": 0,
+            "gap": 0
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.001580699987243861,
+          "vin": "SIM-023",
+          "cost": 0,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "proof": "Nonnegative-cost lower bound; direct route, earliest service",
+            "elapsed_seconds": 0,
+            "variables": 0,
+            "binaries": 0,
+            "gap": 0
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "EDGE_CASE_DAY",
+      "vehicles": 24,
+      "per_vehicle_seconds": 5.0,
+      "elapsed_seconds": 76.11069560004398,
+      "statuses": {
+        "INFEASIBLE_MODEL": 3,
+        "FEASIBLE": 14,
+        "OPTIMAL_MODEL": 7
+      },
+      "results": [
+        {
+          "status": "INFEASIBLE_MODEL",
+          "reason": "The problem is infeasible. (HiGHS Status 8: model_status is Infeasible; primal_status is None)",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.012808999978005886,
+          "vin": "SIM-001"
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 5.20764809998218,
+          "vin": "SIM-002",
+          "cost": 263.28150758333334,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 5.200709400000051,
+            "phases": [
+              1,
+              1
+            ],
+            "variables": 1104,
+            "binaries": 803,
+            "gap": 0.07509179063872075,
+            "bound": 243.51122781626597,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 4.9663933999836445,
+          "vin": "SIM-006",
+          "cost": 259.00517533333334,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "method": "validated fallback",
+            "solver_status": "LIMIT_NO_INCUMBENT",
+            "elapsed_seconds": 4.966388000000734
+          }
+        },
+        {
+          "status": "INFEASIBLE_MODEL",
+          "reason": "The problem is infeasible. (HiGHS Status 8: model_status is Infeasible; primal_status is None)",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.5784286999842152,
+          "vin": "SIM-003"
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 5.188026100047864,
+          "vin": "SIM-012",
+          "cost": 61.764152297458814,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 5.18669260002207,
+            "phases": [
+              0,
+              1
+            ],
+            "variables": 1352,
+            "binaries": 995,
+            "gap": 0.0,
+            "bound": 61.76415229745878,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 5.668107400008012,
+          "vin": "SIM-004",
+          "cost": 50.60708080555555,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 5.6632336000329815,
+            "phases": [
+              0,
+              1
+            ],
+            "variables": 1356,
+            "binaries": 999,
+            "gap": 0.0,
+            "bound": 50.60708082946164,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 6.316988099948503,
+          "vin": "SIM-008",
+          "cost": 49.981873979265245,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 6.297366999962833,
+            "phases": [
+              0,
+              1
+            ],
+            "variables": 1584,
+            "binaries": 1171,
+            "gap": 0.0,
+            "bound": 49.98187397926836,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.007070599996950477,
+          "vin": "SIM-005",
+          "cost": 0,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "proof": "Nonnegative-cost lower bound; direct route, earliest service",
+            "elapsed_seconds": 0,
+            "variables": 0,
+            "binaries": 0,
+            "gap": 0
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.004939600010402501,
+          "vin": "SIM-007",
+          "cost": 0,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "proof": "Nonnegative-cost lower bound; direct route, earliest service",
+            "elapsed_seconds": 0,
+            "variables": 0,
+            "binaries": 0,
+            "gap": 0
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 7.720150000008289,
+          "vin": "SIM-011",
+          "cost": 75.83627399999996,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "method": "validated fallback",
+            "solver_status": "LIMIT_NO_INCUMBENT",
+            "elapsed_seconds": 7.72014389996184
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 5.433424899994861,
+          "vin": "SIM-009",
+          "cost": 16.54121733333333,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 5.427845300000627,
+            "phases": [
+              0,
+              1
+            ],
+            "variables": 1608,
+            "binaries": 1195,
+            "gap": 0.0,
+            "bound": 16.54121746014394,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "INFEASIBLE_MODEL",
+          "reason": "Vehicle requires physical assistance or health clearance",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 9.499955922365189e-06,
+          "vin": "SIM-010"
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 4.712278600025456,
+          "vin": "SIM-014",
+          "cost": 47.22924475000001,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 4.710282300016843,
+            "phases": [
+              1,
+              0
+            ],
+            "variables": 1628,
+            "binaries": 1215,
+            "gap": 0.0007398275135381659,
+            "bound": 47.19430329573178,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 5.123625800013542,
+          "vin": "SIM-013",
+          "cost": 18.19098223809905,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 5.118352200021036,
+            "phases": [
+              0,
+              1
+            ],
+            "variables": 1632,
+            "binaries": 1219,
+            "gap": 0.0,
+            "bound": 18.19098223809874,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 5.187701100017875,
+          "vin": "SIM-015",
+          "cost": 9.860079333333315,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "method": "validated fallback",
+            "solver_status": "LIMIT_NO_INCUMBENT",
+            "elapsed_seconds": 5.187695100030396
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.003941600036341697,
+          "vin": "SIM-016",
+          "cost": 0,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "proof": "Nonnegative-cost lower bound; direct route, earliest service",
+            "elapsed_seconds": 0,
+            "variables": 0,
+            "binaries": 0,
+            "gap": 0
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 4.957868499972392,
+          "vin": "SIM-020",
+          "cost": 93.67649333333334,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "method": "validated fallback",
+            "solver_status": "LIMIT_NO_INCUMBENT",
+            "elapsed_seconds": 4.957865300006233
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 4.964128600026015,
+          "vin": "SIM-019",
+          "cost": 8.086423884547537,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "method": "validated fallback",
+            "solver_status": "LIMIT_NO_INCUMBENT",
+            "elapsed_seconds": 4.964124399994034
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.001446999958716333,
+          "vin": "SIM-018",
+          "cost": 0,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "proof": "Nonnegative-cost lower bound; direct route, earliest service",
+            "elapsed_seconds": 0,
+            "variables": 0,
+            "binaries": 0,
+            "gap": 0
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.0016622000257484615,
+          "vin": "SIM-017",
+          "cost": 0,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "proof": "Nonnegative-cost lower bound; direct route, earliest service",
+            "elapsed_seconds": 0,
+            "variables": 0,
+            "binaries": 0,
+            "gap": 0
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 4.7387933999998495,
+          "vin": "SIM-021",
+          "cost": 111.07235599999997,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "method": "validated fallback",
+            "solver_status": "LIMIT_NO_INCUMBENT",
+            "elapsed_seconds": 4.738790799980052
+          }
+        },
+        {
+          "status": "FEASIBLE",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 5.181956099986564,
+          "vin": "SIM-024",
+          "cost": 43.08566773541284,
+          "solver": {
+            "status": "FEASIBLE",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "elapsed_seconds": 5.1793712000362575,
+            "phases": [
+              0,
+              1
+            ],
+            "variables": 1732,
+            "binaries": 1319,
+            "gap": 0.0,
+            "bound": 43.085667735412926,
+            "bound_objective": "cost"
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.001570400025229901,
+          "vin": "SIM-022",
+          "cost": 0,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "proof": "Nonnegative-cost lower bound; direct route, earliest service",
+            "elapsed_seconds": 0,
+            "variables": 0,
+            "binaries": 0,
+            "gap": 0
+          }
+        },
+        {
+          "status": "OPTIMAL_MODEL",
+          "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+          "elapsed_seconds": 0.0018119000014849007,
+          "vin": "SIM-023",
+          "cost": 0,
+          "solver": {
+            "status": "OPTIMAL_MODEL",
+            "scope": "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation",
+            "proof": "Nonnegative-cost lower bound; direct route, earliest service",
+            "elapsed_seconds": 0,
+            "variables": 0,
+            "binaries": 0,
+            "gap": 0
+          }
+        }
+      ]
+    }
+  ]
+}
