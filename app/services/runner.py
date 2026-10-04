@@ -3,7 +3,6 @@
 import asyncio
 import multiprocessing
 import queue
-from contextlib import suppress
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -11,7 +10,6 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from app.domain import dt
-from app.services.execution import advance
 from app.services.ledger import Ledger
 from app.services.optimizer import fingerprint, leg, optimize
 from app.services.validation import validate
@@ -160,75 +158,63 @@ class Runner:
     def __init__(self, db):
         self.ledger = Ledger(db)
         self.owner = str(uuid4())
-        self.task = None
-        self.worker = None
         self.process = None
 
-    def start(self):
-        self.task = asyncio.create_task(self.loop())
-
     async def stop(self):
-        for task in (self.task, self.worker):
-            if task:
-                task.cancel()
         if self.process and self.process.is_alive():
             self.process.terminate()
-        for task in (self.task, self.worker):
-            if task:
-                with suppress(asyncio.CancelledError):
-                    await task
+            await asyncio.to_thread(self.process.join, 2)
 
-    async def loop(self):
-        while True:
-            await asyncio.sleep(1)
-            try:
-                old = await self.ledger.read()
-                doc = deepcopy(old)
-                wall = datetime.now(UTC)
-                lease = doc.get("lease")
-                if lease and lease["owner"] != self.owner and dt(lease["until"]) > wall:
-                    continue
-                doc["lease"] = {
-                    "owner": self.owner,
-                    "until": wall + timedelta(seconds=10),
-                }
-                if doc["running"]:
-                    advance(doc, doc["speed"])
-                # A worker crash is retried from persisted current facts, never from a half-written chain.
-                for job in doc["jobs"].values():
-                    if job["status"] == "RUNNING" and (
-                        job.get("owner") != self.owner
-                        or self.worker is None
-                        or self.worker.done()
-                    ):
-                        job["status"] = "QUEUED"
-                job = next(
-                    (j for j in doc["jobs"].values() if j["status"] == "QUEUED"), None
-                )
-                if job and (not self.worker or self.worker.done()):
-                    job.update(
-                        status="RUNNING",
-                        owner=self.owner,
-                        lease_until=wall
-                        + timedelta(
-                            seconds=doc["policy"]["solver_seconds"]
-                            * max(4, 3 * len(doc["vehicles"]))
-                            + 90
-                        ),
-                    )
-                else:
-                    job = None
-                committed = await self.ledger.commit(old, doc)
-                if job:
-                    self.worker = asyncio.create_task(self.execute(committed, job))
-            except HTTPException:
-                continue
-            except Exception:
-                import logging
+    async def handle(self, message):
+        """Kafka delivery wakes a job; PostgreSQL fences duplicate ownership."""
+        old = await self.ledger.read()
+        if old["run_id"] != message["run_id"]:
+            return
+        doc = deepcopy(old)
+        job = doc["jobs"].get(message["job_id"])
+        if not job or job["status"] in ("COMPLETED", "ERROR", "CANCELLED"):
+            return
+        wall = datetime.now(UTC)
+        if job["status"] == "RUNNING" and dt(job["lease_until"]) > wall:
+            # Do not acknowledge an unfinished job owned by another worker.
+            raise HTTPException(409, "Planning job is already leased")
+        from app.core.config import settings
+        from app.services.simulator import fresh
 
-                logging.exception(
-                    "Simulation runner failed; persisted state remains authoritative"
-                )
+        vins = (
+            [job["vin"]]
+            if job["vin"]
+            else [
+                vin
+                for vin, v in doc["vehicles"].items()
+                if not v.get("plan_id") and v["state"] != "COMPLETED"
+            ]
+        )
+        if any(
+            not fresh(doc, doc["vehicles"][vin], settings.telemetry_max_age_seconds)
+            for vin in vins
+        ):
+            raise HTTPException(409, "Waiting for fresh vehicle readings")
+        job.update(
+            status="RUNNING",
+            owner=self.owner,
+            lease_until=wall
+            + timedelta(
+                seconds=doc["policy"]["solver_seconds"] * max(4, 3 * len(vins)) + 90
+            ),
+        )
+        snapshot = await self.ledger.commit(old, doc)
+        await self.execute(snapshot, job)
+        current = await self.ledger.read()
+        active = current["jobs"].get(job["job_id"])
+        if (
+            current["run_id"] == snapshot["run_id"]
+            and active
+            and active["status"] == "RUNNING"
+        ):
+            raise HTTPException(
+                409, "Result not committed; keep the planning request pending"
+            )
 
     async def execute(self, snapshot, job):
         context = multiprocessing.get_context("spawn")
@@ -304,6 +290,16 @@ class Runner:
                             doc["plans"][plan["plan_id"]] = plan
                             summary["plan_id"] = plan["plan_id"]
                     stored["results"].append(summary)
+                stale_vins = {
+                    row["vin"] for row in stored["results"] if row["status"] == "STALE"
+                }
+                usable_vins = {
+                    row["vin"] for row in stored["results"] if row.get("plan_id")
+                }
+                for vin in stale_vins - usable_vins:
+                    # A solve invalidated only by elapsed time still needs a fresh
+                    # paused search, even if the parked vehicle has not moved.
+                    doc["vehicles"][vin].pop("auto_plan_marker", None)
                 try:
                     await self.ledger.commit(old, doc)
                     return

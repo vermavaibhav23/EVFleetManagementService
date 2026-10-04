@@ -3,8 +3,9 @@ from copy import deepcopy
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from app.core.config import settings
 from app.core.dependencies import get_database
 from app.domain import (
     Approval,
@@ -14,15 +15,16 @@ from app.domain import (
     ResourceChange,
     Telemetry,
     dt,
-    effective_capacity,
 )
-from app.services.control import approve_or_refresh, reject, request_job, telemetry
-from app.services.execution import advance, apply_event, interrupt
+from app.services.control import approve_or_refresh, reject, request_job
+from app.services.execution import apply_event, interrupt
 from app.services.ledger import Ledger, bookings
 from app.services.plan_review import result_message, review
 from app.services.pricing import intervals
 from app.services.scenario_groups import action_block, trigger_action
 from app.services.seed import seed
+from app.services.simulator import Simulator, fresh
+from app.services.telemetry import check_reading
 
 router = APIRouter()
 
@@ -33,13 +35,18 @@ def ledger(db=Depends(get_database)):
 
 @router.get("/health/live")
 async def live():
-    return {"status": "ok", "schema_version": 2}
+    return {"status": "ok", "schema_version": 3}
 
 
 @router.get("/health/ready")
-async def ready(db=Depends(get_database)):
-    await db.command("ping")
-    return {"status": "ready", "authority": "MongoDB atomic run ledger"}
+async def ready(request: Request, db=Depends(get_database)):
+    async with db.acquire() as connection:
+        await connection.fetchval("SELECT 1")
+    pipeline = request.app.state.pipeline
+    await asyncio.wait_for(
+        pipeline.producer.partitions_for(settings.kafka_telemetry_topic), 5
+    )
+    return {"status": "ready", "authority": "PostgreSQL", "workers": pipeline.status}
 
 
 @router.get("/fleet")
@@ -48,6 +55,32 @@ async def state(store: Ledger = Depends(ledger)):
     doc = await store.read()
     doc.pop("_id", None)
     doc["reservations"] = bookings(doc) + doc.get("external_bookings", [])
+    for vin, vehicle in doc["vehicles"].items():
+        vehicle["telemetry_status"] = (
+            "LIVE"
+            if fresh(doc, vehicle, settings.telemetry_max_age_seconds)
+            else "OUTDATED"
+        )
+        active = next(
+            (
+                j
+                for j in doc["jobs"].values()
+                if j["status"] in ("QUEUED", "RUNNING") and j["vin"] in (None, vin)
+            ),
+            None,
+        )
+        vehicle["planning_status"] = (
+            "APPROVED"
+            if vehicle.get("plan_id")
+            else active["status"]
+            if active
+            else "WAITING_FOR_APPROVAL"
+            if any(
+                p["vin"] == vin and p["status"] == "PROPOSED"
+                for p in doc["plans"].values()
+            )
+            else "NOT_REQUESTED"
+        )
     for item in doc.get("scenario_actions", []):
         item["blocked_reason"] = action_block(doc, item)
     for plan in doc["plans"].values():
@@ -98,13 +131,9 @@ async def pause(request: ClockAction, store: Ledger = Depends(ledger)):
 
 @router.post("/simulator/tick")
 async def tick(request: ClockAction, store: Ledger = Depends(ledger)):
-    def action(doc):
-        if doc["running"]:
-            raise HTTPException(409, "Pause the automatic clock before stepping")
-        advance(doc, request.seconds)
-        return {"clock": doc["clock"]}
-
-    return await store.mutate(action, request.run_id)
+    return await Simulator(store.pool).step(
+        request.run_id, request.seconds, manual=True
+    )
 
 
 @router.post("/journeys/plan")
@@ -171,17 +200,18 @@ async def cancel_plan(plan_id: str, request: Approval, store: Ledger = Depends(l
     return await store.mutate(action, request.run_id)
 
 
-@router.post("/telemetry")
-async def receive_telemetry(request: Telemetry, store: Ledger = Depends(ledger)):
-    def action(doc):
-        v = doc["vehicles"].get(request.vin)
-        if not v:
-            raise HTTPException(404, "Unknown vehicle")
-        if request.energy_kwh > effective_capacity(v):
-            raise HTTPException(422, "Telemetry energy exceeds effective capacity")
-        return telemetry(doc, request.model_dump())
-
-    return await store.mutate(action, request.run_id)
+@router.post("/telemetry", status_code=202)
+async def receive_telemetry(
+    reading: Telemetry, request: Request, store: Ledger = Depends(ledger)
+):
+    check_reading(await store.read(), reading)
+    try:
+        await request.app.state.pipeline.publish(reading)
+    except Exception as exc:
+        raise HTTPException(
+            503, "Telemetry was not confirmed by Kafka. Retry the same event_id."
+        ) from exc
+    return {"event_id": reading.event_id, "status": "ACCEPTED"}
 
 
 @router.put("/resources/{resource_id}")

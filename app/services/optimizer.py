@@ -20,7 +20,23 @@ from app.services.pricing import intervals, session
 
 def fingerprint(doc, vin):
     state = {k: doc[k] for k in ("run_id", "policy", "stations", "depots")}
-    state["vehicle"] = doc["vehicles"][vin]
+    # Heartbeats and job labels do not change physical planning inputs.
+    state["vehicle"] = {
+        k: v
+        for k, v in doc["vehicles"][vin].items()
+        if k
+        not in {
+            "sequence",
+            "observed_at",
+            "received_at",
+            "last_event_id",
+            "telemetry_status",
+            "planning_status",
+            "auto_plan_marker",
+            "control_version",
+            "reported_activity",
+        }
+    }
     return hashlib.sha256(
         json.dumps(state, sort_keys=True, default=str).encode()
     ).hexdigest()

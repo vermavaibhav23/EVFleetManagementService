@@ -6,6 +6,14 @@ from app.services.validation import validate
 
 
 def issue_message(doc, plan):
+    if doc.get("schema_version", 2) >= 3:
+        from app.core.config import settings
+        from app.services.simulator import fresh
+
+        if not fresh(
+            doc, doc["vehicles"][plan["vin"]], settings.telemetry_max_age_seconds
+        ):
+            return "Vehicle data is outdated. Wait for a fresh reading before booking."
     if dt(doc["clock"]) > dt(plan["valid_until"]):
         missed = [
             d["name"]

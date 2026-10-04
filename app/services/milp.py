@@ -1,5 +1,7 @@
 """Small linear-expression builder; HiGHS owns the mixed-integer search."""
 
+import warnings
+
 import numpy as np
 from scipy.optimize import Bounds, LinearConstraint, milp
 from scipy.sparse import coo_matrix
@@ -132,10 +134,21 @@ class Model:
         for idx, coefficient in objective.items():
             if idx is not None:
                 c[idx] = coefficient
-        return milp(
-            c,
-            integrality=self.integer,
-            bounds=Bounds(self.lower, self.upper),
-            constraints=LinearConstraint(matrix, self.lo, self.hi),
-            options={"time_limit": max(0.05, seconds), "mip_rel_gap": 1e-7},
-        )
+        # HiGHS runs one CPU thread per isolated planning process.
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="Unrecognized options detected.*threads.*",
+                category=RuntimeWarning,
+            )
+            return milp(
+                c,
+                integrality=self.integer,
+                bounds=Bounds(self.lower, self.upper),
+                constraints=LinearConstraint(matrix, self.lo, self.hi),
+                options={
+                    "time_limit": max(0.05, seconds),
+                    "mip_rel_gap": 1e-7,
+                    "threads": 1,
+                },
+            )

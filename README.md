@@ -1,21 +1,64 @@
 # EV Fleet Charging Management
 
-Full-journey planning, manager approval and deterministic simulation. A journey contains the fixed customer sequence, zero or more charging visits, and an explicit return to the depot. Charging can happen before, between or after deliveries. Completing a charge never completes the journey.
+Single-fleet deterministic simulation, telemetry, mixed-integer charging decisions and manager approval. The existing four-tab portal, fleet map, fleet-size selector, four scenarios, cost/alternative cards, tariff charts and incident controls remain. No multitenancy or client API-key layer is introduced.
 
-The portal retains the original map-based interface: **Overview**, **Vehicles**, **Chargers**, and **Plans & Decisions**, with the same green styling, attention queue, vehicle details and interactive map. The new planner is integrated into those screens. The selected vehicle panel includes **Journey progress**: live driving, queuing, connecting, charging, unplugging and unloading status; the current step’s finish/arrival time; battery versus charging target; and completed/upcoming stops. It refreshes with the fleet snapshot every three seconds and shows when the simulation is paused. Activity comes from the vehicle’s committed journey, never an unapproved option. The map shows the selected journey's complete remaining route, including every charging visit and the depot return; proposed and approved routes have different styles. Drag to pan, scroll or use +/− to zoom, and use **Fit fleet** to reset the view.
+## Implemented data flow
 
-Live portal: [EV Fleet on Railway](https://evfleetmanagementservice-production.up.railway.app/portal).
+```text
+Load / reset → PostgreSQL scenario + separate simulator checkpoint
+Approved instructions → vehicle simulator → durable provider outbox
+Provider → HTTP POST /api/v1/telemetry → FastAPI validates → Kafka
+                                      (202 after broker acknowledgement)
+Kafka vehicle.telemetry.v3 [3 partitions; key = vehicle_id]
+  ├─ fleet-v3-state: 3 consumers → PostgreSQL current vehicle state
+  └─ fleet-v3-history: 1 consumer → MongoDB telemetry_history
 
-## Run locally
+Fresh state needing planning → PostgreSQL job + outbox atomically
+Outbox → Kafka planning.requests.v3 [1 partition]
+Planning consumer → current PostgreSQL snapshot → isolated HiGHS optimiser
+Options → PostgreSQL → manager dashboard
+Approve → recheck current state + all slots → atomic booking + simulator instructions
+```
 
-Python 3.13 and MongoDB 7+ are required. MongoDB may be standalone; replica-set transactions are not required.
+The demo embeds three telemetry state consumers, one independent history consumer and one planning consumer in the API process. One separate process runs a solve at a time, using one CPU thread. These counts are an example, not a throughput guarantee. Multiple vehicles share a partition; keep partition count and routing fixed during a run.
+
+The simulator executes the approved mission using its own durable checkpoint: location, battery, delivery progress and operation pointer. It does not directly update dashboard state. Its observations pass through a real HTTP forwarder, FastAPI and Kafka. The telemetry processor applies persisted device progress only after consuming the reading. Progress details come from the simulator outbox checkpoint, not arbitrary HTTP fields. External activity labels cannot complete deliveries or release reservations.
+
+Provider failures retry the same event ID. The service checks run, control version, event identity, sequence, observation time and battery/GPS values. An old reading cannot overwrite newer current state; an old mission reading cannot undo new instructions. Kafka offsets are acknowledged after durable work. Poison messages are recorded in `rejected_events`; transient database failures retry without acknowledging.
+
+The simulator waits for the preceding observation frame to be processed before advancing. This backpressure prevents the small demo racing ahead during an outage. Paused vehicles send a heartbeat about every ten seconds without moving simulated time. Freshness uses both simulation observation time and wall-clock receive time (default limit: 120 seconds). Stale data blocks new planning/approval and appears in the selected vehicle panel. Ordered progress messages are processed without discarding intermediate delivery events.
+
+Automatic planning runs when fresh data is available, the vehicle is safely stopped, no search is pending and no usable approved journey or current review option exists. Identical failed searches are not repeated every heartbeat. Changed physical facts or outdated review options permit another search. Searches pause the demo for review and never auto-approve. Manual Compare journey options and Plan fleet remain available. The job and Kafka delivery outbox commit together, so a crash between saving and publishing does not lose the request.
+
+## Railway deployment — no laptop Docker
+
+**PostgreSQL and Kafka must be configured before deploying this version.** Keep the existing Mongo-only service until the new version passes staging checks. Required Railway Variables:
+
+| Variable | Purpose |
+|---|---|
+| `DATABASE_URL` | Reachable PostgreSQL connection |
+| `KAFKA_BOOTSTRAP_SERVERS` | Reachable Kafka broker addresses |
+| `MONGODB_URI`, `MONGODB_DB` | Historical telemetry database |
+| `KAFKA_SECURITY_PROTOCOL` | Your broker's protocol, including TLS/SASL when required |
+| `KAFKA_SASL_MECHANISM`, `KAFKA_USERNAME`, `KAFKA_PASSWORD` | Only if the broker requires them; infrastructure credentials, not client API keys |
+| `KAFKA_REPLICATION_FACTOR` | 1 for one demo broker; use suitable replication for production |
+| `RUN_WORKERS` | true (default) embeds the demo workers |
+
+The forwarder calls `http://127.0.0.1:$PORT` within Railway. `railway.toml` starts one Uvicorn process and checks `/api/v1/health/ready`. Railway builds the Dockerfile **in the cloud**; Docker does not need to run on the laptop. Local Docker Compose has been removed.
+
+Open `/portal`, Load / reset a scenario, wait for telemetry and automatic options, approve a journey, then Start or +5 min. `/api/v1/health/live` reports schema version 3; readiness checks PostgreSQL and Kafka metadata and returns worker status. HTTP 202 means Kafka accepted a reading, not that processing or planning has finished.
+
+For a separate cloud worker, set `RUN_WORKERS=false` on the API and run `python -m app.worker` in another service with the same infrastructure settings and `PROVIDER_API_URL` pointing to FastAPI. Disable HTTP health checks on the worker service. Shared PostgreSQL locks coordinate device execution and forwarding across replicas.
+
+For lightweight development using remote test services:
 
 ```sh
 pip install -r requirements.txt
+# Set .env from .env.example using remote test connections.
 uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Alternatively, `docker compose up --build` starts the API and MongoDB. Open `/portal` for the manager dashboard and `/docs` for the API. Configuration is in `.env.example`. Redis is no longer required. Optional Kafka ingress accepts the new run-scoped telemetry contract on `vehicle.telemetry.v2`; enable it only when a broker is configured.
+MongoDB outages stop only history consumption. It catches up from Kafka when MongoDB returns, within Kafka retention. PostgreSQL or Kafka outages block dependent operational work. Default Kafka retention is seven days; one demo broker has no broker-failure redundancy. Mongo history uses a configurable 30-day TTL. Booking and approval never depend on MongoDB.
 
 ## Manager workflow
 
@@ -31,7 +74,7 @@ Decision cards use short pointers: total charging cost, delivery impact, depot r
 
 **Reject option** records a manager rejection without booking a port. **Recalculate plans** searches from the current time and available slots. While the clock is running, the button says **Pause & recalculate plans**: one click atomically pauses the simulation and queues the search. It stays paused for review; use **Start** to resume. The panel immediately shows **Searching…**, prevents duplicate clicks, and retires earlier unapproved options. If the search fails or finds no usable plan, the panel says so and keeps recalculation available instead of offering an old approval. Approved journeys and their reservations remain intact until explicitly replaced or cancelled. Recovery approval is enabled after acknowledging that card's consequences.
 
-Approval revalidates all requested slots and shared power against the latest MongoDB snapshot, then commits the complete chain atomically. If approval detects a conflict or outdated plan, it books nothing, pauses the simulation and queues a fresh search; if another search is already active, it asks the manager to refresh after that search finishes. A replacement always needs its own approval. Proposed slots are not guaranteed until that commit. Approved journeys start when the vehicle is ready; they have no departure appointment to expire. Portal planning requests carry the current `run_id` and `pause_for_review: true`; noninteractive API clients may omit the pause flag, but estimates can become stale if simulated time advances during solving or review.
+Approval revalidates all requested slots and shared power against the latest PostgreSQL snapshot, then commits the complete chain atomically. If approval detects a conflict or outdated plan, it books nothing, pauses the simulation and queues a fresh search; if another search is already active, it asks the manager to refresh after that search finishes. A replacement always needs its own approval. Proposed slots are not guaranteed until that commit. Approved journeys start when the vehicle is ready; they have no departure appointment to expire. Portal planning requests carry the current `run_id` and `pause_for_review: true`; noninteractive API clients may omit the pause flag, but estimates can become stale if simulated time advances during solving or review.
 
 Under **Chargers**, daily price charts always show 00:00–24:00 IST, exact tariff boundaries and all ports, with approved reservations, active/releasing sessions and completed sessions on the port bars. Unapproved, rejected and replaced options are retained in a separate expandable history, so they cannot cover approved bookings. Completed sessions explicitly say **Approved · completed**. The date control navigates other days. Tables provide the same information without relying on chart colour or hover. Use the global speed selector with **Start**; **+5 min** advances a paused clock. Each incident control changes only its stated facts and pauses the common clock for review. Buttons enforce the required vehicle state, and cannot replay an incident twice. Reload the scenario for a clean replay.
 
@@ -60,14 +103,6 @@ Use one disruption per replay so its effect is clear. Other vehicles keep indepe
 
 `NORMAL_DAY` and `EDGE_CASE_DAY` remain API-only compatibility/stress fixtures for existing runs and benchmarks; they are no longer dropdown choices. New scenario requests preserve the selected fleet size (4–100); smaller counts return a validation error because they would omit core cases.
 
-## Railway deployment
-
-This repository's deployment branch is `main`. Push the reviewed changes to GitHub's `main` branch for the connected Railway service to build and deploy them. A localhost preview does not update Railway. The repository includes a Python 3.13 Dockerfile and `railway.toml`; Railway starts one Uvicorn worker on its assigned `$PORT` and checks `/api/v1/health/ready`.
-
-Set `MONGODB_URI` to the Railway-reachable MongoDB connection and `MONGODB_DB` to the intended database. Kafka is optional and disabled by default; Redis is not used. Retain the existing MongoDB settings when upgrading. Do not point a local test suite at the deployed database.
-
-After deployment, refresh `/portal`, choose one of the four scenarios and select **Load / reset**, then review and approve new journeys. An existing old run remains labelled **Legacy run** until you load a new scenario. Legacy simulation collections are preserved and are not silently imported into the new contract. Later restarts reuse the persisted v2 run. Confirm `/api/v1/health/live` reports `schema_version: 2` and readiness succeeds. The portal's asset URLs use a new version to refresh cached JavaScript and CSS.
-
 ## Model and safety
 
 The optimizer uses SciPy's `milp` interface to HiGHS. Binary decisions select charging visits and ports and encode piecewise charging/tariff segments and reservation ordering. Energy quantities and timestamps are continuous. There is no recursive search over target SoC percentages.
@@ -82,42 +117,65 @@ Fleet coordination is **constrained-first sequential allocation**, with each pro
 
 Every candidate is independently forward-validated before publication and again at approval. Valid incumbents are returned as `FEASIBLE`; `OPTIMAL_MODEL` means all lexicographic phases are proven optimal within the stated single-vehicle model. Other statuses distinguish bounded infeasibility, no incumbent before a time limit, solver errors and validation rejection. A simple station-first fallback is offered after a time limit only if the independent validator accepts the complete journey.
 
-## Persistence and execution
+## Storage and relationships
 
-`fleet_ledger/_id=active` is the sole scheduling authority. The run contains vehicles, resources, operations, bookings, event progress, jobs and the simulated clock. Every operational writer uses a MongoDB compare-and-swap on `run_id` and `revision`. Approving or replacing a complete journey is one atomic document replacement, not a sequence of independent reservation inserts. A losing concurrent writer receives HTTP 409. Retrying an approved journey ID is idempotent, including after a lost response.
+| PostgreSQL table | Purpose |
+|---|---|
+| `fleet_run` | Active run, clock, policy, scenario events, revision and common transaction lock |
+| `vehicles` | Latest observed state, deliveries, approved journey ID and operation pointer |
+| `journey_plans` | Proposals, approved operations, cost, timing and execution progress |
+| `planning_jobs` | Requests, status, ownership leases and results |
+| `stations`, `depots` | Charger ports, tariffs, geometry and site power |
+| `reservations` | Approved/occupied port intervals and external demo bookings |
+| `simulator_state` | Independent device checkpoint and approved instructions |
+| `outbox` | Pending telemetry/planning messages and device progress checkpoints |
+| `telemetry_receipts` | Processed event IDs and hashes for duplicate/conflicting-ID checks |
+| `rejected_events` | Invalid Kafka message positions and reasons |
+| `schema_version` | Applied database schema version |
 
-Physical charging occupation survives cancellation until release completes. Resource/telemetry changes stop affected journeys and invalidate proposals; expired plans cannot silently shift into later reservations. The event-driven executor carries unused tick time into subsequent operations, so tick size does not add artificial time. Service in progress survives replanning. A lease allows only one clock owner across API processes; another process can take over after expiry. Pause/resume and process restarts reuse persisted time, service and operation progress.
+Entity rows reference the active run through foreign keys. JSON bodies preserve rich operations and the existing validated planner contract. Reservations also expose charger, port and interval columns. Every operational writer uses a PostgreSQL transaction with the run lock and revision fence. Approving/replacing all charging slots commits atomically. The simulator has separate state but shares the PostgreSQL server for durability.
 
-Dispatch follows readiness: approval → finish any active service/release and satisfy route readiness → travel to the next approved destination → complete its activity → continue immediately. Travel and service durations remain deterministic. Early charger arrivals wait for the approved slot; its start, end, power, energy target and tariff are unchanged. If readiness no longer permits the booked slot or approved delivery timing, the vehicle stops for review rather than silently moving a booking. The stored `depart` timestamp remains a derived leg estimate/execution record for interpolation and history, not a dispatch instruction. Older saved journeys also use this readiness rule for their next pending leg; an already active leg continues from its persisted progress. The portal shows **Ready to continue** or the specific readiness/activity wait.
+MongoDB keeps **one document per distinct reading** in `telemetry_history`, keyed by run plus event ID. New readings append; repeated IDs use idempotent upserts. Older readings remain useful history even when rejected for current-state replacement. Plans remain in PostgreSQL because approval and booking require transactional access.
 
-Reset swaps in a new run atomically. Old jobs and telemetry cannot mutate it; active solver processes discard results and terminate when their run changes. No unrelated collection is deleted. The document is limited to 12 MiB, vehicles to 100, recent operational messages to 1,000 and retained jobs to 20. Plans are retained for review until reset; reaching the document cap returns an explicit error instead of silently deleting history.
+Reset replaces the active PostgreSQL run and dependent rows, and fences old Kafka jobs/readings. Existing MongoDB v2 records and historical telemetry are not deleted. A new v3 deployment starts with Load / reset; see [migration](docs/migration.md).
 
-## API contracts
+Readiness-driven movement remains: finish service/release → drive to approved destination → complete activity → continue. Early arrivals wait for their approved charging slot. No optimiser-selected departure appointment or random travel is added.
 
-Base path: `/api/v1` (the OpenAPI service version is 2.0).
+The common run lock, snapshot assembly and 100-vehicle bound are intentional demo limits. Kafka adds buffering and independent readers; it does not eliminate database serialization or speed up MILP. 100k events/sec requires benchmark-driven changes to operational partitioning and deployment. That capacity is not claimed here.
+
+## API
+
+Base `/api/v1`; manager routes retain their current shapes.
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /simulator/load` | Atomically load/reset a scenario |
-| `POST /simulator/actions/{action_id}` | Apply one state-checked, run-fenced demo incident and pause |
-| `POST /simulator/start`, `/pause`, `/tick` | Run-scoped clock controls |
-| `GET /fleet`, `/simulator/state` | Authoritative full-run snapshot |
-| `POST /journeys/plan` | Queue coordinated fleet planning |
-| `POST /vehicles/{vin}/journeys/plan` | Queue normal/recovery alternatives |
-| `GET /jobs/{id}`, `POST /jobs/{id}/cancel` | Inspect/cancel solver work |
-| `POST /journeys/{id}/approve` | Approve exact run, plan ID and version |
-| `POST /journeys/{id}/reject` | Retain a rejected proposal without booking slots |
-| `POST /journeys/{id}/cancel` | Cancel remaining work, retain physical release |
-| `PUT /resources/{id}` | Update a station or depot power through the same authority |
-| `POST /telemetry` | Run/sequence-fenced energy and health update |
-| `GET /day-view?day=YYYY-MM-DD` | Full IST day tariffs and port history |
-| `GET /health/live`, `/health/ready` | Process and MongoDB readiness |
+| `POST /simulator/load` | Reset scenario and initialize device readings |
+| `POST /simulator/start`, `/pause`, `/tick` | Clock controls; tick returns `TELEMETRY_PENDING` |
+| `POST /simulator/actions/{id}` | Run-fenced incident controls |
+| `GET /fleet`, `/simulator/state` | Observed operational state for existing UI |
+| `POST /journeys/plan`, `/vehicles/{vin}/journeys/plan` | Persist a Kafka planning request |
+| `GET /jobs/{id}`, `POST /jobs/{id}/cancel` | Search progress/cancellation |
+| `POST /journeys/{id}/approve`, `/reject`, `/cancel` | Approval, revalidation, atomic booking |
+| `PUT /resources/{id}` | Charger/site updates and affected-journey interruption |
+| `POST /telemetry` | Validate and publish; 202 after Kafka acknowledgement |
+| `GET /day-view` | IST tariffs and port history |
+| `GET /health/live`, `/health/ready` | Process, PostgreSQL, Kafka metadata and workers |
 
-This is an intentional schema/API revision. Old independent trip, charging-plan and reservation CRUD routes are retired. Old collection contents are preserved but do not participate in v2 simulation. Do not run old and new scheduling writers against the same operational fleet. See [migration and removed logic](docs/migration.md).
+```json
+{
+  "event_id": "reading-101",
+  "run_id": "demo-run-7",
+  "vehicle_id": "SIM-001",
+  "sequence": 101,
+  "observed_at": "2026-10-05T08:01:00+05:30",
+  "lat": 12.9716,
+  "lon": 77.5946,
+  "energy_kwh": 4.75,
+  "activity": "TRAVELLING"
+}
+```
 
-Approval clients must inspect the response `status`: `APPROVED` confirms booking; `REPLAN_QUEUED` or `REFRESH_REQUIRED` means nothing was booked and fresh review is required. `GET /fleet` includes derived `review` explanations on plans; these annotations are not stored as scheduling authority.
-
-Portal searches pause the simulation for review. If it is resumed before approval, or an API client plans without pausing, advancing time can invalidate the unapproved timing estimates. Changed conditions can also make an option stale. The portal then removes the stale proposed charger route and price from the selected vehicle panel. Pending customers whose arrival deadlines have passed are named with their overdue time; already-arrived or unloading customers are excluded. **Update options** searches again from the current time and checks available slots. Earlier cards remain locked as historical estimates. Missing an arrival deadline prevents an on-time delivery, but a delayed journey can still be feasible. Approved journeys are not expired by this review-time rule.
+Use the actual run ID, monotonic per-vehicle sequence and current `control_version` (initially 0). Temperature and health have defaults. The internal simulator supplies these automatically. No API-key header is required.
 
 ## Verification
 
@@ -128,14 +186,10 @@ node --test tests/test_frontend.cjs
 ruff check app tests scripts
 ```
 
-Set `FLEET_TEST_MONGO` to a disposable local MongoDB URI to enable the real-database tests. They create uniquely named test databases and delete only those databases. These tests include competing OS-process approvals, a crash immediately after commit, retry, reset fencing, HTTP execution and solver-process cancellation. Without that environment variable they are explicitly skipped.
-
-The arithmetic fixture buys 28 kWh at ₹20 and 15 kWh at ₹10 for **₹710**, meeting B's 10:40 deadline. Independent enumeration verifies that buying 13 + 30 arrives at 11:10 and buying all 43 at the expensive charger costs ₹860. Additional tests cover taper billing, tariff precedence, fixed order, delivery-first/after-last charging, alternatives, reserves, service, contention, power loss, the legacy stress fixtures and tick-size invariance. The focused-scenario tests additionally verify the exact split-charge outcome, fast/slow feasibility, charge-at-origin, zero-charge control, state-gated manual incidents, release occupation, unaffected vehicles and delayed journeys.
-
-For reproducible timing and status counts:
+Ordinary tests do not launch Docker, Kafka, PostgreSQL or MongoDB. Real integration tests explicitly skip without all three settings: `FLEET_TEST_POSTGRES`, `FLEET_TEST_KAFKA`, `FLEET_TEST_MONGO`. Use disposable **cloud test services**. Tests create unique PostgreSQL schemas, Kafka topics/groups and MongoDB history databases and clean up only those generated names.
 
 ```sh
-python scripts/benchmark.py --counts 12 24 --seconds 5 --output benchmark.json
+python -m pytest tests/test_cloud_integration.py -q
 ```
 
-See [verification results](docs/verification.md) for the measured environment and limits. No remote deployment is performed by the test or benchmark scripts.
+That test covers HTTP → Kafka → state/history → automatic Kafka planning → optimiser → approval → simulation readings → completion, revision conflict and reset fencing. Test scripts never deploy to Railway. See [actual verification status](docs/verification.md).

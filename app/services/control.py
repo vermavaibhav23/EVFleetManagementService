@@ -6,7 +6,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from app.domain import PlanRequest, dt
-from app.services.execution import interrupt, record
+from app.services.execution import record
 from app.services.optimizer import fingerprint
 from app.services.validation import validate
 
@@ -21,6 +21,17 @@ def approve(doc, plan_id, request):
         return {"plan_id": plan_id, "status": plan["status"], "idempotent": True}
     if plan["status"] != "PROPOSED":
         raise HTTPException(409, "Proposal is no longer available")
+    if doc.get("schema_version", 2) >= 3:
+        from app.core.config import settings
+        from app.services.simulator import fresh
+
+        if not fresh(
+            doc, doc["vehicles"][plan["vin"]], settings.telemetry_max_age_seconds
+        ):
+            raise HTTPException(
+                409,
+                "Vehicle data is outdated. Wait for fresh telemetry before approval.",
+            )
     if plan["recovery"] and not request.acknowledge_recovery:
         raise HTTPException(
             422, "Acknowledge the displayed lateness and reserve consequences"
@@ -47,7 +58,7 @@ def approve(doc, plan_id, request):
         for o in old["operations"]:
             if o["status"] == "PLANNED":
                 o["status"] = "CANCELLED"
-    # Nothing becomes visible until the caller's single MongoDB CAS succeeds.
+    # Nothing becomes visible until the caller's PostgreSQL transaction commits.
     plan.update(
         status="APPROVED",
         approved_at=doc["clock"],
@@ -78,6 +89,24 @@ def request_job(doc, vin, request):
         raise HTTPException(409, "This search belongs to an old simulation run")
     if vin is not None and vin not in doc["vehicles"]:
         raise HTTPException(404, "Unknown vehicle")
+    if doc.get("schema_version", 2) >= 3:
+        from app.core.config import settings
+        from app.services.simulator import fresh
+
+        targets = (
+            [doc["vehicles"][vin]]
+            if vin
+            else [
+                v
+                for v in doc["vehicles"].values()
+                if not v.get("plan_id") and v["state"] != "COMPLETED"
+            ]
+        )
+        if any(not fresh(doc, v, settings.telemetry_max_age_seconds) for v in targets):
+            raise HTTPException(
+                409,
+                "Vehicle data is outdated. Wait for fresh telemetry before planning.",
+            )
     active = next(
         (j for j in doc["jobs"].values() if j["status"] in ("QUEUED", "RUNNING")),
         None,
@@ -121,6 +150,8 @@ def request_job(doc, vin, request):
         status="QUEUED",
         created_at=datetime.now(UTC),
     )
+    for target in targets:
+        doc["vehicles"][target]["auto_plan_marker"] = fingerprint(doc, target)
     return {
         "job_id": job_id,
         "status": "QUEUED",
@@ -196,25 +227,3 @@ def reject(doc, plan_id, request):
         doc, "REJECTED", "Manager rejected this option; no slots booked", plan["vin"]
     )
     return dict(status="REJECTED", plan_id=plan_id)
-
-
-def telemetry(doc, request):
-    if request["run_id"] != doc["run_id"]:
-        raise HTTPException(409, "Old-run telemetry rejected")
-    v = doc["vehicles"].get(request["vin"])
-    if not v:
-        raise HTTPException(404, "Unknown vehicle")
-    if request["sequence"] <= v["sequence"]:
-        return {"accepted": False, "reason": "Duplicate or out-of-order telemetry"}
-    changed = any(
-        v[k] != request[k] for k in ("energy_kwh", "temperature_c", "health_fault")
-    )
-    v.update(
-        {
-            k: request[k]
-            for k in ("sequence", "energy_kwh", "temperature_c", "health_fault")
-        }
-    )
-    if changed:
-        interrupt(doc, v["vin"], "Fresh telemetry changed the reviewed state")
-    return {"accepted": True}

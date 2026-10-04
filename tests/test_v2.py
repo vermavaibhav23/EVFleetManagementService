@@ -5,13 +5,14 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi import HTTPException
 
-from app.domain import Approval, LoadRequest, dt
-from app.services.control import approve, telemetry
+from app.domain import Approval, LoadRequest, Telemetry, dt
+from app.services.control import approve
 from app.services.execution import advance, apply_event, interrupt
 from app.services.ledger import bookings
 from app.services.optimizer import optimize
 from app.services.pricing import price_at, session
 from app.services.seed import seed
+from app.services.telemetry import apply_reading
 from app.services.validation import validate
 
 
@@ -336,9 +337,12 @@ def test_old_telemetry_and_deterministic_seed():
         v["lat"] == a["depots"]["SIM-DEPOT"]["lat"] for v in a["vehicles"].values()
     )
     with pytest.raises(HTTPException):
-        telemetry(
+        apply_reading(
             a,
-            dict(
+            Telemetry(
+                event_id="old-run-reading",
+                observed_at=a["clock"],
+                lat=12.9, lon=77.6, activity="PARKED",
                 run_id=b["run_id"],
                 vin="SIM-001",
                 sequence=1,

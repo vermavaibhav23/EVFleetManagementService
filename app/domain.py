@@ -1,11 +1,11 @@
-"""Version 2 operational contracts. One run document is the scheduling authority."""
+"""Domain contracts shared by the planner, device simulator and telemetry API."""
 
 from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import AwareDatetime, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, AwareDatetime, ConfigDict, Field, model_validator
 from pydantic import BaseModel as PydanticModel
 
 
@@ -85,7 +85,7 @@ class Vehicle(BaseModel):
     consumption_kwh_km: float = Field(default=0.25, gt=0)
     max_power_kw: float = Field(default=60, gt=0)
     connector: str = "CCS2"
-    temperature_c: float = 30
+    temperature_c: float = 30.0
     health_fault: bool = False
     state: str = "PARKED"
     sequence: int = 0
@@ -228,12 +228,31 @@ class PlanRequest(BaseModel):
 
 
 class Telemetry(BaseModel):
+    event_id: str = Field(min_length=1, max_length=160)
     run_id: str
-    vin: str
+    vehicle_id: str = Field(validation_alias=AliasChoices("vehicle_id", "vin"))
     sequence: int = Field(ge=1)
+    observed_at: AwareDatetime
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
     energy_kwh: float = Field(ge=0)
-    temperature_c: float
-    health_fault: bool
+    activity: Literal[
+        "PARKED",
+        "READY",
+        "TRAVELLING",
+        "QUEUING",
+        "CONNECTING",
+        "CHARGING",
+        "RELEASING",
+        "SERVICING",
+        "WAITING_WINDOW",
+        "WAITING_REVIEW",
+        "ASSISTANCE",
+        "COMPLETED",
+    ]
+    temperature_c: float = 30.0
+    health_fault: bool = False
+    control_version: int = Field(default=0, ge=0)
 
 
 class ClockAction(BaseModel):

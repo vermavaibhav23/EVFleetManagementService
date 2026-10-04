@@ -1,24 +1,17 @@
-# Schema 2 transition and cleanup
+# Version 3 migration
 
-The old recursive target-SoC scheduler, next-trip readiness engine, mutable-departure ordering, primary/follow-up plan chain, independent reservation store, global Python serialization lock, rolling delayed-deadline policy, old scenario catalog and old manager snapshot are removed. Their models, API modules, Redis cache/configuration and demo/live-write scripts are also removed. The shared charging-curve implementation remains and is used by pricing and execution.
+The operational authority moves from MongoDB's `fleet_ledger` document to PostgreSQL. Existing MongoDB data is not deleted or automatically imported. Deploy into a separate staging service first; configure PostgreSQL and Kafka before changing the live service. A Mongo-only v2 service cannot run v3.
 
-`app/domain.py` contains the current contracts. `optimizer.py` and `milp.py` own bounded mathematical planning; `validation.py` independently checks complete candidates. `ledger.py` is the atomic persistence boundary; `control.py`, `execution.py`, `runner.py` and optional `ingestion.py` are its callers. Every API mutation uses that boundary. Separate manual reservation mutation endpoints are retired; only complete approved journeys and explicitly seeded site occupation participate in new simulation bookings.
+1. Preserve the existing service and MongoDB database for rollback.
+2. Configure `DATABASE_URL`, `KAFKA_BOOTSTRAP_SERVERS`, broker TLS/SASL if required, and history `MONGODB_URI`/`MONGODB_DB`. Topic creation permission is required initially. The demo uses three telemetry partitions and one planning partition, with replication factor one.
+3. Startup creates the additive PostgreSQL schema under a migration lock. Readiness checks PostgreSQL and Kafka metadata. MongoDB history may be unavailable while operational processing continues; its backlog must be consumed within Kafka retention.
+4. Load / reset a fresh v3 scenario. The four scenarios, seed, fleet size, map, tariffs, incident controls and deterministic execution rules remain. Old MongoDB reservations are not imported as approved v3 bookings.
+5. Verify readings, automatic planning, approval, booking, progress, an incident and replacement approval. Run the cloud integration test on disposable resources before production cutover.
 
-The original four-tab dashboard, styling and SVG fleet map are retained. Its controller now consumes the new full-run and day-view APIs; route lines follow complete remaining journeys rather than a primary/follow-up charging pair. Daily price and port charts live in Chargers, while approval and recovery live in Plans & Decisions. Removed fields include old readiness thresholds, range-margin flags, advisory charging targets, mutable trip departure ordering, single-session approval state, implicit follow-up dictionaries and old reservation-lock fields. Nameplate capacity, SoH, connector, charge-rate/taper/efficiency, service timing, immutable deadlines and source telemetry sequence remain because they affect current behavior.
+Removed: MongoDB scheduling writer, direct HTTP-to-ledger telemetry mutation, optional legacy Kafka ingress, Mongo job polling runner, local Docker Compose setup and tests coupled to those implementations. Replacement tests target telemetry fencing/freshness, independent simulation state, Kafka-triggered planning and PostgreSQL persistence. Pure optimiser, execution, scenario and frontend tests remain.
 
-Existing MongoDB collections are **not deleted or silently converted**. Legacy plans cannot be losslessly converted: some contain only a primary charge or ambiguous follow-ups and lack fixed customer order. New simulations create their own schema-2 document in `fleet_ledger`. Reset replaces only that document. Unrelated vehicles and source records stay intact, verified by a real-MongoDB test. To switch an existing deployment, stop old writers, back up the database, deploy the new code and load a new run; do not treat old reservations as approved v2 journeys. Historical source-data import requires explicit mapping of customer sequence, deadlines, service, connectors and depot endpoints.
+No Docker services are started on the developer laptop. Railway can build the supplied Dockerfile in the cloud. No client API key or multitenancy is introduced. Broker/database connection credentials remain necessary.
 
-Old tests coupled to removed models/routes/scenario names were replaced with behavioral tests rather than retained as unusable imports. Coverage maps as follows:
+Reset replaces only this application's PostgreSQL active run and dependent rows. MongoDB history remains grouped by run and expires through TTL. Kafka retains old-run messages until retention; operational consumers fence them out, while history may still archive them.
 
-| Retired area | Replacement checks |
-|---|---|
-| Scheduler / readiness | Analytical ₹710 fixture, independent enumeration, physical reserve/health rules, fixed order, complete return |
-| Primary/follow-up approval | Whole-chain CAS, multi-process contention, crash-after-commit retry, exact reviewed alternative |
-| Journey tracker / timetable | Tick-size invariance, service preservation, full-day completion, charging before/after customers |
-| Reservation expiry / power | Tight-gap rejection, interruption and physical release, capacity validation |
-| Telemetry replay / alerts | Run and sequence fencing, stale proposal rejection, persisted incidents and event outcomes |
-| Old scenario catalog | Exactly two deterministic scenarios, 12 covered edge cases, end-to-end execution |
-| Frontend helpers | IST minute placement, escaping, all-port charts and status distinctions; browser review of full journeys |
-| Mongo timezone regression | BSON timezone-aware round trip, plus real database API tests |
-
-The repository contains no scripts that automatically load or mutate a public deployment. The benchmark is in-memory. Database integration tests require an explicit disposable URI and create uniquely named databases.
+PostgreSQL stores separate rows for vehicles, plans, jobs and resources with JSON bodies preserving the validated planner contract. Run relationships use foreign keys; reservations additionally expose station, port and times. The shared run transaction lock is deliberately retained for this bounded, single-fleet demo. This is not a 100k-events/sec deployment.
