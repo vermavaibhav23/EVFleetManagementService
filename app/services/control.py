@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from app.domain import dt
+from app.domain import PlanRequest, dt
 from app.services.execution import interrupt, record
 from app.services.optimizer import fingerprint
 from app.services.validation import validate
@@ -89,6 +89,71 @@ def request_job(doc, vin, request):
         created_at=datetime.now(UTC),
     )
     return {"job_id": job_id, "status": "QUEUED"}
+
+
+def approve_or_refresh(doc, plan_id, request):
+    """Recheck the whole chain inside CAS; a conflict queues a proposal, never a booking."""
+    from app.services.plan_review import issue_message
+
+    plan = doc["plans"].get(plan_id)
+    if (
+        plan
+        and plan["status"] == "PROPOSED"
+        and request.run_id == doc["run_id"]
+        and request.version == plan["version"]
+    ):
+        reason = issue_message(doc, plan)
+        if reason:
+            active = any(
+                j["status"] in ("QUEUED", "RUNNING") for j in doc["jobs"].values()
+            )
+            job = (
+                None
+                if active
+                else request_job(
+                    doc,
+                    plan["vin"],
+                    PlanRequest(
+                        recovery=plan["recovery"],
+                        reserve_exception=plan["reserve_kwh"]
+                        < doc["policy"]["reserve_kwh"],
+                        alternatives=True,
+                    ),
+                )
+            )
+            return dict(
+                status="REFRESH_REQUIRED" if active else "REPLAN_QUEUED",
+                reason=reason,
+                job_id=job["job_id"] if job else None,
+                message=reason
+                + (
+                    " Another search is running; refresh options when it finishes."
+                    if active
+                    else " Searching available options now. Nothing was booked."
+                ),
+            )
+    return approve(doc, plan_id, request)
+
+
+def reject(doc, plan_id, request):
+    plan = doc["plans"].get(plan_id)
+    if (
+        not plan
+        or request.run_id != doc["run_id"]
+        or request.version != plan["version"]
+    ):
+        raise HTTPException(
+            409, "This option belongs to an older run or version. Refresh the page."
+        )
+    if plan["status"] == "REJECTED":
+        return dict(status="REJECTED", plan_id=plan_id)
+    if plan["status"] != "PROPOSED":
+        raise HTTPException(409, "Only an unapproved option can be rejected.")
+    plan["status"] = "REJECTED"
+    record(
+        doc, "REJECTED", "Manager rejected this option; no slots booked", plan["vin"]
+    )
+    return dict(status="REJECTED", plan_id=plan_id)
 
 
 def telemetry(doc, request):

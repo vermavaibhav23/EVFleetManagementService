@@ -20,10 +20,14 @@ Alternatively, `docker compose up --build` starts the API and MongoDB. Open `/po
 ## Manager workflow
 
 1. Load `NORMAL_DAY` or `EDGE_CASE_DAY`, specifying a seed and an IST start time. The default start is deliberately fixed for reproducibility. Edge-case coverage requires at least 12 vehicles; all begin at the depot.
-2. Keep the clock paused and choose **Plan fleet**, or select a vehicle in the attention queue/map and choose **Review journey**. Under **Plans & Decisions**, use **Find normal journey** for individual alternatives. Planning runs in a separate, cancellable process; its status and cancellation control appear under **Planner jobs**. Fleet planning serves vehicles with fewer reachable chargers first, then earlier deadlines.
+2. Keep the clock paused and choose **Plan fleet**, or select a vehicle in the attention queue/map and choose **Review journey**. Under **Plans & Decisions**, use **Find on-time options** for individual alternatives. Planning runs in a separate, cancellable process; its status and cancellation control appear under **Journey searches**. Fleet planning serves vehicles with fewer reachable chargers first, then earlier deadlines.
 3. Review every delivery, charging stop and return, arrival deadlines, service completion, reserve, energy purchases and total cost. Choose the exact alternative to approve. Individual planning also searches for an earlier-completion alternative, including different energy amounts at the same station. **Vehicles** keeps the original fixed delivery timetable visible independently of charging proposals.
 4. Approve the complete journey. Its full reservation chain becomes visible atomically. Then start or step the simulated clock.
-5. Incidents interrupt affected journeys safely. Request a fresh normal plan or recovery options. Recovery shows the number of late stops, maximum delay, total delay and reserve floor, and requires explicit acknowledgement. No recovery is auto-approved.
+5. Incidents interrupt affected journeys safely. Request fresh on-time options or **Review options allowing delays**. Delayed options show the affected customers, delay minutes and reserve floor, and require explicit acknowledgement. No replacement is auto-approved.
+
+Decision cards use short pointers: total charging cost, delivery impact, depot return and battery reserve. Every charging visit shows arrival and target battery percentages, energy needed until the next charging stop or depot, and the exact station, port and full occupation window in IST (including connection and release). Detailed stop tables are collapsed under **View journey details**. Rejected, replaced and outdated options remain grey with a reason; raw solver output is only under **Technical details**.
+
+**Reject option** records a manager rejection without booking a port. **Refresh options** is a working search action on outdated cards. Approval revalidates all requested slots and shared power against the latest MongoDB snapshot, then commits the complete chain atomically. If approval detects a conflict or outdated plan, it books nothing and queues a fresh search; if another search is already active, it asks the manager to refresh after that search finishes. A replacement always needs its own approval. Proposed slots are not guaranteed until that commit. Approved journeys do not expire merely because their departure time arrives.
 
 Under **Chargers**, daily price charts always show 00:00–24:00 IST, exact tariff boundaries and all ports, with separate proposal, confirmed, active/releasing, completed and cancelled styles. The date control navigates other days. Tables provide the same information without relying on chart colour or hover. Use the global speed selector with **Start**; **+5 min** advances a paused clock. The two supported scenarios replace the old list of single-incident presets.
 
@@ -70,6 +74,7 @@ Base path: `/api/v1` (the OpenAPI service version is 2.0).
 | `POST /vehicles/{vin}/journeys/plan` | Queue normal/recovery alternatives |
 | `GET /jobs/{id}`, `POST /jobs/{id}/cancel` | Inspect/cancel solver work |
 | `POST /journeys/{id}/approve` | Approve exact run, plan ID and version |
+| `POST /journeys/{id}/reject` | Retain a rejected proposal without booking slots |
 | `POST /journeys/{id}/cancel` | Cancel remaining work, retain physical release |
 | `PUT /resources/{id}` | Update a station or depot power through the same authority |
 | `POST /telemetry` | Run/sequence-fenced energy and health update |
@@ -77,6 +82,8 @@ Base path: `/api/v1` (the OpenAPI service version is 2.0).
 | `GET /health/live`, `/health/ready` | Process and MongoDB readiness |
 
 This is an intentional schema/API revision. Old independent trip, charging-plan and reservation CRUD routes are retired. Old collection contents are preserved but do not participate in v2 simulation. Do not run old and new scheduling writers against the same operational fleet. See [migration and removed logic](docs/migration.md).
+
+Approval clients must inspect the response `status`: `APPROVED` confirms booking; `REPLAN_QUEUED` or `REFRESH_REQUIRED` means nothing was booked and fresh review is required. `GET /fleet` includes derived `review` explanations on plans; these annotations are not stored as scheduling authority.
 
 ## Verification
 

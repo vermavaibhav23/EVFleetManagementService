@@ -2105,3 +2105,67 @@ details summary {
     grid-column: 1/-1;
   }
 }
+
+/* Concise manager decisions; unavailable history stays visible. */
+.journey-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+.journey-options .plan {
+  margin: 0;
+  min-width: 0;
+}
+.plan-locked {
+  background: #f0f1f1;
+  border-color: #d5d9d7;
+  color: #65716c;
+}
+.plan-locked h3,
+.plan-locked .price {
+  color: #65716c;
+}
+.plan-pointers {
+  margin: 12px 0;
+  padding-left: 19px;
+  line-height: 1.6;
+  font-size: 13px;
+}
+.plan-pointers li {
+  margin: 5px 0;
+}
+.requested-slot {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 10px 0;
+  background: #ffffff85;
+}
+.requested-slot p {
+  margin: 5px 0;
+  font-size: 13px;
+}
+.requested-slot .plan-pointers {
+  margin-bottom: 0;
+}
+.slot-check {
+  color: var(--green);
+  font-size: 12px;
+}
+.journey-details {
+  margin-top: 16px;
+}
+.statusline pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+.plan h4 {
+  margin: 18px 0 8px;
+}
+@media (max-width: 1000px) {
+  .journey-options {
+    grid-template-columns: 1fr;
+  }
+}

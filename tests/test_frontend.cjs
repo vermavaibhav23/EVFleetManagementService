@@ -28,6 +28,10 @@ test("physical release takes priority over interrupted logical booking", () =>
   ));
 test("proposals and completed bookings have distinct styles", () => {
   assert.equal(
+    bookingStyle({ status: "PLANNED", plan_status: "REJECTED" }),
+    "rejected",
+  );
+  assert.equal(
     bookingStyle({ status: "PLANNED", plan_status: "PROPOSED" }),
     "proposed",
   );

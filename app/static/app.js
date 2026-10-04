@@ -17,6 +17,14 @@ const time = (value) =>
         hour12: false,
       }).format(new Date(value))
     : "—";
+const slotTime = (value) =>
+  new Intl.DateTimeFormat("en-IN", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date(value));
 const dateIST = (value) =>
   new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Kolkata",
@@ -27,17 +35,19 @@ const dateIST = (value) =>
 const minutePosition = (value, start) =>
   Math.max(0, Math.min(1440, (new Date(value) - new Date(start)) / 60000));
 const bookingStyle = (row) =>
-  row.status === "RELEASING" || row.status === "ACTIVE"
-    ? "active"
-    : row.status === "COMPLETED"
-      ? "completed"
-      : row.plan_status === "PROPOSED"
-        ? "proposed"
-        : ["CANCELLED", "SUPERSEDED", "INTERRUPTED"].includes(
-              row.plan_status,
-            ) || row.status === "CANCELLED"
-          ? "cancelled"
-          : "confirmed";
+  row.plan_status === "REJECTED"
+    ? "rejected"
+    : row.status === "RELEASING" || row.status === "ACTIVE"
+      ? "active"
+      : row.status === "COMPLETED"
+        ? "completed"
+        : row.plan_status === "PROPOSED"
+          ? "proposed"
+          : ["CANCELLED", "SUPERSEDED", "INTERRUPTED"].includes(
+                row.plan_status,
+              ) || row.status === "CANCELLED"
+            ? "cancelled"
+            : "confirmed";
 
 function stationChart(station, rates, bookings, day) {
   const x = (t) => 110 + (minutePosition(t, day.start) / 1440) * 1200;
@@ -64,8 +74,9 @@ function stationChart(station, rates, bookings, day) {
         active: `url(#stripe-${station.charger_id})`,
         completed: "#c3d2d9",
         cancelled: "#eef0f1",
+        rejected: "#eef0f1",
       }[style];
-      svg += `<rect x="${x(b.start)}" y="${top + 2}" width="${Math.max(2, x(b.end) - x(b.start))}" height="26" fill="${fill}" stroke="${style === "cancelled" ? "#87949a" : "#316e80"}" stroke-dasharray="${["proposed", "cancelled"].includes(style) ? "4 3" : "none"}"><title>${escapeHTML(b.vin)} · ${style} · ${time(b.start)}–${time(b.end)} · ${money(b.cost)}</title></rect>`;
+      svg += `<rect x="${x(b.start)}" y="${top + 2}" width="${Math.max(2, x(b.end) - x(b.start))}" height="26" fill="${fill}" stroke="${["cancelled", "rejected"].includes(style) ? "#87949a" : "#316e80"}" stroke-dasharray="${["proposed", "cancelled", "rejected"].includes(style) ? "4 3" : "none"}"><title>${escapeHTML(b.vin)} · ${style} · ${time(b.start)}–${time(b.end)} · ${money(b.cost)}</title></rect>`;
     }
   }
   if (
@@ -211,7 +222,7 @@ if (typeof document !== "undefined") {
         ["RUNNING", "QUEUED"].includes(j.status),
       );
     document.querySelectorAll("#review button").forEach((b) => {
-      b.disabled = busy || b.dataset.expired === "true";
+      b.disabled = busy || b.dataset.locked === "true";
     });
   }
   async function action(fn, success = "Updated.") {
@@ -221,8 +232,8 @@ if (typeof document !== "undefined") {
     updateControls();
     message("Updating fleet…");
     try {
-      await fn();
-      message(success);
+      const result = await fn();
+      message(typeof result === "string" ? result : success);
     } catch (error) {
       message(error.message, true);
     } finally {
@@ -397,12 +408,18 @@ if (typeof document !== "undefined") {
       Object.values(fleet.jobs)
         .slice(-3)
         .reverse()
-        .map(
-          (j) =>
-            `<div class="statusline">Planner ${escapeHTML(j.job_id.slice(0, 8))}: <b>${escapeHTML(j.status)}</b> · ${escapeHTML(j.vin || "fleet")} ${["RUNNING", "QUEUED"].includes(j.status) ? `<button data-job="${escapeHTML(j.job_id)}">Cancel</button>` : ""}${j.error ? `<p>${escapeHTML(j.error)}</p>` : ""}${(j.results || []).map((r) => `<p>${escapeHTML(r.vin)} · ${escapeHTML(r.status)} ${escapeHTML(r.reason || "")}</p>`).join("")}</div>`,
-        )
-        .join("") ||
-      '<p class="empty">No planner jobs yet. Plan the fleet or select a vehicle for individual options.</p>';
+        .map((j) => {
+          const active = ["RUNNING", "QUEUED"].includes(j.status);
+          const label = active
+            ? "Searching for journey options…"
+            : j.status === "COMPLETED"
+              ? "Search finished"
+              : j.status === "CANCELLED"
+                ? "Search cancelled"
+                : "Search could not finish";
+          return `<div class="statusline"><b>${label}</b> · ${escapeHTML(j.vin || "Fleet")} ${active ? `<button data-job="${j.job_id}">Cancel search</button>` : ""}${(j.results || []).map((r) => `<p>${escapeHTML(r.vin)} · ${escapeHTML(r.message || "Review the result below.")}</p>`).join("")}<details><summary>Technical details</summary><pre>${escapeHTML(JSON.stringify({ id: j.job_id, status: j.status, error: j.error, results: j.results }, null, 2))}</pre></details></div>`;
+        })
+        .join("") || '<p class="empty">No searches yet.</p>';
     $("history").innerHTML =
       fleet.history
         .slice(-20)
@@ -636,14 +653,40 @@ if (typeof document !== "undefined") {
         "Planning queued. The current journey remains in place until a replacement is approved.",
       );
     if (b.dataset.approve)
-      action(
-        () =>
-          api(`/journeys/${encodeURIComponent(b.dataset.approve)}/approve`, {
+      action(async () => {
+        const response = await api(
+          `/journeys/${encodeURIComponent(b.dataset.approve)}/approve`,
+          {
             run_id: fleet.run_id,
             version: fleet.plans[b.dataset.approve].version,
             acknowledge_recovery: acknowledged,
+          },
+        );
+        return (
+          response.message ||
+          "Journey approved. All requested slots booked together."
+        );
+      }, "Complete journey approved.");
+    if (b.dataset.refresh) {
+      const plan = fleet.plans[b.dataset.refresh];
+      action(
+        () =>
+          api(`/vehicles/${encodeURIComponent(plan.vin)}/journeys/plan`, {
+            recovery: plan.recovery,
+            reserve_exception: plan.reserve_kwh < fleet.policy.reserve_kwh,
+            alternatives: true,
           }),
-        "Complete journey approved.",
+        "Searching the latest available slots. Review the new option before booking.",
+      );
+    }
+    if (b.dataset.reject)
+      action(
+        () =>
+          api(`/journeys/${encodeURIComponent(b.dataset.reject)}/reject`, {
+            run_id: fleet.run_id,
+            version: fleet.plans[b.dataset.reject].version,
+          }),
+        "Option rejected. No charging slots booked.",
       );
     if (b.dataset.cancel)
       action(
@@ -733,73 +776,102 @@ if (typeof document !== "undefined") {
     if (!busy) refresh();
   }, 3000);
 
-  function renderReview(force = false) {
-    if (!force && document.activeElement?.closest("#review")) return;
-    if (!selected || !fleet.vehicles[selected]) {
-      $("review").textContent =
-        "Choose a vehicle to inspect its complete journey.";
-      return;
-    }
+  function renderReview() {
+    if (!selected || !fleet.vehicles[selected]) return;
+    const open = new Set(
+      [...$("review").querySelectorAll("details[open]")].map(
+        (d) => d.dataset.detail,
+      ),
+    );
+    const focused = document.activeElement?.closest("#review")
+      ? document.activeElement.id
+      : null;
     const v = fleet.vehicles[selected];
     const plans = Object.values(fleet.plans)
-      .filter(
-        (p) =>
-          p.vin === selected &&
-          [
-            "PROPOSED",
-            "APPROVED",
-            "EXECUTING",
-            "COMPLETED",
-            "INTERRUPTED",
-          ].includes(p.status),
-      )
+      .filter((p) => p.vin === selected)
       .sort((a, b) => {
-        const rank = {
-          APPROVED: 0,
-          EXECUTING: 0,
-          PROPOSED: 1,
-          INTERRUPTED: 2,
-          COMPLETED: 3,
-        };
+        const rank = (p) =>
+          p.review?.can_approve
+            ? 0
+            : ["APPROVED", "EXECUTING"].includes(p.status)
+              ? 1
+              : 2;
         return (
-          rank[a.status] - rank[b.status] ||
-          (a.status === "PROPOSED"
+          rank(a) - rank(b) ||
+          (rank(a) === 0
             ? a.total_cost - b.total_cost
             : new Date(b.created_at) - new Date(a.created_at))
         );
       });
-    if (!plans.some((p) => p.plan_id === selectedPlan))
-      selectedPlan = plans.find((p) => p.status === "PROPOSED")?.plan_id;
-    let html = `<h3>${escapeHTML(v.name)} · ${escapeHTML(v.state)}</h3><p>${escapeHTML(v.incident || "Customer order is fixed. Arrival deadlines do not move during recovery.")}</p><p class="muted">Order: ${v.deliveries
-      .filter((d) => !d.is_return)
-      .map((d) => `${escapeHTML(d.name)} (${time(d.deadline)} deadline)`)
-      .join(
-        " → ",
-      )} → Depot</p><div class="controls"><button data-plan="normal">Find normal journey</button><button data-plan="recovery">Find recovery options</button><label><span><input id="reserve-exception" type="checkbox"> Allow reserve below ${fleet.policy.reserve_kwh} kWh in recovery</span></label></div>`;
-    if (!plans.length)
-      html +=
-        "<p>No journey yet. Planning may report that physical assistance is required.</p>";
-    for (const p of plans) {
-      const late = p.operations.filter((o) => o.lateness_minutes > 0.001);
-      const stale = new Date(fleet.clock) > new Date(p.valid_until);
-      html += `<article class="plan ${selectedPlan === p.plan_id ? "chosen" : ""}"><div class="plan-head"><div>${p.status === "PROPOSED" ? `<label><input type="radio" name="alternative" value="${p.plan_id}" ${selectedPlan === p.plan_id ? "checked" : ""}> ${escapeHTML(p.reason)}</label>` : `<b>${escapeHTML(p.status)}</b>`}<small>Option ${escapeHTML(p.plan_id.slice(0, 8))} · version ${p.version} · ${escapeHTML(p.solver.status)}</small></div><div class="price">${money(p.total_cost)}<small>whole journey estimate</small></div></div><div class="journey-metrics"><span>Return at<b>${time(p.operations.at(-1).end)}</b></span><span>Grid energy<b>${p.operations.reduce((n, o) => n + o.grid_kwh, 0).toFixed(2)} kWh</b></span><span>Final battery<b>${p.operations.at(-1).energy_end.toFixed(2)} kWh</b></span><span>Arrival reserve<b>${p.reserve_kwh} kWh</b></span></div><div class="table-wrap"><table><thead><tr><th>Stop</th><th>Travel / arrive</th><th>Service / charging</th><th>Deadline / late</th><th>Energy in → out</th><th>Grid / cost</th></tr></thead><tbody>`;
-      for (const o of p.operations)
-        html += `<tr><td>${escapeHTML(o.name)}<br><small>${o.kind}${o.port ? " · port " + o.port : ""} · ${o.status}</small></td><td>${time(o.depart)} → ${time(o.arrival)}</td><td>${time(o.start)} → ${time(o.end)}</td><td>${time(o.deadline)}${o.lateness_minutes > 0.001 ? `<br><b class="bad">${o.lateness_minutes.toFixed(1)} min late</b>` : ""}</td><td>${o.energy_arrival.toFixed(2)} → ${o.energy_end.toFixed(2)} kWh</td><td>${o.grid_kwh.toFixed(2)} kWh<br>${money(o.cost)}</td></tr>`;
-      html += `</tbody></table></div><p class="muted">${escapeHTML(p.solver.scope)}. ${Number(p.solver.elapsed_seconds ?? 0).toFixed(2)} s. Review by ${time(p.valid_until)}.</p>`;
-      if (p.recovery)
-        html += `<p class="bad">Recovery: ${late.length} late stop(s); maximum ${Math.max(0, ...late.map((o) => o.lateness_minutes)).toFixed(1)} min late; total ${late.reduce((n, o) => n + o.lateness_minutes, 0).toFixed(1)} min. Reserve floor ${p.reserve_kwh} kWh.</p>`;
-      if (p.status === "PROPOSED" && selectedPlan === p.plan_id) {
-        if (p.recovery)
-          html += `<label class="ack"><input id="ack" type="checkbox" ${acknowledged ? "checked" : ""}> I acknowledge these arrival delays and this reserve floor.</label>`;
-        html += `<button class="primary" data-approve="${p.plan_id}" data-expired="${stale}" ${stale ? "disabled" : ""}>${stale ? "Expired — request a fresh plan" : "Approve this complete journey"}</button>`;
-      }
-      if (["APPROVED", "EXECUTING"].includes(p.status))
-        html += ` <button data-cancel="${p.plan_id}">Cancel remaining journey</button>`;
-      html += "</article>";
+    const available = plans.filter((p) => p.review?.can_approve);
+    if (!available.some((p) => p.plan_id === selectedPlan)) {
+      const replacement = available[0]?.plan_id || null;
+      if (replacement !== selectedPlan) acknowledged = false;
+      selectedPlan = replacement;
     }
+    let html = `<h3>${escapeHTML(v.name)} · ${human(v.state)}</h3><p>${escapeHTML(v.incident || "Compare the complete journey, then approve its charging slots.")}</p>
+      <div class="controls"><button data-plan="normal">Find on-time options</button><button data-plan="recovery">Review options allowing delays</button>
+      <label><input id="reserve-exception" type="checkbox" ${reserveException ? "checked" : ""}> Allow reduced reserve in delayed options</label></div>
+      <p class="muted">Nothing is booked until approval. All slots are checked again before booking.</p><div class="journey-options">`;
+    for (const plan of plans) {
+      const r = plan.review;
+      if (!r) continue;
+      const locked =
+        !r.can_approve &&
+        !["APPROVED", "EXECUTING", "COMPLETED"].includes(r.state);
+      const chosen = selectedPlan === plan.plan_id;
+      const label = r.can_approve
+        ? plan.plan_id === available[0]?.plan_id
+          ? "Recommended - lowest cost shown"
+          : "Alternative"
+        : {
+            OUTDATED: "Needs updating",
+            REJECTED: "Rejected by manager",
+            SUPERSEDED: "Not selected / replaced",
+            INTERRUPTED: "Journey interrupted",
+            CANCELLED: "Cancelled",
+            APPROVED: "Approved",
+            EXECUTING: "In progress",
+            COMPLETED: "Journey finished",
+          }[r.state] || human(r.state);
+      html += `<article class="plan ${locked ? "plan-locked" : ""} ${chosen ? "chosen" : ""}"><div class="plan-head"><div><h3>${r.can_approve ? `<label><input type="radio" name="alternative" value="${plan.plan_id}" ${chosen ? "checked" : ""}> ${label}</label>` : label}</h3><small>${plan.recovery ? "Allows delivery delays" : "On-time journey"}</small></div><div class="price">${money(plan.total_cost)}<small>${locked ? "earlier estimate" : "total journey charging cost"}</small></div></div>
+        <ul class="plan-pointers">${r.reason ? `<li><b>${escapeHTML(r.reason)}</b></li>` : ""}<li>${locked ? "Earlier estimate: " : ""}${escapeHTML(r.delivery_summary)}</li><li>Return ${time(r.return_at)} IST with ${r.return_pct}% battery.</li><li>Reserve floor: ${r.reserve_pct}% (${plan.reserve_kwh} kWh).</li></ul>`;
+      const booked = ["APPROVED", "EXECUTING"].includes(plan.status);
+      html += `<h4>${booked ? "Booked charging slots" : locked ? "Earlier requested slots" : r.state === "COMPLETED" ? "Charging slots used" : "Slots requested on approval"}</h4>`;
+      if (!r.slots.length)
+        html += `<p class="muted">${locked ? "This earlier option required no charging slots." : "No charging slots needed. Existing battery covers the remaining deliveries and depot return."}</p>`;
+      for (const slot of r.slots)
+        html += `<div class="requested-slot"><b>${escapeHTML(slot.station)} · Port ${slot.port}</b><p>${dateIST(slot.start)} · ${slotTime(slot.start)} → ${dateIST(slot.end) !== dateIST(slot.start) ? dateIST(slot.end) + " " : ""}${slotTime(slot.end)} IST <small>Includes connection and release</small></p><ul class="plan-pointers"><li><b>Charge ${slot.arrival_pct}% → ${slot.target_pct}%</b> · add ${slot.battery_added_kwh} kWh.</li><li>${escapeHTML(slot.reason)}</li>${slot.carry_reason ? `<li>${escapeHTML(slot.carry_reason)}</li>` : ""}<li>Buy ${slot.grid_kwh.toFixed(2)} grid kWh · ${money(slot.cost)}.</li></ul></div>`;
+      if (r.can_approve)
+        html += `<p class="slot-check">Available in the latest check; rechecked together when you approve.</p>`;
+      if (r.can_approve && chosen) {
+        if (plan.recovery)
+          html += `<label class="ack"><input id="ack" type="checkbox" ${acknowledged ? "checked" : ""}> I accept the displayed delays and ${r.reserve_pct}% reserve floor.</label>`;
+        html += `<div class="actions"><button class="primary" data-approve="${plan.plan_id}">${r.slots.length ? "Approve journey & book " + r.slots.length + " slot" + (r.slots.length === 1 ? "" : "s") : "Approve journey"}</button><button data-reject="${plan.plan_id}">Reject option</button></div>`;
+      }
+      if (r.state === "OUTDATED")
+        html += `<button class="primary" data-refresh="${plan.plan_id}">Refresh options</button>`;
+      if (booked)
+        html += `<button data-cancel="${plan.plan_id}">Cancel remaining journey</button>`;
+      html += `<details class="journey-details" data-detail="${plan.plan_id}" ${open.has(plan.plan_id) ? "open" : ""}><summary>View journey details</summary><div class="table-wrap"><table><thead><tr><th>Stop</th><th>Arrive</th><th>Finish</th><th>Deadline</th><th>Battery kWh</th><th>Cost</th></tr></thead><tbody>`;
+      for (const op of plan.operations)
+        html += `<tr><td>${escapeHTML(op.name)}<small>${human(op.status)}</small></td><td>${time(op.arrival)}</td><td>${time(op.end)}</td><td>${time(op.deadline)}${op.lateness_minutes > 0.001 ? `<br>${op.lateness_minutes.toFixed(1)} min late` : ""}</td><td>${op.energy_arrival.toFixed(2)} → ${op.energy_end.toFixed(2)}</td><td>${money(op.cost)}</td></tr>`;
+      html += `</tbody></table></div><small>Estimate calculated for this option; later changes require a fresh review.</small></details></article>`;
+    }
+    const latest = Object.values(fleet.jobs)
+      .slice()
+      .reverse()
+      .find((j) => (j.results || []).some((r) => r.vin === selected));
+    for (const row of (latest?.results || []).filter(
+      (r) => r.vin === selected && !r.plan_id,
+    ))
+      html += `<article class="plan plan-locked"><h3>No usable option</h3><ul class="plan-pointers"><li>${escapeHTML(row.message || "Refresh options to search again.")}</li><li>No charging slots booked.</li></ul></article>`;
+    if (!plans.length && !latest)
+      html +=
+        '<p class="empty">Choose Find on-time options to compare journeys.</p>';
+    html += "</div>";
     $("review").innerHTML = html;
-    if ($("reserve-exception"))
-      $("reserve-exception").checked = reserveException;
+    if (focused && $(focused)) $(focused).focus({ preventScroll: true });
   }
 
   async function loadDay() {

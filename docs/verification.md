@@ -6,7 +6,7 @@ Environment: Windows 11, Python 3.13.2, SciPy 1.16.3, Motor 3.6.0, PyMongo 4.9.2
 
 ## Checks
 
-- 30 Python test cases passed in a single full run (109.21 seconds): 22 model/physics/execution/timezone tests, 5 real MongoDB/HTTP/process tests, 2 complete scenario tests, and 1 Kafka ingress replay/invalid-payload test.
+- 35 Python test cases passed in a single full run (112.86 seconds): 22 model/physics/execution/timezone tests, 5 real MongoDB/HTTP/process tests, 2 complete scenario tests, 1 Kafka ingress replay/invalid-payload test, and 5 plan-review/booking-refresh tests.
 - 9 Node frontend tests passed, including complete map routes, interrupted-route fallback and approval-aware readiness.
 - Ruff checks and Python compilation passed; JavaScript syntax checking and Git whitespace checking passed.
 - A real browser loaded the 12-vehicle scenario, ran the process-isolated planner, displayed selectable whole-journey alternatives, and approved the cheaper option. The observed example was ₹32.09 with return at 10:05, compared with an earlier-return alternative at ₹60.62.
@@ -15,6 +15,10 @@ Environment: Windows 11, Python 3.13.2, SciPy 1.16.3, Motor 3.6.0, PyMongo 4.9.2
 - The cancellation regression distinguishes a waiting vehicle from one actually plugged in. Physical release blocks immediate replanning; interruption stops energy draw. A subsecond-tick regression verifies that a travel-triggered stranding event does not keep shifting into the future.
 
 The database suite exercises approvals from separate OS processes, a process exit immediately after durable commit and before response, idempotent retry, reset fencing, preservation of unrelated records, restart persistence, the HTTP plan/approve/execute flow, and termination of a solver belonging to an old run.
+
+## Concise decision cards and booking checks
+
+The review tests cover target battery percentages and the complete requested slot chain, a slot taken after proposal, shared power becoming unavailable, stale departure time, rejected options, and idempotent approval after departure time. A conflict starts a new search without booking a partial chain. Browser checks confirmed grey rejected cards, explicit station/port/second-level IST windows, and a working Refresh options action after simulated time advanced.
 
 ## Benchmarks
 

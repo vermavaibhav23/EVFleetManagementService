@@ -15,9 +15,10 @@ from app.domain import (
     dt,
     effective_capacity,
 )
-from app.services.control import approve, request_job, telemetry
+from app.services.control import approve_or_refresh, reject, request_job, telemetry
 from app.services.execution import advance, apply_event, interrupt
 from app.services.ledger import Ledger, bookings
+from app.services.plan_review import result_message, review
 from app.services.pricing import intervals
 from app.services.seed import seed
 
@@ -45,6 +46,11 @@ async def state(store: Ledger = Depends(ledger)):
     doc = await store.read()
     doc.pop("_id", None)
     doc["reservations"] = bookings(doc) + doc.get("external_bookings", [])
+    for plan in doc["plans"].values():
+        plan["review"] = review(doc, plan)
+    for job in doc["jobs"].values():
+        for row in job.get("results", []):
+            row["message"] = result_message(doc, row)
     return doc
 
 
@@ -121,7 +127,14 @@ async def cancel_job(job_id: str, request: Approval, store: Ledger = Depends(led
 async def approve_plan(
     plan_id: str, request: Approval, store: Ledger = Depends(ledger)
 ):
-    return await store.mutate(lambda d: approve(d, plan_id, request), request.run_id)
+    return await store.mutate(
+        lambda d: approve_or_refresh(d, plan_id, request), request.run_id
+    )
+
+
+@router.post("/journeys/{plan_id}/reject")
+async def reject_plan(plan_id: str, request: Approval, store: Ledger = Depends(ledger)):
+    return await store.mutate(lambda d: reject(d, plan_id, request), request.run_id)
 
 
 @router.post("/journeys/{plan_id}/cancel")

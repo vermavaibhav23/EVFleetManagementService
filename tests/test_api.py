@@ -54,6 +54,13 @@ def test_http_plan_review_approve_execute_and_reset():
             assert job["status"] == "COMPLETED", job
             assert job["results"][0]["status"] == "OPTIMAL_MODEL", job
             plan_id = job["results"][0]["plan_id"]
+            proposal = client.get("/api/v1/fleet").json()["plans"][plan_id]
+            assert proposal["review"]["can_approve"]
+            assert (
+                proposal["review"]["delivery_summary"]
+                == "All remaining deliveries on time."
+            )
+            assert proposal["review"]["slots"] == []
             response = client.post(
                 f"/api/v1/journeys/{plan_id}/approve", json={"run_id": run_id}
             )
