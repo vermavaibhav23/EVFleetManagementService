@@ -496,7 +496,7 @@ if (typeof document !== "undefined") {
         $("day").value = "";
         const supported = [...$("scenario").options].some(o => o.value === result.scenario);
         $("scenario").value = supported ? result.scenario : "EVERYDAY_CHOICES";
-        $("vehicle-count").value = 4;
+        $("vehicle-count").value = Math.max(4, Object.keys(result.vehicles).length);
         $("seed").value = result.seed;
         $("start").value =
           dateIST(result.start_time) + "T" + time(result.start_time);
@@ -530,8 +530,8 @@ if (typeof document !== "undefined") {
     speed: Number($("speed").value),
   });
   $("seed-button").onclick = () => {
-    const count = ["NORMAL_DAY", "EDGE_CASE_DAY"].includes($("scenario").value) ? Number($("vehicle-count").value) : 4,
-      min = $("scenario").value === "EDGE_CASE_DAY" ? 12 : 1;
+    const count = Number($("vehicle-count").value),
+      min = 4;
     if (
       !Number.isInteger(count) ||
       count < min ||
@@ -553,11 +553,12 @@ if (typeof document !== "undefined") {
           seed: Number($("seed").value),
           start_time: $("start").value + ":00+05:30",
         }),
-      "Four-vehicle scenario loaded · paused. Review vehicle roles and incident controls before starting.",
+      "Scenario loaded with your selected fleet size · paused. Review vehicle roles and incident controls before starting.",
     );
   };
   $("scenario").onchange = () => {
-    $("vehicle-count").value = ["NORMAL_DAY", "EDGE_CASE_DAY"].includes($("scenario").value) ? 12 : 4;
+    $("vehicle-count").min = 4;
+    if (Number($("vehicle-count").value) < 4) $("vehicle-count").value = 4;
   };
   $("start-button").onclick = () =>
     action(

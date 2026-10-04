@@ -30,8 +30,13 @@ class LoadRequest(BaseModel):
 
     @model_validator(mode="after")
     def coverage(self):
-        if self.scenario not in (Scenario.NORMAL_DAY, Scenario.EDGE_CASE_DAY):
-            self.vehicle_count = 4
+        if (
+            self.scenario not in (Scenario.NORMAL_DAY, Scenario.EDGE_CASE_DAY)
+            and self.vehicle_count < 4
+        ):
+            raise ValueError(
+                "These scenarios need at least 4 vehicles to include every core case"
+            )
         if self.scenario == Scenario.EDGE_CASE_DAY and self.vehicle_count < 12:
             raise ValueError("Edge-case coverage requires at least 12 vehicles")
         return self

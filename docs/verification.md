@@ -6,7 +6,7 @@ Environment: Windows 11, Python 3.13.2, SciPy 1.16.3, Motor 3.6.0, PyMongo 4.9.2
 
 ## Checks
 
-- 45 Python test cases passed in a single full run (87.72 seconds), including 10 focused-scenario cases. The earlier 35-test baseline comprised: 22 model/physics/execution/timezone tests, 5 real MongoDB/HTTP/process tests, 2 complete scenario tests, 1 Kafka ingress replay/invalid-payload test, and 5 plan-review/booking-refresh tests.
+- 50 Python test cases passed in a single full run (105.18 seconds), including 15 focused-scenario and fleet-size cases. The earlier 35-test baseline comprised: 22 model/physics/execution/timezone tests, 5 real MongoDB/HTTP/process tests, 2 complete scenario tests, 1 Kafka ingress replay/invalid-payload test, and 5 plan-review/booking-refresh tests.
 - 9 Node frontend tests passed, including complete map routes, interrupted-route fallback and approval-aware readiness.
 - Ruff checks and Python compilation passed; JavaScript syntax checking and Git whitespace checking passed.
 - A real browser loaded the 12-vehicle scenario, ran the process-isolated planner, displayed selectable whole-journey alternatives, and approved the cheaper option. The observed example was ₹32.09 with return at 10:05, compared with an earlier-return alternative at ₹60.62.
@@ -22,7 +22,7 @@ The review tests cover target battery percentages and the complete requested slo
 
 ## Four focused scenario groups
 
-All four groups loaded through the real local HTTP server backed by isolated MongoDB. A request with fleet size 12 normalized to four for each group. The HTTP checks confirmed stale-run rejection, a successful charging-failure action, retained energy, persisted pause and prevention of duplicate incident replay.
+All four groups loaded through the real local HTTP server backed by isolated MongoDB. Fleet sizes now remain selectable from 4 to 100; the four core cases stay intact. The HTTP checks confirmed stale-run rejection, a successful charging-failure action, retained energy, persisted pause and prevention of duplicate incident replay.
 
 The ten scenario tests cover distinct initial map positions, valid staged charging/driving/unloading states, solver-selected split charging (8 + 20 stored kWh at 92% efficiency), execution through return, fast-versus-slow deadline feasibility, charge-at-origin below reserve, a no-charge journey, external bookings, site-power conflicts, release occupation, preserved deadlines, physical stranding, health blocking and unaffected comparison vehicles. The final Everyday preset refinement was followed by another successful ten-test run (17.17 seconds).
 
@@ -50,3 +50,7 @@ The benchmark measures initial planning. The end-to-end scenario tests separatel
 Docker was not running, so a container build was not executed. The application and database were run directly on Windows. Kafka parsing, run fencing, duplicate handling and explicit per-partition commits were tested with a consumer fixture; no live Kafka broker was available. Automated tests use only isolated local databases. Deployment verification is separate from these tests; the repository README describes the GitHub-to-Railway workflow.
 
 The model deliberately does not promise a global fleet optimum, variable shared-power allocation, charger chaining within one customer gap, auxiliary battery drain or real road-network travel times. See [model scope](model.md) and [migration notes](migration.md) before using the new contract with existing clients.
+
+## Restored fleet size selection
+
+The browser accepted a fleet size of 12, retained it when switching scenarios, and loaded all 12 vehicles. Five additional tests check expansion in every scenario, preservation of the core vehicles and incident controls, valid added journeys, distinct starting positions, the 4–100 limits and a repeatable 100-vehicle fleet. All 96 added vehicles in the largest fixture received independently validated journeys.

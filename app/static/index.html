@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#103d36" />
     <title>EV Fleet</title>
-    <link rel="stylesheet" href="/static/styles.css?v=journey-4-scenarios" />
+    <link rel="stylesheet" href="/static/styles.css?v=journey-5-fleet-size" />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to fleet workspace</a>
@@ -36,9 +36,9 @@
           >Fleet size<input
             id="vehicle-count"
             type="number"
-            min="1"
+            min="4"
             max="100"
-            value="4" readonly
+            value="4"
         /></label>
         <label>Seed<input id="seed" type="number" value="42" /></label
         ><label
@@ -230,6 +230,6 @@
         ><span id="freshness">Waiting for first snapshot</span>
       </footer>
     </main>
-    <script src="/static/app.js?v=journey-4-scenarios"></script>
+    <script src="/static/app.js?v=journey-5-fleet-size"></script>
   </body>
 </html>

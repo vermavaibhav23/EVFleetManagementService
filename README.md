@@ -19,7 +19,7 @@ Alternatively, `docker compose up --build` starts the API and MongoDB. Open `/po
 
 ## Manager workflow
 
-1. Choose one of the **four focused scenarios** below and select **Load / reset**. Each loads four vehicles at different starting locations, paused at the chosen IST time. Fleet size is fixed at four for these demos. Loading replaces the current simulation; deploying new code alone preserves the existing run.
+1. Choose one of the **four focused scenarios** below and select **Load / reset**. Select **4–100 vehicles**. The first four cover the core cases; additional vehicles get normal independent routes and distinct, seed-reproducible starting locations. The scenario loads paused at the chosen IST time. Loading replaces the current simulation; deploying new code alone preserves the existing run.
 2. Keep the clock paused and choose **Plan fleet**, or select a vehicle in the attention queue/map and choose **Review journey**. Under **Plans & Decisions**, use **Find on-time options** for individual alternatives. Planning runs in a separate, cancellable process; its status and cancellation control appear under **Journey searches**. Fleet planning serves vehicles with fewer reachable chargers first, then earlier deadlines.
 3. Review every delivery, charging stop and return, arrival deadlines, service completion, reserve, energy purchases and total cost. Choose the exact alternative to approve. Individual planning also searches for an earlier-completion alternative, including different energy amounts at the same station. **Vehicles** keeps the original fixed delivery timetable visible independently of charging proposals.
 4. Approve the complete journey. Its full reservation chain becomes visible atomically. Then start or step the simulated clock.
@@ -46,7 +46,7 @@ A1 uses an explicit demo road corridor: A → Premium → B → Economy → C �
 
 Use one disruption per replay so its effect is clear. Other vehicles keep independent state, but charger ports and each site's power are shared. The four supplies are separate so the unaffected comparison vehicle is not stopped by an unrelated site fault. Incidents pause the entire clock, not just one vehicle. **Start** intentionally resumes continuous simulation, in which unapproved options can become outdated.
 
-`NORMAL_DAY` and `EDGE_CASE_DAY` remain API-only compatibility/stress fixtures for existing runs and benchmarks; they are no longer dropdown choices. New scenario requests always normalize fleet size to four.
+`NORMAL_DAY` and `EDGE_CASE_DAY` remain API-only compatibility/stress fixtures for existing runs and benchmarks; they are no longer dropdown choices. New scenario requests preserve the selected fleet size (4–100); smaller counts return a validation error because they would omit core cases.
 
 ## Railway deployment
 

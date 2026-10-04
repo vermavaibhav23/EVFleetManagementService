@@ -1,6 +1,7 @@
 """Four focused demos. Live journeys are staged through the real planner/executor."""
 
 from datetime import timedelta
+from random import Random
 
 from fastapi import HTTPException
 
@@ -36,7 +37,7 @@ def grouped_seed(request):
     doc = seed(
         LoadRequest(
             scenario="NORMAL_DAY",
-            vehicle_count=4,
+            vehicle_count=request.vehicle_count,
             seed=request.seed,
             start_time=request.start_time,
         )
@@ -66,7 +67,7 @@ def grouped_seed(request):
     doc["scenario_actions"] = []
     vs = list(doc["vehicles"].values())
     letter = dict(zip(GROUPS, "ABCD"))[doc["scenario"]]
-    for i, v in enumerate(vs):
+    for i, v in enumerate(vs[:4]):
         v.update(
             **loc(8 + i * 3, 35 + i * 85),
             energy_kwh=18,
@@ -408,10 +409,36 @@ def grouped_seed(request):
             approve(doc, plan["plan_id"], Approval(run_id=doc["run_id"]))
             plan["seeded_journey"] = True
         advance(doc, 900)
+    # Add ordinary routes without duplicating incidents or changing the four core cases.
+    rng = Random(request.seed)
+    for i, v in enumerate(vs[4:], start=4):
+        bearing = (i * 137.508 + request.seed) % 360
+        origin = loc(8 + rng.random() * 12, bearing)
+        v.update(
+            **origin,
+            name=f"Van {letter}{i + 1}",
+            energy_kwh=18 + rng.random() * 12,
+            connector="TYPE2" if group == "EVERYDAY_CHOICES" else "CCS2",
+            case="ADDITIONAL_VEHICLE",
+            starting_context="Additional vehicle on its own delivery route; plan charging only if needed.",
+        )
+        v["deliveries"] = [
+            Delivery(
+                trip_id=f"{v['vin']}-D{j + 1}",
+                sequence=j + 1,
+                name=f"Customer {i + 1}.{j + 1}",
+                **point(origin["lat"], origin["lon"], 2 + j * 2, bearing + j * 15),
+                ready_at=start,
+                accepts_at=start,
+                deadline=start + timedelta(minutes=90 + j * 70),
+                service_minutes=6,
+            ).model_dump(mode="json")
+            for j in range(3)
+        ]
     record(
         doc,
         "DEMO_SETUP",
-        "Four-vehicle snapshot loaded paused. Existing journeys are simulated prior approvals; new options still need approval.",
+        f"{len(vs)}-vehicle snapshot loaded paused, including four core cases. Existing journeys are simulated prior approvals; new options still need approval.",
     )
     return doc
 

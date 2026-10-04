@@ -25,7 +25,7 @@ def attach(doc, vin):
 
 @pytest.mark.parametrize("group", GROUPS)
 def test_four_distinct_vehicles_and_consistent_staged_states(group):
-    doc = seed(LoadRequest(scenario=group, vehicle_count=12))
+    doc = seed(LoadRequest(scenario=group, vehicle_count=4))
     assert len(doc["vehicles"]) == 4
     assert len({(v["lat"], v["lon"]) for v in doc["vehicles"].values()}) == 4
     assert not doc["running"]
@@ -157,3 +157,40 @@ def test_stranding_health_and_deadline_are_distinct_and_guarded():
     fresh["vehicles"]["SIM-002"]["state"] = "PARKED"
     with pytest.raises(HTTPException):
         trigger_action(fresh, "strand")
+
+
+@pytest.mark.parametrize("group", GROUPS)
+def test_selected_fleet_size_preserves_core_cases_and_adds_distinct_routes(group):
+    small = seed(LoadRequest(scenario=group, vehicle_count=4))
+    large = seed(LoadRequest(scenario=group, vehicle_count=12))
+    assert len(large["vehicles"]) == 12
+    assert len({(v["lat"], v["lon"]) for v in large["vehicles"].values()}) == 12
+    assert len(large["scenario_actions"]) == len(small["scenario_actions"])
+    for vin, core in small["vehicles"].items():
+        actual = large["vehicles"][vin]
+        assert (actual["case"], actual["state"]) == (core["case"], core["state"])
+        assert actual["lat"] == pytest.approx(core["lat"])
+        assert actual["lon"] == pytest.approx(core["lon"])
+        assert actual["energy_kwh"] == pytest.approx(core["energy_kwh"])
+    for vin in ("SIM-005", "SIM-012"):
+        assert large["vehicles"][vin]["case"] == "ADDITIONAL_VEHICLE"
+        result = optimize(large, vin)
+        assert "plan" in result, result
+        assert not validate(large, result["plan"])
+
+
+def test_fleet_size_limits_and_large_fleet_reproducibility():
+    from pydantic import ValidationError
+
+    for count in (1, 3, 101):
+        with pytest.raises(ValidationError):
+            LoadRequest(scenario="EVERYDAY_CHOICES", vehicle_count=count)
+    a = seed(LoadRequest(scenario="EVERYDAY_CHOICES", vehicle_count=100, seed=77))
+    b = seed(LoadRequest(scenario="EVERYDAY_CHOICES", vehicle_count=100, seed=77))
+    assert len(a["vehicles"]) == 100
+    assert a["vehicles"] == b["vehicles"]
+    assert len({(v["lat"], v["lon"]) for v in a["vehicles"].values()}) == 100
+    for v in list(a["vehicles"].values())[4:]:
+        result = optimize(a, v["vin"])
+        assert "plan" in result, result
+        assert not validate(a, result["plan"])
