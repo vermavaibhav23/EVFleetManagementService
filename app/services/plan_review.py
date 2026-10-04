@@ -83,10 +83,35 @@ def review(doc, plan):
             )
         )
     late = [o for o in operations if o.get("lateness_minutes", 0) > 0.001]
+    affected = "; ".join(f"{o['name']} +{o['lateness_minutes']:.1f} min" for o in late)
+    minimum = min(o["energy_arrival"] for o in operations)
+    reduced = plan["reserve_kwh"] < doc["policy"]["reserve_kwh"] - 0.001
+    if reduced:
+        tradeoff = (
+            "Prioritise deadlines — uses emergency battery reserve"
+            if minimum < doc["policy"]["reserve_kwh"] - 0.001
+            else "Prioritise deadlines — reduced reserve allowed"
+        )
+        tradeoff += f"; lowest planned battery {pct(minimum):.1f}% ({minimum:.2f} kWh)."
+        tradeoff += (
+            f" Still delayed: {affected}." if late else " All deliveries on time."
+        )
+    elif late:
+        tradeoff = f"Protect battery reserve — delays: {affected}."
+    else:
+        tradeoff = "Meet all deadlines and protect battery reserve."
+    if plan.get("comparison_goal") == "EARLIER_RETURN":
+        tradeoff = "Earlier return option — " + tradeoff[0].lower() + tradeoff[1:]
     return dict(
         state=state,
         reason=reason,
         can_approve=state == "PROPOSED",
+        tradeoff=tradeoff,
+        reduced_reserve=reduced,
+        minimum_battery_pct=pct(minimum),
+        affected_customers=[
+            dict(name=o["name"], minutes=o["lateness_minutes"]) for o in late
+        ],
         delivery_summary="All remaining deliveries on time."
         if not late
         else "; ".join(
@@ -126,5 +151,5 @@ def result_message(doc, row):
     if row["status"] == "LIMIT_NO_INCUMBENT":
         return "The search timed out without a usable option. Try again."
     if row["status"] == "INFEASIBLE_MODEL":
-        return "No journey fits the battery, deadline and charger limits. Review delayed options or arrange help if stranded."
+        return "No journey fits this option's battery, deadline and charger limits. Compare the other cards; assistance may be needed if stranded."
     return "No usable option was returned. Refresh options; technical details are available below."

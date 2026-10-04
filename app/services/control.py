@@ -114,6 +114,7 @@ def approve_or_refresh(doc, plan_id, request):
                     doc,
                     plan["vin"],
                     PlanRequest(
+                        compare_tradeoffs=bool(plan.get("comparison_goal")),
                         recovery=plan["recovery"],
                         reserve_exception=plan["reserve_kwh"]
                         < doc["policy"]["reserve_kwh"],

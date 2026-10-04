@@ -219,6 +219,7 @@ class Approval(BaseModel):
 
 
 class PlanRequest(BaseModel):
+    compare_tradeoffs: bool = False
     recovery: bool = False
     reserve_exception: bool = False
     alternatives: bool = True

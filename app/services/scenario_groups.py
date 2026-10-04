@@ -168,7 +168,7 @@ def grouped_seed(request):
             **loc(15, 135), name="South fast", price=22, power_kw=60, connector="TYPE2"
         )
         slow.update(
-            **loc(15, 145),
+            **loc(20, 170),
             name="South slow economy",
             price=8,
             power_kw=7,
@@ -453,6 +453,11 @@ def grouped_seed(request):
         ]
         staged.append(i)
     # Build actual approved journeys, then advance every staged vehicle together.
+    # Keep the main fleet depot separate from the northeast return depot and
+    # station supplies. Geometry is finalized before planning any journeys.
+    base.update(**loc(8, 220))
+    if "HOME-A" in doc["depots"]:
+        doc["depots"]["HOME-A"]["name"] = "Northeast depot"
     # This is seed history only; live proposals and replacements still need approval.
     if staged:
         doc["clock"] = earlier.isoformat()

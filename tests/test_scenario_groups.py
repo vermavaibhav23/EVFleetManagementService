@@ -74,7 +74,11 @@ def test_split_charge_is_solver_selected_and_executes_with_real_efficiency():
 
 
 def test_everyday_tradeoffs_are_real_constraints():
+    from app.services.geometry import distance
+
     doc = seed(LoadRequest(scenario="EVERYDAY_CHOICES"))
+    assert distance(doc["stations"]["SIM-C3"], doc["stations"]["SIM-C4"]) > 10
+    assert distance(doc["depots"]["SIM-DEPOT"], doc["depots"]["HOME-A"]) > 12
     fast = optimize(doc, "SIM-002")
     assert fast["plan"]["operations"][0]["charger_id"] == "SIM-C3"
     slow = deepcopy(doc)

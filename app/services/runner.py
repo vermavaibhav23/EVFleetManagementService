@@ -38,6 +38,59 @@ def priority(doc, vin):
     )
 
 
+def compare_options(doc, vin, alternatives=True):
+    """Compare reserve-preserving and deadline-priority journeys on one snapshot.
+
+    Reduced reserve is searched only when the normal constraints cannot both
+    be satisfied. It never relaxes physical energy, health, ports or power.
+    """
+    results = []
+
+    def add(result, goal):
+        result.update(vin=vin, comparison_goal=goal)
+        plan = result.get("plan")
+        if plan:
+            plan["comparison_goal"] = goal
+
+            # Different search modes can return the same physical journey.
+            def signature(p):
+                return [
+                    (
+                        o["kind"],
+                        o.get("charger_id"),
+                        o.get("port"),
+                        o.get("trip_id"),
+                        str(o["arrival"]),
+                        str(o["end"]),
+                        round(o["energy_end"], 3),
+                    )
+                    for o in p["operations"]
+                ]
+
+            if any(
+                signature(r["plan"]) == signature(plan) for r in results if "plan" in r
+            ):
+                return
+        results.append(result)
+
+    normal = optimize(doc, vin)
+    if "plan" in normal:
+        add(normal, "PROTECT_RESERVE")
+        if alternatives and normal["plan"]["total_cost"] > 0:
+            add(optimize(doc, vin, fastest=True), "EARLIER_RETURN")
+    else:
+        # Keep the unavailable strict option visible with its failure reason.
+        add(normal, "ON_TIME_WITH_RESERVE")
+        if normal["status"] == "ERROR":
+            return results
+        add(optimize(doc, vin, recovery=True), "PROTECT_RESERVE")
+        add(
+            optimize(doc, vin, recovery=True, reserve_exception=True),
+            "PROTECT_DEADLINES",
+        )
+    return results
+
+
 def solve_job(snapshot, job, output):
     try:
         working = deepcopy(snapshot)
@@ -56,6 +109,15 @@ def solve_job(snapshot, job, output):
         )
         req = job["request"]
         for vin in vins:
+            if req.get("compare_tradeoffs"):
+                options = compare_options(working, vin, req["alternatives"])
+                results.extend(options)
+                selected = next((r["plan"] for r in options if "plan" in r), None)
+                if selected:
+                    plan = deepcopy(selected)
+                    plan["status"] = "APPROVED"
+                    working["plans"][plan["plan_id"]] = plan
+                continue
             result = optimize(working, vin, req["recovery"], req["reserve_exception"])
             result["vin"] = vin
             results.append(result)
@@ -150,7 +212,7 @@ class Runner:
                         lease_until=wall
                         + timedelta(
                             seconds=doc["policy"]["solver_seconds"]
-                            * max(2, len(doc["vehicles"]))
+                            * max(4, 3 * len(doc["vehicles"]))
                             + 90
                         ),
                     )
