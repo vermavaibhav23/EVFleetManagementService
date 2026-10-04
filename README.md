@@ -113,6 +113,8 @@ This is an intentional schema/API revision. Old independent trip, charging-plan 
 
 Approval clients must inspect the response `status`: `APPROVED` confirms booking; `REPLAN_QUEUED` or `REFRESH_REQUIRED` means nothing was booked and fresh review is required. `GET /fleet` includes derived `review` explanations on plans; these annotations are not stored as scheduling authority.
 
+While a manager reviews an option, the simulated clock may continue. When its departure time passes or conditions change, the portal removes the stale proposed charger route and price from the selected vehicle panel. Pending customers whose arrival deadlines have passed are named with their overdue time; already-arrived or unloading customers are excluded. **Update options** searches again from the current time and checks available slots. Earlier cards remain locked as historical estimates. Missing an arrival deadline prevents an on-time delivery, but a delayed journey can still be feasible. Approved journeys are not expired by this review-time rule.
+
 ## Verification
 
 ```sh

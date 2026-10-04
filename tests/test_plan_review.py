@@ -100,6 +100,24 @@ def test_rejected_option_is_preserved_and_cannot_be_booked(example):
         approve_or_refresh(doc, pid, request)
 
 
+def test_elapsed_review_identifies_missed_arrival_deadlines_without_booking(example):
+    doc, pid = deepcopy(example)
+    plan = doc["plans"][pid]
+    vehicle = doc["vehicles"][plan["vin"]]
+    pending = [d for d in vehicle["deliveries"] if not d.get("is_return")]
+    doc["clock"] = max(dt(d["deadline"]) for d in pending) + timedelta(minutes=1)
+    pending[0]["arrived_at"] = pending[0]["deadline"]
+    result = review(doc, plan)
+    assert result["state"] == "OUTDATED"
+    assert not result["can_approve"]
+    assert "On-time delivery is no longer possible" in result["tradeoff"]
+    for delivery in pending[1:]:
+        assert delivery["name"] in result["reason"]
+    named = result["reason"].split("passed for ")[1].split(". On-time")[0].split(", ")
+    assert pending[0]["name"] not in named
+    assert not bookings(doc)
+
+
 def test_approved_journey_does_not_expire_and_duplicate_approval_is_safe(example):
     doc, pid = deepcopy(example)
     request = Approval(run_id=doc["run_id"])

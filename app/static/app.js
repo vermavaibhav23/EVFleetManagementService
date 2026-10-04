@@ -107,9 +107,35 @@ const soc = (v) =>
     ? Math.min(100, (100 * v.energy_kwh) / ((v.capacity_kwh * v.soh_pct) / 100))
     : 0;
 const escapeHtml = escapeHTML;
-function journeyRoute(vehicle, plan, depots) {
+function usablePlan(plan, clock) {
+  if (!plan) return false;
+  if (["APPROVED", "EXECUTING"].includes(plan.status)) return true;
+  return plan.status === "PROPOSED" && plan.review?.can_approve !== false
+    && (!plan.valid_until || !clock || new Date(clock) <= new Date(plan.valid_until));
+}
+function displayPlan(vehicle, fleet, selectedId) {
+  const chosen = fleet.plans?.[selectedId];
+  if (chosen?.vin === vehicle?.vin && usablePlan(chosen, fleet.clock)) return chosen;
+  const assigned = fleet.plans?.[vehicle?.plan_id];
+  if (usablePlan(assigned, fleet.clock)) return assigned;
+  return Object.values(fleet.plans || {}).filter(p => p.vin === vehicle?.vin && usablePlan(p, fleet.clock))
+    .sort((a,b) => a.total_cost - b.total_cost)[0] || null;
+}
+function overdueDeliveries(v, clock) {
+  return v.deliveries.filter(d => !d.is_return && d.status !== "COMPLETED" && d.status !== "SERVICING"
+    && !d.arrived_at && d.deadline && new Date(d.deadline) < new Date(clock))
+    .map(d => ({name:d.name, minutes:(new Date(clock)-new Date(d.deadline))/60000}));
+}
+function staleOptions(v, fleet) {
+  return Object.values(fleet.plans || {}).some(p => p.vin === v.vin && p.status === "PROPOSED" && !usablePlan(p, fleet.clock));
+}
+function deadlineText(v, clock) {
+  const late = overdueDeliveries(v, clock);
+  return late.length ? `${late.map(d => `${d.name}: deadline passed ${d.minutes.toFixed(1)} min ago`).join("; ")}. On-time delivery is no longer possible for these customers. A delayed journey may still be feasible.` : "";
+}
+function journeyRoute(vehicle, plan, depots, clock) {
   if (!vehicle) return [];
-  if (plan && ["PROPOSED", "APPROVED", "EXECUTING"].includes(plan.status))
+  if (usablePlan(plan, clock))
     return [
       vehicle,
       ...plan.operations.filter(
@@ -190,6 +216,10 @@ function vehicleProgress(v, fleet) {
     }
   } else if (v.incident) {
     title = "Stopped — review needed"; detail = v.incident; warning = true;
+  } else if (overdueDeliveries(v, fleet.clock).length) {
+    title = "Delivery deadline missed"; detail = deadlineText(v, fleet.clock) + " Update options from the current time."; warning = true;
+  } else if (staleOptions(v, fleet)) {
+    title = "Options need updating"; detail = "Review time elapsed or conditions changed. Update options for current timing and available charging slots."; warning = true;
   }
   const done = new Map();
   for (const p of allPlans) for (const o of p.operations || []) {
@@ -224,6 +254,10 @@ if (typeof module !== "undefined")
     soc,
     vehicleProgress,
     progressMarkup,
+    usablePlan,
+    displayPlan,
+    overdueDeliveries,
+    deadlineText,
   };
 if (typeof document !== "undefined") {
   let fleet = null,
@@ -251,21 +285,7 @@ if (typeof document !== "undefined") {
     `<span class="badge ${escapeHTML(status)}">${escapeHTML(label || labels[status] || human(status))}</span>`;
   const fact = (label, value) =>
     `<div><dt>${escapeHTML(label)}</dt><dd>${escapeHTML(value)}</dd></div>`;
-  const currentPlan = () => {
-    const chosen = fleet?.plans[selectedPlan],
-      v = selectedVehicle();
-    if (
-      chosen?.vin === selected &&
-      ["PROPOSED", "APPROVED", "EXECUTING"].includes(chosen.status)
-    )
-      return chosen;
-    return (
-      fleet?.plans[v?.plan_id] ||
-      Object.values(fleet?.plans || {})
-        .filter((p) => p.vin === selected && p.status === "PROPOSED")
-        .sort((a, b) => a.total_cost - b.total_cost)[0]
-    );
-  };
+  const currentPlan = () => displayPlan(selectedVehicle(), fleet, selectedPlan);
   async function api(path, body, method = "POST") {
     const response = await fetch(
       `/api/v1${path}`,
@@ -454,10 +474,11 @@ if (typeof document !== "undefined") {
     const p = currentPlan(),
       destination = journeyRoute(v, p, fleet.depots)[1],
       deliveries = v.deliveries.filter((d) => !d.is_return),
-      nextDelivery = deliveries.find((d) => d.status !== "COMPLETED");
+      nextDelivery = deliveries.find((d) => d.status !== "COMPLETED" && !d.arrived_at && d.status !== "SERVICING"),
+      needsUpdate = !p && (staleOptions(v, fleet) || overdueDeliveries(v, fleet.clock).length);
     const disclosureOpen = $("selected-detail").querySelector("details")?.open;
     $("selected-detail").innerHTML =
-      `<h2>${escapeHTML(v.name)}</h2><div class="status-row">${badge(readiness(v, fleet.plans))} ${badge("neutral", human(v.state))}</div><div class="battery-readout"><strong>${number(soc(v), "", 0)}</strong><span>% battery</span></div><div class="battery-bar ${soc(v) < 25 ? "low" : ""}"><i style="width:${soc(v)}%"></i></div><div class="detail-body">${progressMarkup(v, fleet)}<dl class="facts">${fact(p?.status === "PROPOSED" ? "Proposed next stop" : "Next stop", destination?.name || "Journey complete")}${fact("Distance to stop", destination ? number(geographicDistance(v, destination), " km") : "—")}${fact("Next arrival deadline", nextDelivery ? time(nextDelivery.deadline) + " IST" : "—")}${fact("Deliveries completed", deliveries.filter((d) => d.status === "COMPLETED").length + " / " + deliveries.length)}</dl>${v.starting_context ? `<p class="short-reason"><strong>${escapeHTML(human(v.case))}</strong><br>Starting snapshot: ${escapeHTML(v.starting_context)}</p>` : ""}<p class="short-reason">${escapeHTML(v.incident || (p ? `${human(p.status)} · ${money(p.total_cost)} whole-journey estimate.` : "Find a journey through every delivery and back to the depot."))}</p><button class="primary" data-select="${escapeHTML(v.vin)}" data-select-tab="plans">Review journey</button><details ${disclosureOpen ? "open" : ""}><summary>Battery & route details</summary><dl class="facts">${fact("Energy", number(v.energy_kwh, " kWh"))}${fact("Normal reserve", number(fleet.policy.reserve_kwh, " kWh"))}${fact("Temperature", number(v.temperature_c, "°C"))}${fact("Connector", v.connector)}</dl></details><button class="detail-link" data-select="${escapeHTML(v.vin)}" data-select-tab="vehicles">View timetable →</button></div>`;
+      `<h2>${escapeHTML(v.name)}</h2><div class="status-row">${badge(readiness(v, fleet.plans))} ${badge("neutral", human(v.state))}</div><div class="battery-readout"><strong>${number(soc(v), "", 0)}</strong><span>% battery</span></div><div class="battery-bar ${soc(v) < 25 ? "low" : ""}"><i style="width:${soc(v)}%"></i></div><div class="detail-body">${progressMarkup(v, fleet)}<dl class="facts">${fact(!p && needsUpdate ? "Next customer · route needs update" : p?.status === "PROPOSED" ? "Proposed next stop" : "Next stop", destination?.name || "Journey complete")}${fact("Distance to stop", destination ? number(geographicDistance(v, destination), " km") : "—")}${fact("Next arrival deadline", nextDelivery ? time(nextDelivery.deadline) + " IST" : "—")}${fact("Deliveries completed", deliveries.filter((d) => d.status === "COMPLETED").length + " / " + deliveries.length)}</dl>${v.starting_context ? `<p class="short-reason"><strong>${escapeHTML(human(v.case))}</strong><br>Starting snapshot: ${escapeHTML(v.starting_context)}</p>` : ""}<p class="short-reason">${escapeHTML(v.incident || (p ? `${human(p.status)} · ${money(p.total_cost)} whole-journey estimate.` : needsUpdate ? "Earlier route and price are out of date. Update options before dispatch." : "Find a journey through every delivery and back to the depot."))}</p>${needsUpdate ? `<button class="primary" data-plan="compare">Update options</button>` : `<button class="primary" data-select="${escapeHTML(v.vin)}" data-select-tab="plans">Review journey</button>`}<details ${disclosureOpen ? "open" : ""}><summary>Battery & route details</summary><dl class="facts">${fact("Energy", number(v.energy_kwh, " kWh"))}${fact("Normal reserve", number(fleet.policy.reserve_kwh, " kWh"))}${fact("Temperature", number(v.temperature_c, "°C"))}${fact("Connector", v.connector)}</dl></details><button class="detail-link" data-select="${escapeHTML(v.vin)}" data-select-tab="vehicles">View timetable →</button></div>`;
   }
   function renderVehicles() {
     const query = $("directory-search").value.toLowerCase(),
@@ -556,7 +577,7 @@ if (typeof document !== "undefined") {
       p = currentPlan(),
       destination = journeyRoute(v, p, fleet.depots)[1];
     $("map-selection").textContent = v
-      ? `${v.name} · ${human(v.state)} · ${number(soc(v), "%")} · ${p?.status === "PROPOSED" ? "Proposed: " : ""}${destination?.name || "Journey complete"}`
+      ? `${v.name} · ${human(v.state)} · ${number(soc(v), "%")} · ${!p && v.state !== "COMPLETED" ? "Customer sequence only: " : p?.status === "PROPOSED" ? "Proposed: " : ""}${destination?.name || "Journey complete"}`
       : "Select a vehicle.";
   }
   async function refresh(force = false) {
@@ -730,11 +751,13 @@ if (typeof document !== "undefined") {
     }
     if (b.dataset.plan !== undefined && selected)
       action(
-        () =>
-          api(`/vehicles/${encodeURIComponent(selected)}/journeys/plan`, {
+        async () => {
+          await api(`/vehicles/${encodeURIComponent(selected)}/journeys/plan`, {
             compare_tradeoffs: true,
             alternatives: true,
-          }),
+          });
+          switchTab("plans");
+        },
         "Planning queued. The current journey remains in place until a replacement is approved.",
       );
     if (b.dataset.approve)
@@ -893,7 +916,8 @@ if (typeof document !== "undefined") {
       selectedPlan = replacement;
     }
     let html = `<h3>${escapeHTML(v.name)} · ${human(v.state)}</h3>${v.starting_context ? `<p class="muted">Starting snapshot: ${escapeHTML(v.starting_context)}</p>` : ""}<p>${escapeHTML(v.incident || "Compare the complete journey, then approve its charging slots.")}</p>
-      <div class="controls"><button data-plan="compare">Compare journey options</button></div>
+      ${deadlineText(v, fleet.clock) ? `<p class="deadline-alert">${escapeHTML(deadlineText(v, fleet.clock))}</p>` : ""}
+      <div class="controls"><button data-plan="compare">${staleOptions(v, fleet) ? "Update options" : "Compare journey options"}</button></div>
       <p class="muted">New options are booked only after approval. All slots are checked again before booking.</p><div class="journey-options">`;
     for (const plan of plans) {
       const r = plan.review;
@@ -920,8 +944,8 @@ if (typeof document !== "undefined") {
             EXECUTING: "Approved · in progress",
             COMPLETED: "Approved · journey finished",
           }[r.state] || human(r.state);
-      html += `<article class="plan ${locked ? "plan-locked" : ""} ${chosen ? "chosen" : ""}"><div class="plan-head"><div><h3>${r.can_approve ? `<label><input type="radio" name="alternative" value="${plan.plan_id}" ${chosen ? "checked" : ""}> ${label}</label>` : label}</h3><small>${plan.recovery ? "Allows delivery delays" : "On-time journey"}</small></div><div class="price">${money(plan.total_cost)}<small>${locked ? "earlier estimate" : "total journey charging cost"}</small></div></div>
-        <p class="tradeoff ${r.reduced_reserve ? "reserve-risk" : ""}"><strong>${escapeHTML(r.tradeoff || r.delivery_summary)}</strong></p>
+      html += `<article class="plan ${locked ? "plan-locked" : ""} ${chosen ? "chosen" : ""}"><div class="plan-head"><div><h3>${r.can_approve ? `<label><input type="radio" name="alternative" value="${plan.plan_id}" ${chosen ? "checked" : ""}> ${label}</label>` : label}</h3><small>${locked ? "Earlier estimate · not a current route" : plan.recovery ? "Allows delivery delays" : "On-time journey"}</small></div><div class="price">${money(plan.total_cost)}<small>${locked ? "earlier estimate" : "total journey charging cost"}</small></div></div>
+        <p class="tradeoff ${r.reduced_reserve ? "reserve-risk" : ""}"><strong>${locked ? "Earlier option: " : ""}${escapeHTML(r.tradeoff || r.delivery_summary)}</strong></p>
         <ul class="plan-pointers">${r.reason ? `<li><b>${escapeHTML(r.reason)}</b></li>` : ""}<li>${locked ? "Earlier estimate: " : ""}${escapeHTML(r.delivery_summary)}</li><li>Return ${time(r.return_at)} IST with ${r.return_pct}% battery.</li><li>Reserve floor: ${r.reserve_pct}% (${plan.reserve_kwh} kWh).</li>${r.reduced_reserve ? '<li>Less buffer for unexpected traffic or battery use; this raises stranding risk. No assistance is dispatched.</li>' : ""}</ul>`;
       const booked = ["APPROVED", "EXECUTING"].includes(plan.status);
       html += `<h4>${booked ? "Booked charging slots" : locked ? "Earlier requested slots" : r.state === "COMPLETED" ? "Charging slots used" : "Slots requested on approval"}</h4>`;

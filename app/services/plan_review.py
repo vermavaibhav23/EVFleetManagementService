@@ -7,6 +7,20 @@ from app.services.validation import validate
 
 def issue_message(doc, plan):
     if dt(doc["clock"]) > dt(plan["valid_until"]):
+        missed = [
+            d["name"]
+            for d in doc["vehicles"][plan["vin"]]["deliveries"]
+            if d["status"] == "PLANNED"
+            and not d.get("arrived_at")
+            and not d.get("is_return")
+            and dt(d["deadline"]) < dt(doc["clock"])
+        ]
+        if missed:
+            return (
+                "Arrival deadline passed for "
+                + ", ".join(missed)
+                + ". On-time delivery is no longer possible. Update options for a feasible delayed journey; nothing new is booked."
+            )
         return "The planned departure time has passed. Refresh options for the current time."
     errors = validate(doc, plan)
     if "Port reservation conflict" in errors:
@@ -106,7 +120,7 @@ def review(doc, plan):
         state=state,
         reason=reason,
         can_approve=state == "PROPOSED",
-        tradeoff=tradeoff,
+        tradeoff=reason if state == "OUTDATED" else tradeoff,
         reduced_reserve=reduced,
         minimum_battery_pct=pct(minimum),
         affected_customers=[

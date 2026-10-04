@@ -12,6 +12,8 @@ const {
   readiness,
   vehicleProgress,
   progressMarkup,
+  displayPlan,
+  overdueDeliveries,
 } = require("../app/static/app.js");
 test("untrusted names are escaped", () =>
   assert.equal(
@@ -161,6 +163,40 @@ test("live progress never presents an unapproved option as current execution",()
   fleet.plans.P1.status="PROPOSED";
   const p=vehicleProgress(vehicle,fleet);
   assert.equal(p.title,"Waiting for plan approval"); assert.equal(p.upcoming.length,0); assert.equal(p.until,null);
+});
+
+test("elapsed review clears the selected route and cost and reports every missed deadline",()=>{
+  const {vehicle,fleet}=progressFixture("PARKED");
+  const plan=fleet.plans.P1;
+  plan.status="PROPOSED"; plan.valid_until="2026-10-04T08:40:00+05:30";
+  vehicle.deliveries=[
+    {name:"A",sequence:1,status:"PLANNED",deadline:"2026-10-04T08:43:00+05:30"},
+    {name:"B",sequence:2,status:"PLANNED",deadline:"2026-10-04T09:00:00+05:30"},
+  ];
+  assert.equal(displayPlan(vehicle,fleet,"P1"),null);
+  assert.deepEqual(journeyRoute(vehicle,plan,fleet.depots,fleet.clock).slice(1).map(x=>x.name),["A","B","Home"]);
+  const progress=vehicleProgress(vehicle,fleet);
+  assert.equal(progress.title,"Delivery deadline missed");
+  assert.match(progress.detail,/A: deadline passed 27.0 min ago/);
+  assert.match(progress.detail,/B: deadline passed 10.0 min ago/);
+  assert.match(progress.detail,/delayed journey may still be feasible/);
+  assert.equal(progress.upcoming.length,0);
+  plan.status="APPROVED";
+  assert.equal(displayPlan(vehicle,fleet,"P1"),plan);
+});
+
+test("arrived, unloading, completed and depot stops do not become missed arrival deadlines",()=>{
+  const {vehicle,fleet}=progressFixture("PARKED");
+  vehicle.deliveries=[{status:"COMPLETED"},{status:"SERVICING"},{status:"PLANNED",arrived_at:fleet.clock},{status:"PLANNED",is_return:true}]
+    .map((d,i)=>({...d,name:String(i),deadline:"2026-10-04T08:00:00+05:30"}));
+  assert.deepEqual(overdueDeliveries(vehicle,fleet.clock),[]);
+});
+
+test("changed conditions invalidate a selected proposal even before departure",()=>{
+  const {vehicle,fleet}=progressFixture("PARKED");
+  Object.assign(fleet.plans.P1,{status:"PROPOSED",valid_until:"2026-10-04T10:00:00+05:30",review:{can_approve:false}});
+  assert.equal(displayPlan(vehicle,fleet,"P1"),null);
+  assert.equal(vehicleProgress(vehicle,fleet).title,"Options need updating");
 });
 test("driving, queue, connection and waiting window show the correct next boundary",()=>{
   const {vehicle,operation,fleet}=progressFixture();
