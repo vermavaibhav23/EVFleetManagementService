@@ -109,12 +109,12 @@ async def tick(request: ClockAction, store: Ledger = Depends(ledger)):
 
 @router.post("/journeys/plan")
 async def plan_fleet(request: PlanRequest, store: Ledger = Depends(ledger)):
-    return await store.mutate(lambda d: request_job(d, None, request))
+    return await store.mutate(lambda d: request_job(d, None, request), request.run_id)
 
 
 @router.post("/vehicles/{vin}/journeys/plan")
 async def plan_vehicle(vin: str, request: PlanRequest, store: Ledger = Depends(ledger)):
-    return await store.mutate(lambda d: request_job(d, vin, request))
+    return await store.mutate(lambda d: request_job(d, vin, request), request.run_id)
 
 
 @router.get("/jobs/{job_id}")

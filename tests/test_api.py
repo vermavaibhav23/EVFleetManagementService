@@ -149,3 +149,78 @@ def test_reset_terminates_worker_and_discards_its_output():
             client.close()
 
     asyncio.run(run())
+
+
+def test_recalculate_after_deadline_while_running_publishes_approvable_recovery():
+    prior_uri, prior_db = settings.mongodb_uri, settings.mongodb_db
+    name = "fleet_test_" + uuid4().hex
+    settings.mongodb_uri, settings.mongodb_db = URI, name
+
+    def finish(client, job_id):
+        deadline = monotonic() + 90
+        while monotonic() < deadline:
+            job = client.get(f"/api/v1/jobs/{job_id}").json()
+            if job["status"] not in ("QUEUED", "RUNNING"):
+                assert job["status"] == "COMPLETED", job
+                return job
+            sleep(0.2)
+        pytest.fail("Recalculation did not finish")
+
+    try:
+        with TestClient(app) as client:
+            run = client.post(
+                "/api/v1/simulator/load", json={"vehicle_count": 1}
+            ).json()["run_id"]
+            url = "/api/v1/vehicles/SIM-001/journeys/plan"
+            request = {
+                "run_id": run,
+                "pause_for_review": True,
+                "compare_tradeoffs": True,
+                "alternatives": False,
+            }
+            first = finish(client, client.post(url, json=request).json()["job_id"])
+            old_id = next(r["plan_id"] for r in first["results"] if r.get("plan_id"))
+            assert (
+                client.post(
+                    "/api/v1/simulator/tick", json={"run_id": run, "seconds": 7200}
+                ).status_code
+                == 200
+            )
+            stale = client.get("/api/v1/fleet").json()["plans"][old_id]
+            assert stale["review"]["state"] == "OUTDATED"
+            client.post("/api/v1/simulator/start", json={"run_id": run, "speed": 60})
+            queued = client.post(url, json=request)
+            assert queued.status_code == 200, queued.text
+            snapshot = client.get("/api/v1/fleet").json()
+            assert not snapshot["running"]
+            assert not snapshot["plans"][old_id]["review"]["can_approve"]
+            fresh = finish(client, queued.json()["job_id"])
+            state = client.get("/api/v1/fleet").json()
+            assert state["clock"] == snapshot["clock"]
+            plans = [
+                state["plans"][r["plan_id"]]
+                for r in fresh["results"]
+                if r.get("plan_id")
+            ]
+            assert plans and all(p["review"]["can_approve"] for p in plans), fresh
+            assert plans[0]["recovery"]
+            assert plans[0]["review"]["affected_customers"]
+            approved = client.post(
+                f"/api/v1/journeys/{plans[0]['plan_id']}/approve",
+                json={"run_id": run, "acknowledge_recovery": True},
+            )
+            assert approved.status_code == 200, approved.text
+            assert approved.json()["status"] == "APPROVED"
+            assert (
+                client.post(url, json={**request, "run_id": "old-run"}).status_code
+                == 409
+            )
+    finally:
+        settings.mongodb_uri, settings.mongodb_db = prior_uri, prior_db
+
+        async def cleanup():
+            client = AsyncIOMotorClient(URI)
+            await client.drop_database(name)
+            client.close()
+
+        asyncio.run(cleanup())

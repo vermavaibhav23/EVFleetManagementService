@@ -3,8 +3,8 @@ from datetime import timedelta
 
 import pytest
 
-from app.domain import Approval, dt
-from app.services.control import approve_or_refresh, reject
+from app.domain import Approval, PlanRequest, dt
+from app.services.control import approve_or_refresh, reject, request_job
 from app.services.ledger import bookings
 from app.services.optimizer import optimize
 from app.services.plan_review import review
@@ -58,7 +58,8 @@ def test_taken_slot_requeues_search_without_any_partial_booking(example):
     assert "already booked" in result["message"]
     assert doc["jobs"][result["job_id"]]["vin"] == plan["vin"]
     assert not bookings(doc)
-    assert plan["status"] == "PROPOSED"
+    assert plan["status"] == "SUPERSEDED"
+    assert not doc["running"]
     fresh = optimize(doc, plan["vin"])
     if "plan" in fresh:
         assert not validate(doc, fresh["plan"])
@@ -126,3 +127,37 @@ def test_approved_journey_does_not_expire_and_duplicate_approval_is_safe(example
     assert review(doc, doc["plans"][pid])["state"] == "APPROVED"
     assert approve_or_refresh(doc, pid, request)["idempotent"]
     assert len(bookings(doc)) == 2
+
+
+def test_recalculation_pauses_retires_old_options_and_reuses_pending_job(example):
+    doc, pid = deepcopy(example)
+    doc["running"] = True
+    request = PlanRequest(
+        run_id=doc["run_id"], pause_for_review=True, compare_tradeoffs=True
+    )
+    first = request_job(doc, "SIM-001", request)
+    assert not doc["running"]
+    assert not review(doc, doc["plans"][pid])["can_approve"]
+    assert not bookings(doc)
+    second = request_job(doc, "SIM-001", request)
+    assert first["job_id"] == second["job_id"]
+    assert len(doc["jobs"]) == 1
+    # A failed/no-solution refresh must never resurrect the old approval button.
+    doc["jobs"][first["job_id"]].update(status="COMPLETED", results=[])
+    assert review(doc, doc["plans"][pid])["state"] == "SUPERSEDED"
+
+
+def test_recalculate_preserves_committed_slots_and_rejects_old_run(example):
+    from fastapi import HTTPException
+
+    doc, pid = deepcopy(example)
+    approve_or_refresh(doc, pid, Approval(run_id=doc["run_id"]))
+    reserved = deepcopy(bookings(doc))
+    with pytest.raises(HTTPException, match="old simulation run"):
+        request_job(doc, "SIM-001", PlanRequest(run_id="old", pause_for_review=True))
+    assert not doc["jobs"]
+    request_job(
+        doc, "SIM-001", PlanRequest(run_id=doc["run_id"], pause_for_review=True)
+    )
+    assert bookings(doc) == reserved
+    assert doc["plans"][pid]["status"] == "APPROVED"

@@ -129,6 +129,26 @@ function overdueDeliveries(v, clock) {
 function staleOptions(v, fleet) {
   return Object.values(fleet.plans || {}).some(p => p.vin === v.vin && p.status === "PROPOSED" && !usablePlan(p, fleet.clock));
 }
+function planningState(vin, fleet) {
+  const jobs = Object.values(fleet.jobs || {});
+  const active = jobs.find(j => ["QUEUED", "RUNNING"].includes(j.status));
+  const latest = jobs.slice().reverse().find(j => j.vin === vin ||
+    (j.results || []).some(r => r.vin === vin) || (!j.vin && ["QUEUED", "RUNNING"].includes(j.status)));
+  const hasOptions = Object.values(fleet.plans || {}).some(p => p.vin === vin &&
+    p.status === "PROPOSED" && usablePlan(p, fleet.clock));
+  let message = "";
+  if (active) message = active.vin && active.vin !== vin
+    ? "Another vehicle's search is running. Wait for it or cancel it in Journey searches."
+    : `Searching current charging slots and delivery times… ${fleet.running ? "The simulation is running." : "Simulation paused for review."} Results will appear here; no need to click again.`;
+  else if (latest?.status === "ERROR") message = "The search could not finish. No new plan was created. Recalculate plans to try again.";
+  else if (latest?.status === "CANCELLED") message = "Search cancelled. Recalculate plans to try again.";
+  else if (latest?.status === "COMPLETED" && hasOptions)
+    message = "New options are ready. Review the current slots and delivery impact below, then approve your chosen journey.";
+  else if (latest?.status === "COMPLETED" && !hasOptions &&
+    !fleet.vehicles?.[vin]?.plan_id && fleet.vehicles?.[vin]?.state !== "COMPLETED")
+    message = "No current approvable plan. See the reasons below, then recalculate from the current time and available slots.";
+  return { active, latest, message };
+}
 function deadlineText(v, clock) {
   const late = overdueDeliveries(v, clock);
   return late.length ? `${late.map(d => `${d.name}: deadline passed ${d.minutes.toFixed(1)} min ago`).join("; ")}. On-time delivery is no longer possible for these customers. A delayed journey may still be feasible.` : "";
@@ -258,11 +278,13 @@ if (typeof module !== "undefined")
     displayPlan,
     overdueDeliveries,
     deadlineText,
+    planningState,
   };
 if (typeof document !== "undefined") {
   let fleet = null,
     selected = null,
     selectedPlan = null,
+    pendingSearchId = null,
     acknowledgedPlans = new Set(),
     busy = false,
     refreshing = false,
@@ -311,19 +333,34 @@ if (typeof document !== "undefined") {
     $("message").classList.toggle("error", error);
   }
   function updateControls() {
+    const active = fleet && Object.values(fleet.jobs).find(j => ["RUNNING", "QUEUED"].includes(j.status));
     $("seed-button").disabled = busy;
-    $("start-button").disabled = busy || !fleet || fleet.running;
+    $("start-button").disabled = busy || !fleet || fleet.running || Boolean(active?.request?.pause_for_review);
     $("stop-button").disabled = busy || !fleet || !fleet.running;
-    $("step").disabled = busy || !fleet || fleet.running;
+    $("step").disabled = busy || !fleet || fleet.running || Boolean(active?.request?.pause_for_review);
     $("plan-fleet").disabled =
       busy ||
       !fleet ||
       Object.values(fleet.jobs).some((j) =>
         ["RUNNING", "QUEUED"].includes(j.status),
       );
-    document.querySelectorAll("#review button, #scenario-actions button").forEach((b) => {
-      b.disabled = busy || b.dataset.locked === "true";
+    document.querySelectorAll("#review button, #scenario-actions button, [data-plan], [data-refresh]").forEach((b) => {
+      const plan = b.dataset.approve && fleet?.plans[b.dataset.approve];
+      b.disabled = busy || b.dataset.locked === "true" ||
+        Boolean(active && (b.dataset.plan !== undefined || b.dataset.refresh || b.dataset.approve)) ||
+        Boolean(plan && (!usablePlan(plan, fleet.clock) || (plan.recovery && !acknowledgedPlans.has(plan.plan_id))));
     });
+  }
+  async function queueReview(vin) {
+    const response = await api(`/vehicles/${encodeURIComponent(vin)}/journeys/plan`, {
+      run_id: fleet.run_id, pause_for_review: true,
+      compare_tradeoffs: true, alternatives: true,
+    });
+    selectedPlan = null;
+    pendingSearchId = response.job_id;
+    acknowledgedPlans.clear();
+    switchTab("plans");
+    return response.message || "Searching current slots and delivery times…";
   }
   async function action(fn, success = "Updated.") {
     if (busy) return;
@@ -588,6 +625,7 @@ if (typeof document !== "undefined") {
       const result = await api("/fleet");
       if (ticket !== epoch) return;
       if (fleet?.run_id !== result.run_id) {
+        pendingSearchId = null;
         selected = null;
         selectedPlan = null;
         viewport = null;
@@ -602,6 +640,14 @@ if (typeof document !== "undefined") {
         $("speed").value = String(result.speed);
       }
       fleet = result;
+      const watched = fleet.jobs[pendingSearchId];
+      if (watched && !["QUEUED", "RUNNING"].includes(watched.status)) {
+        const found = (watched.results || []).some(r => r.plan_id && fleet.plans[r.plan_id]?.review?.can_approve);
+        message(watched.status === "COMPLETED"
+          ? found ? "Search finished. New journey options are ready below." : "Search finished with no current approvable plan. See the reasons below."
+          : watched.status === "CANCELLED" ? "Search cancelled. You can recalculate again." : "Search could not finish. Recalculate plans to try again.", watched.status === "ERROR");
+        pendingSearchId = null;
+      }
       if (!fleet.vehicles[selected]) selected = Object.keys(fleet.vehicles)[0];
       $("system-label").textContent = "Fleet connected";
       $("live-dot").classList.add("online");
@@ -673,9 +719,10 @@ if (typeof document !== "undefined") {
     );
   $("plan-fleet").onclick = () =>
     action(async () => {
-      await api("/journeys/plan", { compare_tradeoffs: true, alternatives: false });
+      const response = await api("/journeys/plan", { run_id: fleet.run_id, pause_for_review: true, compare_tradeoffs: true, alternatives: false });
+      pendingSearchId = response.job_id;
       switchTab("plans");
-    }, "Fleet planning queued. Review and approve each complete journey.");
+    }, "Simulation paused. Fleet search queued; review the results before resuming.");
   $("refresh-button").onclick = () => refresh(true);
   $("vehicle-search").oninput = $("readiness-filter").onchange = () => {
     if (fleet) renderOverview();
@@ -703,6 +750,7 @@ if (typeof document !== "undefined") {
     if (e.target.dataset.ack) {
       if (e.target.checked) acknowledgedPlans.add(e.target.dataset.ack);
       else acknowledgedPlans.delete(e.target.dataset.ack);
+      updateControls();
     }
   };
   document.addEventListener("click", (e) => {
@@ -741,7 +789,7 @@ if (typeof document !== "undefined") {
       return;
     }
     const b = e.target.closest("button");
-    if (!b || busy || !fleet) return;
+    if (!b || b.disabled || busy || !fleet) return;
     if (b.dataset.incident) {
       action(async () => {
         const response = await api(`/simulator/actions/${encodeURIComponent(b.dataset.incident)}`, {run_id: fleet.run_id});
@@ -751,14 +799,7 @@ if (typeof document !== "undefined") {
     }
     if (b.dataset.plan !== undefined && selected)
       action(
-        async () => {
-          await api(`/vehicles/${encodeURIComponent(selected)}/journeys/plan`, {
-            compare_tradeoffs: true,
-            alternatives: true,
-          });
-          switchTab("plans");
-        },
-        "Planning queued. The current journey remains in place until a replacement is approved.",
+        () => queueReview(selected),
       );
     if (b.dataset.approve)
       action(async () => {
@@ -770,20 +811,17 @@ if (typeof document !== "undefined") {
             acknowledge_recovery: acknowledgedPlans.has(b.dataset.approve),
           },
         );
+        if (response.job_id) pendingSearchId = response.job_id;
         return (
-          response.message ||
-          "Journey approved. All requested slots booked together."
+          response.message || (response.status === "APPROVED"
+            ? "Journey approved. All requested slots booked together."
+            : "No new slots booked. Review the latest search status below.")
         );
       }, "Complete journey approved.");
     if (b.dataset.refresh) {
       const plan = fleet.plans[b.dataset.refresh];
       action(
-        () =>
-          api(`/vehicles/${encodeURIComponent(plan.vin)}/journeys/plan`, {
-            compare_tradeoffs: true,
-            alternatives: true,
-          }),
-        "Searching the latest available slots. Review the new option before booking.",
+        () => queueReview(plan.vin),
       );
     }
     if (b.dataset.reject)
@@ -910,18 +948,24 @@ if (typeof document !== "undefined") {
             : new Date(b.created_at) - new Date(a.created_at))
         );
       });
-    const available = plans.filter((p) => p.review?.can_approve);
+    const available = plans.filter((p) => p.review?.can_approve && usablePlan(p, fleet.clock));
+    const search = planningState(selected, fleet);
     if (!available.some((p) => p.plan_id === selectedPlan)) {
       const replacement = available[0]?.plan_id || null;
       selectedPlan = replacement;
     }
     let html = `<h3>${escapeHTML(v.name)} · ${human(v.state)}</h3>${v.starting_context ? `<p class="muted">Starting snapshot: ${escapeHTML(v.starting_context)}</p>` : ""}<p>${escapeHTML(v.incident || "Compare the complete journey, then approve its charging slots.")}</p>
       ${deadlineText(v, fleet.clock) ? `<p class="deadline-alert">${escapeHTML(deadlineText(v, fleet.clock))}</p>` : ""}
-      <div class="controls"><button data-plan="compare">${staleOptions(v, fleet) ? "Update options" : "Compare journey options"}</button></div>
-      <p class="muted">New options are booked only after approval. All slots are checked again before booking.</p><div class="journey-options">`;
+      <div class="controls"><button data-plan="compare">${search.active ? "Searching…" : fleet.running ? "Pause & recalculate plans" : "Recalculate plans"}</button></div>
+      <p class="slot-check" role="status" aria-live="polite">${escapeHTML(search.message || "Search from the current time and available slots. Searching pauses the simulation for review.")}</p>
+      <p class="muted">New options are booked only after approval. Use Start when you are ready to resume.</p><div class="journey-options">`;
     for (const plan of plans) {
-      const r = plan.review;
+      let r = plan.review;
       if (!r) continue;
+      if (r.can_approve && !usablePlan(plan, fleet.clock)) r = {
+        ...r, can_approve: false, state: "OUTDATED",
+        reason: "Departure time has passed. Recalculate from the current time.",
+      };
       const locked =
         !r.can_approve &&
         !["APPROVED", "EXECUTING", "COMPLETED"].includes(r.state);
@@ -961,7 +1005,7 @@ if (typeof document !== "undefined") {
         html += `<div class="actions"><button class="primary" data-approve="${plan.plan_id}">${r.slots.length ? "Approve journey & book " + r.slots.length + " slot" + (r.slots.length === 1 ? "" : "s") : "Approve journey"}</button><button data-reject="${plan.plan_id}">Reject option</button></div>`;
       }
       if (r.state === "OUTDATED")
-        html += `<button class="primary" data-refresh="${plan.plan_id}">Refresh options</button>`;
+        html += `<button class="primary" data-refresh="${plan.plan_id}">${search.active ? "Searching…" : "Recalculate plans"}</button>`;
       if (booked)
         html += `<button data-cancel="${plan.plan_id}">Cancel remaining journey</button>`;
       html += `<details class="journey-details" data-detail="${plan.plan_id}" ${open.has(plan.plan_id) ? "open" : ""}><summary>View journey details</summary><div class="table-wrap"><table><thead><tr><th>Stop</th><th>Arrive</th><th>Finish</th><th>Deadline</th><th>Battery kWh</th><th>Cost</th></tr></thead><tbody>`;
@@ -969,17 +1013,14 @@ if (typeof document !== "undefined") {
         html += `<tr><td>${escapeHTML(op.name)}<small>${human(op.status)}</small></td><td>${time(op.arrival)}</td><td>${time(op.end)}</td><td>${time(op.deadline)}${op.lateness_minutes > 0.001 ? `<br>${op.lateness_minutes.toFixed(1)} min late` : ""}</td><td>${op.energy_arrival.toFixed(2)} → ${op.energy_end.toFixed(2)}</td><td>${money(op.cost)}</td></tr>`;
       html += `</tbody></table></div><small>Estimate calculated for this option; later changes require a fresh review.</small></details></article>`;
     }
-    const latest = Object.values(fleet.jobs)
-      .slice()
-      .reverse()
-      .find((j) => (j.results || []).some((r) => r.vin === selected));
+    const latest = search.latest;
     for (const row of (latest?.results || []).filter(
       (r) => r.vin === selected && !r.plan_id,
     ))
       html += `<article class="plan plan-locked"><h3>${escapeHTML(({ON_TIME_WITH_RESERVE:"On time + normal reserve", PROTECT_RESERVE:"Protect battery reserve", PROTECT_DEADLINES:"Prioritise deadlines", EARLIER_RETURN:"Earlier return"})[row.comparison_goal] || "No usable option")} · unavailable</h3><ul class="plan-pointers"><li>${escapeHTML(row.message || "Refresh options to search again.")}</li><li>Cannot approve. No charging slots booked.</li></ul></article>`;
     if (!plans.length && !latest)
       html +=
-        '<p class="empty">Choose Compare journey options to see costs, battery risk and every affected customer. Only feasible journeys can be approved.</p>';
+        '<p class="empty">Choose Recalculate plans to see costs, battery risk and every affected customer. Only feasible journeys can be approved.</p>';
     html += "</div>";
     $("review").innerHTML = html;
     if (focused && $(focused)) $(focused).focus({ preventScroll: true });

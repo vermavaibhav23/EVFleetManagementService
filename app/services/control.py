@@ -74,10 +74,43 @@ def approve(doc, plan_id, request):
 
 
 def request_job(doc, vin, request):
+    if request.run_id is not None and request.run_id != doc["run_id"]:
+        raise HTTPException(409, "This search belongs to an old simulation run")
     if vin is not None and vin not in doc["vehicles"]:
         raise HTTPException(404, "Unknown vehicle")
-    if any(j["status"] in ("QUEUED", "RUNNING") for j in doc["jobs"].values()):
-        raise HTTPException(409, "A planner job is already active for this run")
+    active = next(
+        (j for j in doc["jobs"].values() if j["status"] in ("QUEUED", "RUNNING")),
+        None,
+    )
+    if active:
+        if active["vin"] == vin and active["request"] == request.model_dump():
+            if request.pause_for_review:
+                doc["running"] = False
+            return {
+                "job_id": active["job_id"],
+                "status": active["status"],
+                "message": "Search already in progress. Its result will appear here.",
+            }
+        raise HTTPException(
+            409,
+            "Another search is running. Wait for it or cancel it before recalculating.",
+        )
+    if request.pause_for_review:
+        doc["running"] = False
+    # Retire old suggestions immediately, even when the new search finds no plan.
+    # Committed journeys and their physical reservations remain unchanged.
+    targets = (
+        {vin}
+        if vin
+        else {
+            key
+            for key, v in doc["vehicles"].items()
+            if not v.get("plan_id") and v["state"] != "COMPLETED"
+        }
+    )
+    for plan in doc["plans"].values():
+        if plan["vin"] in targets and plan["status"] == "PROPOSED":
+            plan["status"] = "SUPERSEDED"
     job_id = str(uuid4())
     doc["jobs"] = {k: v for k, v in list(doc["jobs"].items())[-19:]}
     doc["jobs"][job_id] = dict(
@@ -88,7 +121,13 @@ def request_job(doc, vin, request):
         status="QUEUED",
         created_at=datetime.now(UTC),
     )
-    return {"job_id": job_id, "status": "QUEUED"}
+    return {
+        "job_id": job_id,
+        "status": "QUEUED",
+        "message": "Simulation paused. Searching current slots and delivery times."
+        if request.pause_for_review
+        else "Journey search queued.",
+    }
 
 
 def approve_or_refresh(doc, plan_id, request):
@@ -114,6 +153,8 @@ def approve_or_refresh(doc, plan_id, request):
                     doc,
                     plan["vin"],
                     PlanRequest(
+                        run_id=doc["run_id"],
+                        pause_for_review=True,
                         compare_tradeoffs=bool(plan.get("comparison_goal")),
                         recovery=plan["recovery"],
                         reserve_exception=plan["reserve_kwh"]
@@ -130,7 +171,7 @@ def approve_or_refresh(doc, plan_id, request):
                 + (
                     " Another search is running; refresh options when it finishes."
                     if active
-                    else " Searching available options now. Nothing was booked."
+                    else " Simulation paused. Searching available options now. Nothing was booked."
                 ),
             )
     return approve(doc, plan_id, request)

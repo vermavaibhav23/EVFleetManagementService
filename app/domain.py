@@ -219,6 +219,8 @@ class Approval(BaseModel):
 
 
 class PlanRequest(BaseModel):
+    run_id: str | None = None
+    pause_for_review: bool = False
     compare_tradeoffs: bool = False
     recovery: bool = False
     reserve_exception: bool = False

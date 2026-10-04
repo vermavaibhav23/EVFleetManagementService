@@ -14,7 +14,34 @@ const {
   progressMarkup,
   displayPlan,
   overdueDeliveries,
+  planningState,
 } = require("../app/static/app.js");
+
+test("review explains pending, failed and empty recalculations instead of old results", () => {
+  const fleet = { running: false, vehicles: { V1: { state: "PARKED" } }, plans: {}, jobs: {
+    old: { vin: "V1", status: "COMPLETED", results: [{ vin: "V1", plan_id: "old" }] },
+    fresh: { vin: "V1", status: "QUEUED", results: [] },
+  }};
+  let state = planningState("V1", fleet);
+  assert.equal(state.latest, fleet.jobs.fresh);
+  assert.match(state.message, /Searching.*Simulation paused/);
+  fleet.jobs.fresh.status = "COMPLETED";
+  state = planningState("V1", fleet);
+  assert.equal(state.active, undefined);
+  assert.match(state.message, /No current approvable plan/);
+  fleet.jobs.fresh.status = "ERROR";
+  assert.match(planningState("V1", fleet).message, /could not finish/);
+  fleet.jobs.fresh.status = "CANCELLED";
+  assert.match(planningState("V1", fleet).message, /cancelled/);
+});
+
+test("review does not mistake another vehicle's active search for this vehicle's result", () => {
+  const fleet = { jobs: { j: { vin: "V2", status: "RUNNING" } }, plans: {} };
+  const state = planningState("V1", fleet);
+  assert.ok(state.active);
+  assert.equal(state.latest, undefined);
+  assert.match(state.message, /Another vehicle/);
+});
 test("untrusted names are escaped", () =>
   assert.equal(
     escapeHTML('<img onerror="x">'),
