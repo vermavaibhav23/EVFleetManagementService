@@ -6,7 +6,7 @@ Environment: Windows 11, Python 3.13.2, SciPy 1.16.3, Motor 3.6.0, PyMongo 4.9.2
 
 ## Checks
 
-- 35 Python test cases passed in a single full run (112.86 seconds): 22 model/physics/execution/timezone tests, 5 real MongoDB/HTTP/process tests, 2 complete scenario tests, 1 Kafka ingress replay/invalid-payload test, and 5 plan-review/booking-refresh tests.
+- 45 Python test cases passed in a single full run (87.72 seconds), including 10 focused-scenario cases. The earlier 35-test baseline comprised: 22 model/physics/execution/timezone tests, 5 real MongoDB/HTTP/process tests, 2 complete scenario tests, 1 Kafka ingress replay/invalid-payload test, and 5 plan-review/booking-refresh tests.
 - 9 Node frontend tests passed, including complete map routes, interrupted-route fallback and approval-aware readiness.
 - Ruff checks and Python compilation passed; JavaScript syntax checking and Git whitespace checking passed.
 - A real browser loaded the 12-vehicle scenario, ran the process-isolated planner, displayed selectable whole-journey alternatives, and approved the cheaper option. The observed example was ₹32.09 with return at 10:05, compared with an earlier-return alternative at ₹60.62.
@@ -19,6 +19,14 @@ The database suite exercises approvals from separate OS processes, a process exi
 ## Concise decision cards and booking checks
 
 The review tests cover target battery percentages and the complete requested slot chain, a slot taken after proposal, shared power becoming unavailable, stale departure time, rejected options, and idempotent approval after departure time. A conflict starts a new search without booking a partial chain. Browser checks confirmed grey rejected cards, explicit station/port/second-level IST windows, and a working Refresh options action after simulated time advanced.
+
+## Four focused scenario groups
+
+All four groups loaded through the real local HTTP server backed by isolated MongoDB. A request with fleet size 12 normalized to four for each group. The HTTP checks confirmed stale-run rejection, a successful charging-failure action, retained energy, persisted pause and prevention of duplicate incident replay.
+
+The ten scenario tests cover distinct initial map positions, valid staged charging/driving/unloading states, solver-selected split charging (8 + 20 stored kWh at 92% efficiency), execution through return, fast-versus-slow deadline feasibility, charge-at-origin below reserve, a no-charge journey, external bookings, site-power conflicts, release occupation, preserved deadlines, physical stranding, health blocking and unaffected comparison vehicles. The final Everyday preset refinement was followed by another successful ten-test run (17.17 seconds).
+
+Browser verification confirmed exactly four dropdown choices, four vehicles, a ₹391.30 two-slot split-charge option beside the ₹608.70 one-slot alternative, and a functioning failure button which paused the clock, preserved B2's 3.3 kWh, showed releasing status and disabled repeat application. Deployments retain the user's current run until they explicitly load a new scenario.
 
 ## Benchmarks
 

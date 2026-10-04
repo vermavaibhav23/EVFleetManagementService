@@ -19,7 +19,7 @@ Alternatively, `docker compose up --build` starts the API and MongoDB. Open `/po
 
 ## Manager workflow
 
-1. Load `NORMAL_DAY` or `EDGE_CASE_DAY`, specifying a seed and an IST start time. The default start is deliberately fixed for reproducibility. Edge-case coverage requires at least 12 vehicles; all begin at the depot.
+1. Choose one of the **four focused scenarios** below and select **Load / reset**. Each loads four vehicles at different starting locations, paused at the chosen IST time. Fleet size is fixed at four for these demos. Loading replaces the current simulation; deploying new code alone preserves the existing run.
 2. Keep the clock paused and choose **Plan fleet**, or select a vehicle in the attention queue/map and choose **Review journey**. Under **Plans & Decisions**, use **Find on-time options** for individual alternatives. Planning runs in a separate, cancellable process; its status and cancellation control appear under **Journey searches**. Fleet planning serves vehicles with fewer reachable chargers first, then earlier deadlines.
 3. Review every delivery, charging stop and return, arrival deadlines, service completion, reserve, energy purchases and total cost. Choose the exact alternative to approve. Individual planning also searches for an earlier-completion alternative, including different energy amounts at the same station. **Vehicles** keeps the original fixed delivery timetable visible independently of charging proposals.
 4. Approve the complete journey. Its full reservation chain becomes visible atomically. Then start or step the simulated clock.
@@ -29,7 +29,24 @@ Decision cards use short pointers: total charging cost, delivery impact, depot r
 
 **Reject option** records a manager rejection without booking a port. **Refresh options** is a working search action on outdated cards. Approval revalidates all requested slots and shared power against the latest MongoDB snapshot, then commits the complete chain atomically. If approval detects a conflict or outdated plan, it books nothing and queues a fresh search; if another search is already active, it asks the manager to refresh after that search finishes. A replacement always needs its own approval. Proposed slots are not guaranteed until that commit. Approved journeys do not expire merely because their departure time arrives.
 
-Under **Chargers**, daily price charts always show 00:00–24:00 IST, exact tariff boundaries and all ports, with separate proposal, confirmed, active/releasing, completed and cancelled styles. The date control navigates other days. Tables provide the same information without relying on chart colour or hover. Use the global speed selector with **Start**; **+5 min** advances a paused clock. The two supported scenarios replace the old list of single-incident presets.
+Under **Chargers**, daily price charts always show 00:00–24:00 IST, exact tariff boundaries and all ports, with separate proposal, confirmed, active/releasing, completed and cancelled styles. The date control navigates other days. Tables provide the same information without relying on chart colour or hover. Use the global speed selector with **Start**; **+5 min** advances a paused clock. Each incident control changes only its stated facts and pauses the common clock for review. Buttons enforce the required vehicle state, and cannot replay an incident twice. Reload the scenario for a clean replay.
+
+## Four focused scenarios
+
+| Dropdown | Vehicles and starting situation | What to test |
+|---|---|---|
+| **1. Everyday charging choices** (`EVERYDAY_CHOICES`) | A1: customer A completed in the northeast; A2: southeast customer area; A3: west satellite charger; A4: independent southern route | A1 buys a small expensive top-up, serves B, buys more cheaply, serves C and returns. A2 needs the fast charger to meet its deadline. A3 charges in place below reserve. A4 needs no charging. |
+| **2. Shared chargers & disruptions** (`SHARED_CHARGERS`) | B1: north approach; B2: charging at East hub; B3: near West hub; B4: travelling on an independent route | A real external booking occupies North. Test East failure during charging, North failure before arrival, or reduced West supply independently. Plan/approve B3 before reducing power to demonstrate invalidated reservations. |
+| **3. Delivery delays & replanning** (`DELIVERY_DELAYS`) | C1: unloading; C2: driving east; C3: customer K completed; C4: continuing independently | Extend active unloading; increase driving consumption; review a delayed journey for C3's tight later deadline. Original deadlines remain fixed. |
+| **4. Assistance & impossible journeys** (`ASSISTANCE_CASES`) | D1: empty at west satellite depot without a compatible connector; D2: driving northeast; D3: parked at a customer; D4: ready on a separate route | Inject severe energy loss while moving; raise a health fault while stopped; distinguish physical assistance from an impossible deadline. No assistance is dispatched. |
+
+The shared/delay/assistance snapshots include simulated prior-approved journeys. They are produced by the same optimizer, validator, approval and execution code, starting 15 minutes before the displayed snapshot; no winning route is hardcoded. These prior approvals are marked `seeded_journey` in the ledger. All new/replacement journeys still require manager approval. **Plan fleet** skips vehicles already executing these journeys.
+
+A1 uses an explicit demo road corridor: A → Premium → B → Economy → C → depot. Leg energy is 1, 4, 5, 10 and 10 kWh respectively; A starts with 5 kWh and must keep 3 kWh reserve. The optimizer adds **8 kWh at Premium and 20 kWh at Economy**. At 92% charging efficiency this buys 8.696 + 21.739 grid kWh for approximately **₹391.30**, versus ₹608.70 for buying all 28 stored kWh at Premium. Travel, service, connection/release, reserve, ports and real charging efficiency remain enabled. The map draws straight links; this fixture's explicit road costs govern planning and validation.
+
+Use one disruption per replay so its effect is clear. Other vehicles keep independent state, but charger ports and each site's power are shared. The four supplies are separate so the unaffected comparison vehicle is not stopped by an unrelated site fault. Incidents pause the entire clock, not just one vehicle. **Start** intentionally resumes continuous simulation, in which unapproved options can become outdated.
+
+`NORMAL_DAY` and `EDGE_CASE_DAY` remain API-only compatibility/stress fixtures for existing runs and benchmarks; they are no longer dropdown choices. New scenario requests always normalize fleet size to four.
 
 ## Railway deployment
 
@@ -37,7 +54,7 @@ This repository's deployment branch is `main`. Push the reviewed changes to GitH
 
 Set `MONGODB_URI` to the Railway-reachable MongoDB connection and `MONGODB_DB` to the intended database. Kafka is optional and disabled by default; Redis is not used. Retain the existing MongoDB settings when upgrading. Do not point a local test suite at the deployed database.
 
-After the first v2 deployment, open `/portal` and load **Normal day** or **Edge-case day** to create the new run ledger, then plan and approve journeys. Legacy simulation collections are preserved and are not silently imported into the new contract. Later restarts reuse the persisted v2 run. Confirm `/api/v1/health/live` reports `schema_version: 2` and readiness succeeds. The portal's asset URLs use a new version to refresh cached JavaScript and CSS.
+After deployment, refresh `/portal`, choose one of the four scenarios and select **Load / reset**, then review and approve new journeys. An existing old run remains labelled **Legacy run** until you load a new scenario. Legacy simulation collections are preserved and are not silently imported into the new contract. Later restarts reuse the persisted v2 run. Confirm `/api/v1/health/live` reports `schema_version: 2` and readiness succeeds. The portal's asset URLs use a new version to refresh cached JavaScript and CSS.
 
 ## Model and safety
 
@@ -68,6 +85,7 @@ Base path: `/api/v1` (the OpenAPI service version is 2.0).
 | Endpoint | Purpose |
 |---|---|
 | `POST /simulator/load` | Atomically load/reset a scenario |
+| `POST /simulator/actions/{action_id}` | Apply one state-checked, run-fenced demo incident and pause |
 | `POST /simulator/start`, `/pause`, `/tick` | Run-scoped clock controls |
 | `GET /fleet`, `/simulator/state` | Authoritative full-run snapshot |
 | `POST /journeys/plan` | Queue coordinated fleet planning |
@@ -96,7 +114,7 @@ ruff check app tests scripts
 
 Set `FLEET_TEST_MONGO` to a disposable local MongoDB URI to enable the real-database tests. They create uniquely named test databases and delete only those databases. These tests include competing OS-process approvals, a crash immediately after commit, retry, reset fencing, HTTP execution and solver-process cancellation. Without that environment variable they are explicitly skipped.
 
-The arithmetic fixture buys 28 kWh at ₹20 and 15 kWh at ₹10 for **₹710**, meeting B's 10:40 deadline. Independent enumeration verifies that buying 13 + 30 arrives at 11:10 and buying all 43 at the expensive charger costs ₹860. Additional tests cover taper billing, tariff precedence, fixed order, delivery-first/after-last charging, alternatives, reserves, service, contention, power loss, both scenarios and tick-size invariance.
+The arithmetic fixture buys 28 kWh at ₹20 and 15 kWh at ₹10 for **₹710**, meeting B's 10:40 deadline. Independent enumeration verifies that buying 13 + 30 arrives at 11:10 and buying all 43 at the expensive charger costs ₹860. Additional tests cover taper billing, tariff precedence, fixed order, delivery-first/after-last charging, alternatives, reserves, service, contention, power loss, the legacy stress fixtures and tick-size invariance. The focused-scenario tests additionally verify the exact split-charge outcome, fast/slow feasibility, charge-at-origin, zero-charge control, state-gated manual incidents, release occupation, unaffected vehicles and delayed journeys.
 
 For reproducible timing and status counts:
 

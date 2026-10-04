@@ -108,8 +108,16 @@ def apply_event(doc, event):
             "HEALTH": "health_fault",
         }[kind]
         doc["vehicles"][vin][field] = event["value"]
+    message = {
+        "DEPOT_POWER": "Available site power changed. Review a new charging plan.",
+        "CHARGER_STATUS": "Charger availability changed. Review another charging option.",
+        "SERVICE_DELAY": "Unloading is taking longer. Review the remaining delivery times.",
+        "CONSUMPTION": "Battery use increased. Vehicle stopped for a new journey review.",
+        "ENERGY_LOSS": "Battery energy changed. Check whether charging or physical assistance is needed; nobody has been dispatched.",
+        "HEALTH": "Vehicle health changed. A health check is required before continuing.",
+    }[kind]
     for vehicle in affected:
-        interrupt(doc, vehicle, f"{kind} changed; review a fresh journey")
+        interrupt(doc, vehicle, message)
     event["status"] = "APPLIED"
     event["applied_at"] = doc["clock"]
     record(doc, kind, "Scenario event applied", vin)
@@ -156,6 +164,7 @@ def _vehicle(doc, v, left, right):
             )
             plan["status"] = "EXECUTING"
         if right < arrival:
+            v.pop("node", None)
             fraction = (right - depart).total_seconds() / max(
                 1e-9, (arrival - depart).total_seconds()
             )
@@ -170,6 +179,8 @@ def _vehicle(doc, v, left, right):
         if not o.get("actual_arrival"):
             o["actual_arrival"] = arrival
             v.update(lat=o["lat"], lon=o["lon"], energy_kwh=o["energy_arrival"])
+            if doc.get("roads"):
+                v["node"] = o.get("node") or o.get("trip_id") or o.get("charger_id")
             if o.get("trip_id"):
                 d = next(d for d in v["deliveries"] if d["trip_id"] == o["trip_id"])
                 d["arrived_at"] = arrival

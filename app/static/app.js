@@ -221,7 +221,7 @@ if (typeof document !== "undefined") {
       Object.values(fleet.jobs).some((j) =>
         ["RUNNING", "QUEUED"].includes(j.status),
       );
-    document.querySelectorAll("#review button").forEach((b) => {
+    document.querySelectorAll("#review button, #scenario-actions button").forEach((b) => {
       b.disabled = busy || b.dataset.locked === "true";
     });
   }
@@ -378,7 +378,7 @@ if (typeof document !== "undefined") {
       nextDelivery = deliveries.find((d) => d.status !== "COMPLETED");
     const disclosureOpen = $("selected-detail").querySelector("details")?.open;
     $("selected-detail").innerHTML =
-      `<h2>${escapeHTML(v.name)}</h2><div class="status-row">${badge(readiness(v, fleet.plans))} ${badge("neutral", human(v.state))}</div><div class="battery-readout"><strong>${number(soc(v), "", 0)}</strong><span>% battery</span></div><div class="battery-bar ${soc(v) < 25 ? "low" : ""}"><i style="width:${soc(v)}%"></i></div><div class="detail-body"><dl class="facts">${fact(p?.status === "PROPOSED" ? "Proposed next stop" : "Next stop", destination?.name || "Journey complete")}${fact("Distance to stop", destination ? number(geographicDistance(v, destination), " km") : "—")}${fact("Next arrival deadline", nextDelivery ? time(nextDelivery.deadline) + " IST" : "—")}${fact("Deliveries completed", deliveries.filter((d) => d.status === "COMPLETED").length + " / " + deliveries.length)}</dl><p class="short-reason">${escapeHTML(v.incident || (p ? `${human(p.status)} · ${money(p.total_cost)} whole-journey estimate.` : "Find a journey through every delivery and back to the depot."))}</p><button class="primary" data-select="${escapeHTML(v.vin)}" data-select-tab="plans">Review journey</button><details ${disclosureOpen ? "open" : ""}><summary>Battery & route details</summary><dl class="facts">${fact("Energy", number(v.energy_kwh, " kWh"))}${fact("Normal reserve", number(fleet.policy.reserve_kwh, " kWh"))}${fact("Temperature", number(v.temperature_c, "°C"))}${fact("Connector", v.connector)}</dl></details><button class="detail-link" data-select="${escapeHTML(v.vin)}" data-select-tab="vehicles">View timetable →</button></div>`;
+      `<h2>${escapeHTML(v.name)}</h2><div class="status-row">${badge(readiness(v, fleet.plans))} ${badge("neutral", human(v.state))}</div><div class="battery-readout"><strong>${number(soc(v), "", 0)}</strong><span>% battery</span></div><div class="battery-bar ${soc(v) < 25 ? "low" : ""}"><i style="width:${soc(v)}%"></i></div><div class="detail-body"><dl class="facts">${fact(p?.status === "PROPOSED" ? "Proposed next stop" : "Next stop", destination?.name || "Journey complete")}${fact("Distance to stop", destination ? number(geographicDistance(v, destination), " km") : "—")}${fact("Next arrival deadline", nextDelivery ? time(nextDelivery.deadline) + " IST" : "—")}${fact("Deliveries completed", deliveries.filter((d) => d.status === "COMPLETED").length + " / " + deliveries.length)}</dl>${v.starting_context ? `<p class="short-reason"><strong>${escapeHTML(human(v.case))}</strong><br>Starting snapshot: ${escapeHTML(v.starting_context)}</p>` : ""}<p class="short-reason">${escapeHTML(v.incident || (p ? `${human(p.status)} · ${money(p.total_cost)} whole-journey estimate.` : "Find a journey through every delivery and back to the depot."))}</p><button class="primary" data-select="${escapeHTML(v.vin)}" data-select-tab="plans">Review journey</button><details ${disclosureOpen ? "open" : ""}><summary>Battery & route details</summary><dl class="facts">${fact("Energy", number(v.energy_kwh, " kWh"))}${fact("Normal reserve", number(fleet.policy.reserve_kwh, " kWh"))}${fact("Temperature", number(v.temperature_c, "°C"))}${fact("Connector", v.connector)}</dl></details><button class="detail-link" data-select="${escapeHTML(v.vin)}" data-select-tab="vehicles">View timetable →</button></div>`;
   }
   function renderVehicles() {
     const query = $("directory-search").value.toLowerCase(),
@@ -435,7 +435,9 @@ if (typeof document !== "undefined") {
     $("sim-clock").textContent =
       `${fleet.running ? "Running · " + fleet.speed + "×" : "Paused"} · ${dateIST(fleet.clock)}, ${time(fleet.clock)} IST`;
     $("scenario-guide").innerHTML =
-      `<span class="badge neutral">Scenario</span><strong>${fleet.scenario === "EDGE_CASE_DAY" ? "Edge-case day" : "Normal day"}</strong><span class="muted">${fleet.scenario === "EDGE_CASE_DAY" ? "Stranding, delays, charger faults and recovery across the fleet." : "Fixed deliveries, charging where needed, then return to the depot."}</span>`;
+      `<span class="badge neutral">Scenario</span><strong>${escapeHTML(fleet.scenario_title || "Legacy run")}</strong><span class="muted">${escapeHTML(fleet.scenario_description || "Choose one of the four new scenarios, then Load / reset.")}</span>`;
+    $("scenario-actions").innerHTML = (fleet.scenario_actions || []).length
+      ? `<strong>Test one incident at a time</strong><span class="muted">Each action pauses the clock for review. Reload to replay.</span><div class="incident-buttons">${fleet.scenario_actions.map(a => `<div><button data-incident="${escapeHTML(a.event_id)}" data-locked="${Boolean(a.blocked_reason)}" ${a.blocked_reason ? "disabled" : ""}>${escapeHTML(a.label)} · ${escapeHTML(fleet.vehicles[a.vin].name)}</button>${a.blocked_reason ? `<small>${escapeHTML(a.blocked_reason)}</small>` : ""}</div>`).join("")}</div>` : "";
     $("freshness").textContent =
       `${Object.keys(fleet.vehicles).length} vehicles · ${fleet.running ? "Live simulation" : "Telemetry frozen while paused"} · updated ${new Date().toLocaleTimeString()}`;
     if (activeTab === "overview") renderOverview();
@@ -492,8 +494,9 @@ if (typeof document !== "undefined") {
         acknowledged = false;
         reserveException = false;
         $("day").value = "";
-        $("scenario").value = result.scenario;
-        $("vehicle-count").value = Object.keys(result.vehicles).length;
+        const supported = [...$("scenario").options].some(o => o.value === result.scenario);
+        $("scenario").value = supported ? result.scenario : "EVERYDAY_CHOICES";
+        $("vehicle-count").value = 4;
         $("seed").value = result.seed;
         $("start").value =
           dateIST(result.start_time) + "T" + time(result.start_time);
@@ -527,7 +530,7 @@ if (typeof document !== "undefined") {
     speed: Number($("speed").value),
   });
   $("seed-button").onclick = () => {
-    const count = Number($("vehicle-count").value),
+    const count = ["NORMAL_DAY", "EDGE_CASE_DAY"].includes($("scenario").value) ? Number($("vehicle-count").value) : 4,
       min = $("scenario").value === "EDGE_CASE_DAY" ? 12 : 1;
     if (
       !Number.isInteger(count) ||
@@ -550,13 +553,11 @@ if (typeof document !== "undefined") {
           seed: Number($("seed").value),
           start_time: $("start").value + ":00+05:30",
         }),
-      "Scenario loaded · paused. Plan journeys before starting.",
+      "Four-vehicle scenario loaded · paused. Review vehicle roles and incident controls before starting.",
     );
   };
   $("scenario").onchange = () => {
-    const min = $("scenario").value === "EDGE_CASE_DAY" ? 12 : 1;
-    $("vehicle-count").min = min;
-    if (Number($("vehicle-count").value) < min) $("vehicle-count").value = min;
+    $("vehicle-count").value = ["NORMAL_DAY", "EDGE_CASE_DAY"].includes($("scenario").value) ? 12 : 4;
   };
   $("start-button").onclick = () =>
     action(
@@ -641,6 +642,13 @@ if (typeof document !== "undefined") {
     }
     const b = e.target.closest("button");
     if (!b || busy || !fleet) return;
+    if (b.dataset.incident) {
+      action(async () => {
+        const response = await api(`/simulator/actions/${encodeURIComponent(b.dataset.incident)}`, {run_id: fleet.run_id});
+        return response.message;
+      });
+      return;
+    }
     if (b.dataset.plan !== undefined && selected)
       action(
         () =>
@@ -809,7 +817,7 @@ if (typeof document !== "undefined") {
       if (replacement !== selectedPlan) acknowledged = false;
       selectedPlan = replacement;
     }
-    let html = `<h3>${escapeHTML(v.name)} · ${human(v.state)}</h3><p>${escapeHTML(v.incident || "Compare the complete journey, then approve its charging slots.")}</p>
+    let html = `<h3>${escapeHTML(v.name)} · ${human(v.state)}</h3>${v.starting_context ? `<p class="muted">Starting snapshot: ${escapeHTML(v.starting_context)}</p>` : ""}<p>${escapeHTML(v.incident || "Compare the complete journey, then approve its charging slots.")}</p>
       <div class="controls"><button data-plan="normal">Find on-time options</button><button data-plan="recovery">Review options allowing delays</button>
       <label><input id="reserve-exception" type="checkbox" ${reserveException ? "checked" : ""}> Allow reduced reserve in delayed options</label></div>
       <p class="muted">Nothing is booked until approval. All slots are checked again before booking.</p><div class="journey-options">`;

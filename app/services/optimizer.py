@@ -28,7 +28,7 @@ def fingerprint(doc, vin):
 
 def leg(doc, vehicle, a, b):
     # Optional explicit road matrix is also used by deterministic arithmetic fixtures.
-    key = f"{a.get('node', a.get('trip_id', a.get('charger_id', '')))}>{b.get('node', b.get('trip_id', b.get('charger_id', '')))}"
+    key = f"{a.get('node') or a.get('trip_id') or a.get('charger_id', '')}>{b.get('node') or b.get('trip_id') or b.get('charger_id', '')}"
     if key in doc.get("roads", {}):
         row = doc["roads"][key]
         return row["energy"], row["minutes"]

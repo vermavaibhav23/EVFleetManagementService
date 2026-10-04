@@ -14,6 +14,10 @@ class BaseModel(PydanticModel):
 
 
 class Scenario(StrEnum):
+    EVERYDAY_CHOICES = "EVERYDAY_CHOICES"
+    SHARED_CHARGERS = "SHARED_CHARGERS"
+    DELIVERY_DELAYS = "DELIVERY_DELAYS"
+    ASSISTANCE_CASES = "ASSISTANCE_CASES"
     NORMAL_DAY = "NORMAL_DAY"
     EDGE_CASE_DAY = "EDGE_CASE_DAY"
 
@@ -26,6 +30,8 @@ class LoadRequest(BaseModel):
 
     @model_validator(mode="after")
     def coverage(self):
+        if self.scenario not in (Scenario.NORMAL_DAY, Scenario.EDGE_CASE_DAY):
+            self.vehicle_count = 4
         if self.scenario == Scenario.EDGE_CASE_DAY and self.vehicle_count < 12:
             raise ValueError("Edge-case coverage requires at least 12 vehicles")
         return self

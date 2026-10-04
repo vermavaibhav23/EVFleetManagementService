@@ -1,4 +1,4 @@
-"""Two reproducible scenarios; events change facts, never prescribe solver answers."""
+"""Reproducible scenarios; events change facts, never prescribe solver answers."""
 
 from datetime import datetime, timedelta, timezone
 from random import Random
@@ -9,6 +9,10 @@ from app.services.geometry import point
 
 
 def seed(request):
+    if str(request.scenario) not in ("NORMAL_DAY", "EDGE_CASE_DAY"):
+        from app.services.scenario_groups import grouped_seed
+
+        return grouped_seed(request)
     start = request.start_time or datetime(
         2026, 10, 4, 8, tzinfo=timezone(timedelta(hours=5, minutes=30))
     )

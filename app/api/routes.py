@@ -1,3 +1,4 @@
+import asyncio
 from copy import deepcopy
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -20,6 +21,7 @@ from app.services.execution import advance, apply_event, interrupt
 from app.services.ledger import Ledger, bookings
 from app.services.plan_review import result_message, review
 from app.services.pricing import intervals
+from app.services.scenario_groups import action_block, trigger_action
 from app.services.seed import seed
 
 router = APIRouter()
@@ -46,6 +48,8 @@ async def state(store: Ledger = Depends(ledger)):
     doc = await store.read()
     doc.pop("_id", None)
     doc["reservations"] = bookings(doc) + doc.get("external_bookings", [])
+    for item in doc.get("scenario_actions", []):
+        item["blocked_reason"] = action_block(doc, item)
     for plan in doc["plans"].values():
         plan["review"] = review(doc, plan)
     for job in doc["jobs"].values():
@@ -56,13 +60,22 @@ async def state(store: Ledger = Depends(ledger)):
 
 @router.post("/simulator/load")
 async def load(request: LoadRequest, store: Ledger = Depends(ledger)):
-    doc = await store.replace_run(seed(request))
+    doc = await store.replace_run(await asyncio.to_thread(seed, request))
     return {
         "run_id": doc["run_id"],
         "scenario": doc["scenario"],
         "clock": doc["clock"],
         "vehicle_count": len(doc["vehicles"]),
     }
+
+
+@router.post("/simulator/actions/{action_id}")
+async def scenario_action(
+    action_id: str, request: Approval, store: Ledger = Depends(ledger)
+):
+    return await store.mutate(
+        lambda doc: trigger_action(doc, action_id), request.run_id
+    )
 
 
 @router.post("/simulator/start")

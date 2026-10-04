@@ -2169,3 +2169,11 @@ details summary {
     grid-template-columns: 1fr;
   }
 }
+
+/* Focused demo controls retain the existing map workspace. */
+.scenario-actions:empty { display:none; }
+.scenario-actions { padding:16px 20px; margin:0 0 20px; border:1px solid #dce6e2; border-radius:12px; background:#fff; }
+.scenario-actions > span { margin-left:12px; }
+.incident-buttons { display:flex; flex-wrap:wrap; gap:12px; margin-top:12px; }
+.incident-buttons small { display:block; max-width:320px; color:#687c76; margin-top:6px; }
+#scenario { max-width:290px; }

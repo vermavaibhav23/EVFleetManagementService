@@ -15,7 +15,7 @@ class Ledger:
     async def read(self):
         doc = await self.collection.find_one({"_id": "active"})
         if doc is None:
-            raise HTTPException(409, "Load one of the two scenarios first")
+            raise HTTPException(409, "Choose a scenario and select Load / reset first")
         return doc
 
     async def replace_run(self, document):

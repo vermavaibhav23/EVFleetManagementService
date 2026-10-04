@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#103d36" />
     <title>EV Fleet</title>
-    <link rel="stylesheet" href="/static/styles.css?v=journey-3-cards" />
+    <link rel="stylesheet" href="/static/styles.css?v=journey-4-scenarios" />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to fleet workspace</a>
@@ -26,8 +26,10 @@
       <section class="control-band" aria-label="Global demo controls">
         <label
           >Scenario<select id="scenario">
-            <option value="NORMAL_DAY">Normal day</option>
-            <option value="EDGE_CASE_DAY">Edge-case day</option>
+            <option value="EVERYDAY_CHOICES">1. Everyday charging choices</option>
+            <option value="SHARED_CHARGERS">2. Shared chargers &amp; disruptions</option>
+            <option value="DELIVERY_DELAYS">3. Delivery delays &amp; replanning</option>
+            <option value="ASSISTANCE_CASES">4. Assistance &amp; impossible journeys</option>
           </select></label
         >
         <label
@@ -36,7 +38,7 @@
             type="number"
             min="1"
             max="100"
-            value="12"
+            value="4" readonly
         /></label>
         <label>Seed<input id="seed" type="number" value="42" /></label
         ><label
@@ -71,6 +73,7 @@
         class="scenario-guide"
         aria-label="Active demonstration"
       ></section>
+      <section id="scenario-actions" class="scenario-actions" aria-label="Scenario incident controls"></section>
       <section id="overview-panel" data-panel="overview">
         <div id="metrics" class="metrics" aria-label="Fleet summary"></div>
         <div class="overview-grid">
@@ -227,6 +230,6 @@
         ><span id="freshness">Waiting for first snapshot</span>
       </footer>
     </main>
-    <script src="/static/app.js?v=journey-3-cards"></script>
+    <script src="/static/app.js?v=journey-4-scenarios"></script>
   </body>
 </html>
