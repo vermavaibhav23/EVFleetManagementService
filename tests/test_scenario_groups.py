@@ -83,7 +83,8 @@ def test_everyday_tradeoffs_are_real_constraints():
     low = optimize(doc, "SIM-003")["plan"]
     assert low["operations"][0]["kind"] == "CHARGE"
     assert low["operations"][0]["energy_arrival"] == pytest.approx(1)
-    control = optimize(doc, "SIM-004")["plan"]
+    control = doc["plans"][doc["vehicles"]["SIM-004"]["plan_id"]]
+    assert control["seeded_journey"] and control["status"] == "EXECUTING"
     assert control["total_cost"] == 0
     assert all(o["kind"] != "CHARGE" for o in control["operations"])
 
@@ -172,11 +173,22 @@ def test_selected_fleet_size_preserves_core_cases_and_adds_distinct_routes(group
         assert actual["lat"] == pytest.approx(core["lat"])
         assert actual["lon"] == pytest.approx(core["lon"])
         assert actual["energy_kwh"] == pytest.approx(core["energy_kwh"])
-    for vin in ("SIM-005", "SIM-012"):
-        assert large["vehicles"][vin]["case"] == "ADDITIONAL_VEHICLE"
-        result = optimize(large, vin)
-        assert "plan" in result, result
-        assert not validate(large, result["plan"])
+    extra = list(large["vehicles"].values())[4:]
+    assert {v["state"] for v in extra} == {"TRAVELLING", "SERVICING", "READY"}
+    for v in extra:
+        assert v["case"] == "ADDITIONAL_VEHICLE"
+        assert not v["health_fault"] and not v["incident"]
+        plan = large["plans"][v["plan_id"]]
+        assert plan["seeded_journey"] and plan["approved_at"]
+        assert plan["status"] in ("APPROVED", "EXECUTING")
+        assert plan["total_cost"] == 0
+        assert all(o["kind"] != "CHARGE" for o in plan["operations"])
+    advance(large, 6 * 3600)
+    for v in extra:
+        assert v["state"] == "COMPLETED"
+        assert v["energy_kwh"] >= large["policy"]["reserve_kwh"]
+        assert all(d["status"] == "COMPLETED" for d in v["deliveries"])
+        assert all(dt(d["arrived_at"]) <= dt(d["deadline"]) for d in v["deliveries"])
 
 
 def test_fleet_size_limits_and_large_fleet_reproducibility():
@@ -188,12 +200,19 @@ def test_fleet_size_limits_and_large_fleet_reproducibility():
     a = seed(LoadRequest(scenario="EVERYDAY_CHOICES", vehicle_count=100, seed=77))
     b = seed(LoadRequest(scenario="EVERYDAY_CHOICES", vehicle_count=100, seed=77))
     assert len(a["vehicles"]) == 100
-    assert a["vehicles"] == b["vehicles"]
+    # Approval IDs are unique per run; the physical starting snapshot is reproducible.
+    assert {
+        vin: {k: value for k, value in v.items() if k != "plan_id"}
+        for vin, v in a["vehicles"].items()
+    } == {
+        vin: {k: value for k, value in v.items() if k != "plan_id"}
+        for vin, v in b["vehicles"].items()
+    }
     assert len({(v["lat"], v["lon"]) for v in a["vehicles"].values()}) == 100
+    advance(a, 6 * 3600)
     for v in list(a["vehicles"].values())[4:]:
-        result = optimize(a, v["vin"])
-        assert "plan" in result, result
-        assert not validate(a, result["plan"])
+        assert v["state"] == "COMPLETED"
+        assert v["energy_kwh"] >= a["policy"]["reserve_kwh"]
 
 
 @pytest.mark.parametrize("group", GROUPS)

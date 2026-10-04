@@ -127,7 +127,7 @@ def grouped_seed(request):
         role(
             3,
             "NO_CHARGE",
-            "Customer E completed. Enough battery for remaining deliveries and depot return.",
+            "Customer E completed. Continuing a simulated prior-approved journey with enough battery for remaining deliveries and depot return.",
         )
         a = vs[0]
         # Explicit demo road corridor, measured energy/time, used by planner AND validator.
@@ -217,6 +217,7 @@ def grouped_seed(request):
         for i, delivery in enumerate(b["deliveries"]):
             delivery.update(sequence=i + 2, name=f"Customer {chr(69 + i)}")
         b["deliveries"].insert(0, completed)
+        staged = [3]
     elif group == "SHARED_CHARGERS":
         role(
             0,
@@ -413,6 +414,46 @@ def grouped_seed(request):
             )
         ]
     doc["tariff_profile_version"] = 1
+    # Add ordinary routes without duplicating incidents or changing the four core cases.
+    rng = Random(request.seed)
+    for i, v in enumerate(vs[4:], start=4):
+        bearing = (i * 137.508 + request.seed) % 360
+        origin = loc(8 + rng.random() * 12, bearing)
+        activity = (i - 4) % 3
+        ready = start + timedelta(minutes=5 + i % 10) if activity == 2 else earlier
+        first_km = 6 if activity == 0 else 2
+        v.update(
+            **origin,
+            name=f"Van {letter}{i + 1}",
+            energy_kwh=28 + rng.random() * 12,
+            connector="TYPE2" if group == "EVERYDAY_CHOICES" else "CCS2",
+            case="ADDITIONAL_VEHICLE",
+            starting_context=(
+                "Healthy vehicle on a simulated prior-approved journey. "
+                + (
+                    "Driving to its next customer.",
+                    "Unloading at a customer.",
+                    "Ready for its scheduled departure.",
+                )[activity]
+                + " Enough battery for all deliveries and the depot return; no charging needed."
+            ),
+        )
+        v["deliveries"] = [
+            Delivery(
+                trip_id=f"{v['vin']}-D{j + 1}",
+                sequence=j + 1,
+                name=f"Customer {i + 1}.{j + 1}",
+                **point(origin["lat"], origin["lon"], first_km + j * 2, bearing + j * 15),
+                ready_at=ready,
+                accepts_at=ready,
+                deadline=start + timedelta(minutes=90 + j * 70),
+                service_minutes=12 if activity == 1 and j == 0 else 6,
+            ).model_dump(mode="json")
+            for j in range(3)
+        ]
+        staged.append(i)
+    # Build actual approved journeys, then advance every staged vehicle together.
+    # This is seed history only; live proposals and replacements still need approval.
     if staged:
         doc["clock"] = earlier.isoformat()
         for i in staged:
@@ -426,32 +467,6 @@ def grouped_seed(request):
             approve(doc, plan["plan_id"], Approval(run_id=doc["run_id"]))
             plan["seeded_journey"] = True
         advance(doc, 900)
-    # Add ordinary routes without duplicating incidents or changing the four core cases.
-    rng = Random(request.seed)
-    for i, v in enumerate(vs[4:], start=4):
-        bearing = (i * 137.508 + request.seed) % 360
-        origin = loc(8 + rng.random() * 12, bearing)
-        v.update(
-            **origin,
-            name=f"Van {letter}{i + 1}",
-            energy_kwh=18 + rng.random() * 12,
-            connector="TYPE2" if group == "EVERYDAY_CHOICES" else "CCS2",
-            case="ADDITIONAL_VEHICLE",
-            starting_context="Additional vehicle on its own delivery route; plan charging only if needed.",
-        )
-        v["deliveries"] = [
-            Delivery(
-                trip_id=f"{v['vin']}-D{j + 1}",
-                sequence=j + 1,
-                name=f"Customer {i + 1}.{j + 1}",
-                **point(origin["lat"], origin["lon"], 2 + j * 2, bearing + j * 15),
-                ready_at=start,
-                accepts_at=start,
-                deadline=start + timedelta(minutes=90 + j * 70),
-                service_minutes=6,
-            ).model_dump(mode="json")
-            for j in range(3)
-        ]
     record(
         doc,
         "DEMO_SETUP",

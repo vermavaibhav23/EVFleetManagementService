@@ -6,6 +6,9 @@ Environment: Windows 11, Python 3.13.2, SciPy 1.16.3, Motor 3.6.0, PyMongo 4.9.2
 
 ## Checks
 
+- Healthy starting mix: the latest full run passed all 54 Python tests in 130.49 seconds and all 17 Node frontend tests. All four grouped fixtures preserve the core cases while extra vehicles start in actual approved driving, servicing or scheduled-ready states. Tests execute the extras through all deliveries and depot return with reserve intact; the 100-vehicle fixture remains reproducible apart from unique approval IDs. A4 now executes its prior-approved no-charge journey.
+- Local browser/HTTP verification with 12 vehicles showed 9 approved journeys and only the 3 intended Everyday charging decisions needing review. Van A5 showed live driving progress, 61% battery, its independent route and a zero charging estimate. Extra vehicles' simulated prior approvals are disclosed in the selected-vehicle panel. Existing saved runs are not rewritten.
+
 - 54 Python test cases passed in a single full run (124.50 seconds), including 19 focused-scenario, fleet-size and daily-tariff cases. The earlier 35-test baseline comprised: 22 model/physics/execution/timezone tests, 5 real MongoDB/HTTP/process tests, 2 complete scenario tests, 1 Kafka ingress replay/invalid-payload test, and 5 plan-review/booking-refresh tests.
 - 9 Node frontend tests passed, including complete map routes, interrupted-route fallback and approval-aware readiness.
 - Ruff checks and Python compilation passed; JavaScript syntax checking and Git whitespace checking passed.
