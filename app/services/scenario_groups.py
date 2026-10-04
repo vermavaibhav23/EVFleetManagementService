@@ -421,7 +421,7 @@ def grouped_seed(request):
         origin = loc(8 + rng.random() * 12, bearing)
         activity = (i - 4) % 3
         ready = start + timedelta(minutes=5 + i % 10) if activity == 2 else earlier
-        first_km = 6 if activity == 0 else 2
+        first_km = 12 if activity == 0 else 2
         v.update(
             **origin,
             name=f"Van {letter}{i + 1}",
@@ -433,7 +433,7 @@ def grouped_seed(request):
                 + (
                     "Driving to its next customer.",
                     "Unloading at a customer.",
-                    "Ready for its scheduled departure.",
+                    "Waiting for its route to become ready.",
                 )[activity]
                 + " Enough battery for all deliveries and the depot return; no charging needed."
             ),

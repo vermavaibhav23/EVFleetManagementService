@@ -123,7 +123,7 @@ def optimize(
     if len(destinations) - 1 > p["max_customers"]:
         return fail("ERROR", "Customer count exceeds documented model bound")
     ready = max(
-        p["review_minutes"],
+        0,
         (dt(v["service_until"]) - origin).total_seconds() / 60
         if v.get("service_until")
         else 0,
@@ -181,6 +181,14 @@ def optimize(
         depart = m.var(0, horizon)
         m.ge(depart, prev_time)
         m.ge(depart, ready_at)
+        # Dispatch as soon as the previous activity and route readiness allow.
+        # Charging may wait for a booked/cheaper slot after arrival at the station.
+        if ready_at:
+            waiting_for_readiness = m.binary()
+            m.le(depart, prev_time + horizon * waiting_for_readiness)
+            m.le(depart, ready_at + horizon * (1 - waiting_for_readiness))
+        else:
+            m.eq(depart, prev_time)
         choices, deltas = [], []
         for s in stations:
             e1, t1 = leg(doc, v, previous, s)

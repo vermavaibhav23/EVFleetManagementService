@@ -123,15 +123,56 @@ def apply_event(doc, event):
     record(doc, kind, "Scenario event applied", vin)
 
 
+def _ready_times(v, operations, index, cursor):
+    """Project a pending leg from readiness; preserve committed charging slots.
+
+    Travel/service durations stay deterministic. Saved departure estimates (including
+    older plans with discretionary waits) do not hold a ready vehicle at its origin.
+    Active legs keep their stored timestamps so ticks and restarts cannot restart them.
+    """
+    o = operations[index]
+    depart, arrival, start, end = [
+        dt(o[k]) for k in ("depart", "arrival", "start", "end")
+    ]
+    if o["status"] != "PLANNED":
+        return depart, arrival, start, end
+    destination = next(
+        (step for step in operations[index:] if step["kind"] != "CHARGE"), None
+    )
+    delivery = next(
+        (
+            d
+            for d in v["deliveries"]
+            if destination and d["trip_id"] == destination.get("trip_id")
+        ),
+        {},
+    )
+    ready = (
+        max(cursor, dt(delivery["ready_at"])) if delivery.get("ready_at") else cursor
+    )
+    arrival = ready + (arrival - depart)
+    if o["kind"] != "CHARGE":
+        duration = end - start
+        start = (
+            max(arrival, dt(delivery["accepts_at"]))
+            if delivery.get("accepts_at")
+            else arrival
+        )
+        end = start + duration
+    return ready, arrival, start, end
+
+
 def _vehicle(doc, v, left, right):
     p = doc["policy"]
     if v.get("release_until"):
         if dt(v["release_until"]) > right:
             return
+        left = max(left, dt(v["release_until"]))
         v["release_until"] = None
         v["state"] = stopped_state(doc, v)
     # Service already begun survives cancellation/replanning and process restarts.
-    if v.get("service_until") and dt(v["service_until"]) <= right:
+    service_ready = dt(v["service_until"]) if v.get("service_until") else left
+    if v.get("service_until") and service_ready <= right:
         for d in v["deliveries"]:
             if d["status"] == "SERVICING":
                 d.update(status="COMPLETED", completed_at=v["service_until"])
@@ -141,21 +182,44 @@ def _vehicle(doc, v, left, right):
     plan = doc["plans"].get(v.get("plan_id"))
     if not plan or plan["status"] not in ("APPROVED", "EXECUTING"):
         return
-    for o in plan["operations"][v["operation_index"] :]:
-        depart, arrival, start, end = [
-            dt(o[k]) for k in ("depart", "arrival", "start", "end")
-        ]
-        if right < depart:
-            return
+    for index in range(v["operation_index"], len(plan["operations"])):
+        o = plan["operations"][index]
+        depart, arrival, start, end = _ready_times(
+            v, plan["operations"], index, max(left, service_ready)
+        )
         if o["status"] == "PLANNED":
-            if left > depart + timedelta(seconds=0.1):
-                interrupt(doc, v["vin"], "Scheduled departure missed")
+            if right < depart:
                 return
-            if v.get("service_until") and dt(v["service_until"]) > depart + timedelta(
-                seconds=0.1
-            ):
-                interrupt(doc, v["vin"], "Service is not complete")
+            if o["kind"] == "CHARGE" and arrival + timedelta(
+                minutes=p["waiting_allowance_minutes"]
+            ) > start + timedelta(seconds=0.1):
+                interrupt(
+                    doc,
+                    v["vin"],
+                    "The booked charging slot can no longer be reached in time. Review new options.",
+                )
                 return
+            if o.get("deadline") and arrival > max(
+                dt(o["deadline"]),
+                dt(o["arrival"]) if plan["recovery"] else dt(o["deadline"]),
+            ) + timedelta(seconds=0.1):
+                interrupt(
+                    doc,
+                    v["vin"],
+                    "Delivery timing has changed beyond the approved option. Review new options.",
+                )
+                return
+            o.update(
+                depart=depart,
+                arrival=arrival,
+                start=start,
+                end=end,
+                lateness_minutes=max(
+                    0, (arrival - dt(o["deadline"])).total_seconds() / 60
+                )
+                if o.get("deadline")
+                else 0,
+            )
             o.update(
                 status="ACTIVE",
                 origin_lat=v["lat"],
@@ -260,11 +324,22 @@ def event_time(doc, event):
     plan = doc["plans"].get(vehicle.get("plan_id"))
     if not plan or plan["status"] not in ("APPROVED", "EXECUTING"):
         return None
-    for operation in plan["operations"]:
+    cursor = max(
+        dt(doc["clock"]),
+        dt(vehicle["service_until"])
+        if vehicle.get("service_until")
+        else dt(doc["clock"]),
+        dt(vehicle["release_until"])
+        if vehicle.get("release_until")
+        else dt(doc["clock"]),
+    )
+    for index, operation in enumerate(plan["operations"]):
         if operation["status"] not in ("PLANNED", "ACTIVE"):
             continue
-        depart = max(dt(event["at"]), dt(operation["depart"]))
-        arrival = dt(operation["arrival"])
+        depart, arrival, _, cursor = _ready_times(
+            vehicle, plan["operations"], index, cursor
+        )
+        depart = max(dt(event["at"]), depart)
         if arrival > max(depart, dt(doc["clock"])):
             return max(
                 dt(doc["clock"]),

@@ -21,7 +21,7 @@ def issue_message(doc, plan):
                 + ", ".join(missed)
                 + ". On-time delivery is no longer possible. Update options for a feasible delayed journey; nothing new is booked."
             )
-        return "The planned departure time has passed. Refresh options for the current time."
+        return "The simulation has moved on since these estimates were calculated. Refresh options for current delivery times and charging slots."
     errors = validate(doc, plan)
     if "Port reservation conflict" in errors:
         return (

@@ -50,7 +50,6 @@ class Policy(BaseModel):
     waiting_allowance_minutes: float = Field(default=1, ge=0)
     connection_minutes: float = Field(default=1, ge=0)
     release_minutes: float = Field(default=1, ge=0)
-    review_minutes: float = Field(default=10, ge=0)
     horizon_minutes: float = Field(default=720, gt=0, le=1440)
     solver_seconds: float = Field(default=8, gt=0, le=60)
     max_customers: int = Field(default=8, ge=1, le=12)
@@ -156,6 +155,7 @@ class Operation(BaseModel):
     trip_id: str | None = None
     charger_id: str | None = None
     port: int | None = None
+    # Derived leg-start estimate / execution timestamp, never a dispatch appointment.
     depart: AwareDatetime
     arrival: AwareDatetime
     start: AwareDatetime

@@ -75,6 +75,11 @@ def validate(doc, plan):
             and depart + TIME_EPS < dt(expected[index]["ready_at"])
         ):
             errors.append("Departure before customer readiness")
+        ready = cursor
+        if index < len(expected) and expected[index].get("ready_at"):
+            ready = max(ready, dt(expected[index]["ready_at"]))
+        if depart > ready + TIME_EPS:
+            errors.append("Leg must begin when vehicle and route are ready")
         if o["kind"] == "CHARGE":
             s = doc["stations"].get(o["charger_id"])
             if not s:

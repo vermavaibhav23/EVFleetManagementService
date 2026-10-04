@@ -24,7 +24,6 @@ def fixture():
         reserve_kwh=5,
         efficiency=1,
         taper=False,
-        review_minutes=0,
         connection_minutes=0,
         release_minutes=0,
         waiting_allowance_minutes=0,
@@ -273,8 +272,8 @@ def test_travel_trigger_does_not_slide_with_subsecond_ticks():
         )
     ]
     other = deepcopy(doc)
-    advance(doc, 601)
-    advance(other, 600.5)
+    advance(doc, 1)
+    advance(other, 0.5)
     assert other["events"][0]["status"] == "PENDING"
     advance(other, 0.5)
     assert other["events"][0]["applied_at"] == doc["events"][0]["applied_at"]

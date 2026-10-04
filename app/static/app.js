@@ -231,8 +231,14 @@ function vehicleProgress(v, fleet) {
       title = `Waiting at ${site}`; detail = "Arrived before the customer can accept the delivery.";
       until = current.start; timing = "Unloading starts";
     } else {
-      title = "Waiting for scheduled departure"; detail = `Next: ${site}.`;
-      until = current.depart; timing = "Departure";
+      const nextDelivery = (plan.operations || []).slice(v.operation_index || 0).find(o => o.kind !== "CHARGE");
+      const readyAt = v.deliveries.find(d => d.trip_id === nextDelivery?.trip_id)?.ready_at;
+      if (readyAt && new Date(readyAt) > new Date(fleet.clock)) {
+        title = "Waiting for route readiness"; detail = `Next: ${site}. The route is not ready yet.`;
+        until = readyAt; timing = "Route ready";
+      } else {
+        title = "Ready to continue"; detail = `${fleet.running ? "Leaves on the next simulation update" : "Leaves when the simulation resumes"}. Next: ${site}.`;
+      }
     }
   } else if (v.incident) {
     title = "Stopped — review needed"; detail = v.incident; warning = true;

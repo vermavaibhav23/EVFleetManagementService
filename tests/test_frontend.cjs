@@ -232,11 +232,21 @@ test("driving, queue, connection and waiting window show the correct next bounda
     ["QUEUING","Waiting at Economy hub · Port 2",operation.start],
     ["CONNECTING","Connecting at Economy hub · Port 2","2026-10-04T03:31:00.000Z"],
     ["WAITING_WINDOW","Waiting at Economy hub",operation.start],
-    ["READY","Waiting for scheduled departure",operation.depart],
   ]) {
     vehicle.state=state; const p=vehicleProgress(vehicle,fleet);
     assert.equal(p.title,title); assert.equal(new Date(p.until).getTime(),new Date(until).getTime());
   }
+});
+
+test("ready vehicle does not display a scheduled departure countdown",()=>{
+  const {vehicle,fleet}=progressFixture("READY");
+  let p=vehicleProgress(vehicle,fleet);
+  assert.equal(p.title,"Ready to continue"); assert.equal(p.until,null);
+  fleet.plans.P1.operations.push({kind:"DELIVERY",trip_id:"D1",status:"PLANNED"});
+  vehicle.deliveries=[{trip_id:"D1",ready_at:"2026-10-04T10:00:00+05:30"}];
+  p=vehicleProgress(vehicle,fleet);
+  assert.equal(p.title,"Waiting for route readiness");
+  assert.equal(p.until,vehicle.deliveries[0].ready_at);
 });
 test("interrupted release and ongoing unloading survive loss of the assigned plan",()=>{
   const {vehicle,operation,fleet}=progressFixture("RELEASING");
