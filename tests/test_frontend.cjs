@@ -4,6 +4,8 @@ const {
   escapeHTML,
   minutePosition,
   bookingStyle,
+  bookingLabel,
+  isBookedSlot,
   stationChart,
   time,
   journeyRoute,
@@ -204,4 +206,26 @@ test("live progress escapes untrusted station names and incident text",()=>{
   operation.name='<img src=x onerror=alert(1)>';
   const html=progressMarkup(vehicle,fleet);
   assert.ok(!html.includes('<img')); assert.ok(html.includes('&lt;img'));
+});
+
+
+test("unselected alternatives cannot overlay approved completed slots",()=>{
+  const start="2026-10-04T00:00:00+05:30",end="2026-10-05T00:00:00+05:30";
+  const slot={charger_id:"C1",port:1,start:"2026-10-04T08:43:00+05:30",end:"2026-10-04T08:53:00+05:30",cost:173.91};
+  const used={...slot,vin:"APPROVED-VAN",status:"COMPLETED",plan_status:"COMPLETED",was_approved:true};
+  const old={...slot,vin:"UNSELECTED-VAN",status:"PLANNED",plan_status:"SUPERSEDED",cost:608.7};
+  assert.equal(bookingLabel(used),"Approved · completed");
+  assert.equal(bookingLabel(old),"Not selected / replaced · never booked");
+  assert.equal(isBookedSlot(old),false);
+  const chart=stationChart({name:"Premium",charger_id:"C1",port_count:1},[{start,end,price:20}],[used,old],{start,end,clock:start});
+  assert.match(chart,/APPROVED-VAN · Approved · completed/);
+  assert.ok(!chart.includes('UNSELECTED-VAN'));
+  assert.ok(!chart.includes('608.70'));
+});
+test("booking labels distinguish unapproved options from released reservations",()=>{
+  assert.equal(bookingLabel({plan_status:"PROPOSED",status:"PLANNED"}),"Awaiting approval · not booked");
+  assert.equal(bookingLabel({plan_status:"SUPERSEDED",status:"CANCELLED",was_approved:true}),"Replaced · reservation released");
+  assert.equal(bookingLabel({plan_status:"CANCELLED",status:"PLANNED"}),"Cancelled option · never booked");
+  assert.equal(isBookedSlot({plan_status:"INTERRUPTED",status:"RELEASING"}),true);
+  assert.equal(bookingLabel({plan_status:"INTERRUPTED",status:"RELEASING"}),"Approved · unplugging / port occupied");
 });

@@ -6,7 +6,7 @@ Environment: Windows 11, Python 3.13.2, SciPy 1.16.3, Motor 3.6.0, PyMongo 4.9.2
 
 ## Checks
 
-- 50 Python test cases passed in a single full run (105.18 seconds), including 15 focused-scenario and fleet-size cases. The earlier 35-test baseline comprised: 22 model/physics/execution/timezone tests, 5 real MongoDB/HTTP/process tests, 2 complete scenario tests, 1 Kafka ingress replay/invalid-payload test, and 5 plan-review/booking-refresh tests.
+- 54 Python test cases passed in a single full run (124.50 seconds), including 19 focused-scenario, fleet-size and daily-tariff cases. The earlier 35-test baseline comprised: 22 model/physics/execution/timezone tests, 5 real MongoDB/HTTP/process tests, 2 complete scenario tests, 1 Kafka ingress replay/invalid-payload test, and 5 plan-review/booking-refresh tests.
 - 9 Node frontend tests passed, including complete map routes, interrupted-route fallback and approval-aware readiness.
 - Ruff checks and Python compilation passed; JavaScript syntax checking and Git whitespace checking passed.
 - A real browser loaded the 12-vehicle scenario, ran the process-isolated planner, displayed selectable whole-journey alternatives, and approved the cheaper option. The observed example was ₹32.09 with return at 10:05, compared with an earlier-return alternative at ₹60.62.
@@ -58,3 +58,9 @@ The browser accepted a fleet size of 12, retained it when switching scenarios, a
 ## Restored selected-vehicle progress
 
 Fifteen frontend tests pass, including six progress tests covering changing battery/finish estimates, proposal-versus-execution separation, driving/queue/connection/waiting phases, physical release and unloading after interruption, recorded completion, assistance and escaping. Browser verification advanced a charging vehicle from 08:00 to 08:05: battery rose from 7.3% to 15.9%, target stayed 45.4%, and remaining charge time fell from 23 to 18 minutes. The panel explicitly indicated that the simulation was paused and retained the upcoming delivery/depot timeline. Backend scheduling was unchanged.
+
+## Approval history and time-of-day tariffs
+
+Seventeen frontend tests pass, including regression checks that a superseded unapproved alternative cannot overlay the approved/completed bar, and that released reservations differ from never-booked options. A local HTTP plan/approve/execute replay produced the two completed sessions (₹173.91 Premium and ₹217.39 Economy) with approval evidence, alongside a separate never-approved ₹608.70 alternative. Browser checks confirmed both labels, retained expanded history after refresh, five rate bands for every station, no mobile overflow and no console errors.
+
+New tariff tests check full-day coverage and a charging session crossing 10:00 for every scenario. Existing saved runs are intentionally not repriced; the portal explains when reset is needed to load the new tariff fixture.

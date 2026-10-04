@@ -396,6 +396,23 @@ def grouped_seed(request):
     # Keep each site's map position aligned with its charger.
     for s in doc["stations"].values():
         doc["depots"][s["depot_id"]].update(lat=s["lat"], lon=s["lon"])
+        s["tariffs"] = [
+            dict(
+                id=f"{s['charger_id']}-{name}",
+                start_minute=a,
+                end_minute=b,
+                price=round(s["price"] * multiplier, 2),
+                priority=1,
+            )
+            for name, a, b, multiplier in (
+                ("overnight", 0, 360, 0.7),
+                ("morning", 360, 600, 1.0),
+                ("daytime", 600, 960, 1.15),
+                ("evening-peak", 960, 1320, 1.4),
+                ("late-evening", 1320, 1440, 0.75),
+            )
+        ]
+    doc["tariff_profile_version"] = 1
     if staged:
         doc["clock"] = earlier.isoformat()
         for i in staged:

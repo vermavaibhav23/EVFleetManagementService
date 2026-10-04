@@ -2177,3 +2177,7 @@ details summary {
 .incident-buttons { display:flex; flex-wrap:wrap; gap:12px; margin-top:12px; }
 .incident-buttons small { display:block; max-width:320px; color:#687c76; margin-top:6px; }
 #scenario { max-width:290px; }
+
+.station-history { margin-top:14px; padding:12px; background:#f1f3f3; border-radius:8px; }
+.option-history-row { color:#687772; background:#f1f3f3; }
+.tariff-note { padding:14px; background:#fff5df; border:1px solid #ead7ac; border-radius:8px; }

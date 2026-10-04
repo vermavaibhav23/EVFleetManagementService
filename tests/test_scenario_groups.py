@@ -194,3 +194,31 @@ def test_fleet_size_limits_and_large_fleet_reproducibility():
         result = optimize(a, v["vin"])
         assert "plan" in result, result
         assert not validate(a, result["plan"])
+
+
+@pytest.mark.parametrize("group", GROUPS)
+def test_every_station_has_full_day_varying_tariffs(group):
+    from datetime import timedelta
+
+    from app.services.pricing import intervals, price_at, session
+
+    doc = seed(LoadRequest(scenario=group, vehicle_count=4))
+    start = dt(doc["start_time"]).replace(hour=0, minute=0, second=0)
+    assert doc["tariff_profile_version"] == 1
+    for station in doc["stations"].values():
+        bands = intervals(start, start + timedelta(days=1), station)
+        assert len(bands) == 5
+        assert bands[0][0] == start and bands[-1][1] == start + timedelta(days=1)
+        assert all(a[1] == b[0] for a, b in zip(bands, bands[1:]))
+        assert len({r[2] for r in bands}) == 5
+        assert price_at(start.replace(hour=9, minute=59), station) == station["price"]
+        assert price_at(start.replace(hour=10), station) == round(
+            station["price"] * 1.15, 2
+        )
+        _, grid, cost = session(
+            start.replace(hour=9, minute=50), 0, 20, 100, 60, 1, station
+        )
+        assert grid == pytest.approx(20)
+        assert cost == pytest.approx(
+            10 * station["price"] + 10 * round(station["price"] * 1.15, 2)
+        )

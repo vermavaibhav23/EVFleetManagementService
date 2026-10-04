@@ -284,6 +284,7 @@ async def day_view(
                         "plan_id": plan["plan_id"],
                         "vin": plan["vin"],
                         "plan_status": plan["status"],
+                        "was_approved": bool(plan.get("approved_at")),
                     }
                 )
     return {

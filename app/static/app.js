@@ -35,19 +35,27 @@ const dateIST = (value) =>
 const minutePosition = (value, start) =>
   Math.max(0, Math.min(1440, (new Date(value) - new Date(start)) / 60000));
 const bookingStyle = (row) =>
-  row.plan_status === "REJECTED"
-    ? "rejected"
-    : row.status === "RELEASING" || row.status === "ACTIVE"
-      ? "active"
-      : row.status === "COMPLETED"
-        ? "completed"
-        : row.plan_status === "PROPOSED"
-          ? "proposed"
-          : ["CANCELLED", "SUPERSEDED", "INTERRUPTED"].includes(
-                row.plan_status,
-              ) || row.status === "CANCELLED"
-            ? "cancelled"
-            : "confirmed";
+  ["RELEASING", "ACTIVE"].includes(row.status) ? "active"
+  : row.status === "COMPLETED" ? "completed"
+  : row.plan_status === "PROPOSED" ? "proposed"
+  : row.plan_status === "REJECTED" ? "rejected"
+  : row.plan_status === "SUPERSEDED" ? "not-selected"
+  : row.plan_status === "INTERRUPTED" ? "interrupted"
+  : row.plan_status === "CANCELLED" || row.status === "CANCELLED" ? "cancelled"
+  : "confirmed";
+const isBookedSlot = row => ["active", "completed", "confirmed"].includes(bookingStyle(row));
+function bookingLabel(row) {
+  const style = bookingStyle(row);
+  if (style === "active") return row.status === "RELEASING" ? "Approved · unplugging / port occupied" : "Approved · in progress";
+  if (style === "completed") return "Approved · completed";
+  if (style === "confirmed") return "Approved · reserved";
+  if (style === "proposed") return "Awaiting approval · not booked";
+  if (style === "rejected") return "Rejected by manager · not booked";
+  if (style === "not-selected") return row.was_approved ? "Replaced · reservation released" : "Not selected / replaced · never booked";
+  if (style === "interrupted") return "Interrupted · reservation released";
+  return row.was_approved ? "Cancelled · reservation released" : "Cancelled option · never booked";
+}
+const bookingCost = row => row.status === "COMPLETED" && row.actual_cost != null ? row.actual_cost : row.cost;
 
 function stationChart(station, rates, bookings, day) {
   const x = (t) => 110 + (minutePosition(t, day.start) / 1440) * 1200;
@@ -65,18 +73,18 @@ function stationChart(station, rates, bookings, day) {
     const top = 112 + (port - 1) * 42;
     svg += `<text x="0" y="${top + 20}">Port ${port}</text><rect x="110" y="${top}" width="1200" height="30" fill="#f3f6f7"/>`;
     for (const b of bookings.filter(
-      (b) => b.charger_id === station.charger_id && b.port === port,
+      (b) => b.charger_id === station.charger_id && b.port === port && isBookedSlot(b),
     )) {
       const style = bookingStyle(b);
       const fill = {
         proposed: "#fff",
         confirmed: "#4d819d",
         active: `url(#stripe-${station.charger_id})`,
-        completed: "#c3d2d9",
+        completed: "#237862",
         cancelled: "#eef0f1",
         rejected: "#eef0f1",
       }[style];
-      svg += `<rect x="${x(b.start)}" y="${top + 2}" width="${Math.max(2, x(b.end) - x(b.start))}" height="26" fill="${fill}" stroke="${["cancelled", "rejected"].includes(style) ? "#87949a" : "#316e80"}" stroke-dasharray="${["proposed", "cancelled", "rejected"].includes(style) ? "4 3" : "none"}"><title>${escapeHTML(b.vin)} · ${style} · ${time(b.start)}–${time(b.end)} · ${money(b.cost)}</title></rect>`;
+      svg += `<rect x="${x(b.start)}" y="${top + 2}" width="${Math.max(2, x(b.end) - x(b.start))}" height="26" fill="${fill}" stroke="${["cancelled", "rejected"].includes(style) ? "#87949a" : "#316e80"}" stroke-dasharray="${["proposed", "cancelled", "rejected"].includes(style) ? "4 3" : "none"}"><title>${escapeHTML(b.vin)} · ${escapeHTML(bookingLabel(b))} · ${time(b.start)}–${time(b.end)} · ${money(bookingCost(b))}</title></rect>`;
     }
   }
   if (
@@ -208,6 +216,8 @@ if (typeof module !== "undefined")
     dateIST,
     minutePosition,
     bookingStyle,
+    bookingLabel,
+    isBookedSlot,
     stationChart,
     journeyRoute,
     readiness,
@@ -892,7 +902,7 @@ if (typeof document !== "undefined") {
     let html = `<h3>${escapeHTML(v.name)} · ${human(v.state)}</h3>${v.starting_context ? `<p class="muted">Starting snapshot: ${escapeHTML(v.starting_context)}</p>` : ""}<p>${escapeHTML(v.incident || "Compare the complete journey, then approve its charging slots.")}</p>
       <div class="controls"><button data-plan="normal">Find on-time options</button><button data-plan="recovery">Review options allowing delays</button>
       <label><input id="reserve-exception" type="checkbox" ${reserveException ? "checked" : ""}> Allow reduced reserve in delayed options</label></div>
-      <p class="muted">Nothing is booked until approval. All slots are checked again before booking.</p><div class="journey-options">`;
+      <p class="muted">New options are booked only after approval. All slots are checked again before booking.</p><div class="journey-options">`;
     for (const plan of plans) {
       const r = plan.review;
       if (!r) continue;
@@ -911,8 +921,8 @@ if (typeof document !== "undefined") {
             INTERRUPTED: "Journey interrupted",
             CANCELLED: "Cancelled",
             APPROVED: "Approved",
-            EXECUTING: "In progress",
-            COMPLETED: "Journey finished",
+            EXECUTING: "Approved · in progress",
+            COMPLETED: "Approved · journey finished",
           }[r.state] || human(r.state);
       html += `<article class="plan ${locked ? "plan-locked" : ""} ${chosen ? "chosen" : ""}"><div class="plan-head"><div><h3>${r.can_approve ? `<label><input type="radio" name="alternative" value="${plan.plan_id}" ${chosen ? "checked" : ""}> ${label}</label>` : label}</h3><small>${plan.recovery ? "Allows delivery delays" : "On-time journey"}</small></div><div class="price">${money(plan.total_cost)}<small>${locked ? "earlier estimate" : "total journey charging cost"}</small></div></div>
         <ul class="plan-pointers">${r.reason ? `<li><b>${escapeHTML(r.reason)}</b></li>` : ""}<li>${locked ? "Earlier estimate: " : ""}${escapeHTML(r.delivery_summary)}</li><li>Return ${time(r.return_at)} IST with ${r.return_pct}% battery.</li><li>Reserve floor: ${r.reserve_pct}% (${plan.reserve_kwh} kWh).</li></ul>`;
@@ -963,21 +973,15 @@ if (typeof document !== "undefined") {
     if (fleet.run_id !== requestedRun || $("day").value !== requestedDay)
       return;
     dayData = result;
-    $("charts").innerHTML = Object.values(dayData.stations)
-      .map(
-        (s) =>
-          `<article class="station"><div class="section-head"><h3>${escapeHTML(s.name)}</h3><span class="badge neutral">${escapeHTML(s.status)} · ${s.power_kw} kW · ${s.port_count} ports</span></div><div class="chart-scroll">${stationChart(s, dayData.tariffs[s.charger_id], dayData.bookings, dayData)}</div><div class="rates" aria-label="Exact price intervals">${dayData.tariffs[s.charger_id].map((r) => `<span>${time(r.start)}–${new Date(r.end).getTime() === new Date(dayData.end).getTime() ? "24:00" : time(r.end)} · <b>${money(r.price)}/kWh</b></span>`).join("")}</div><div class="table-wrap"><table><thead><tr><th>Port</th><th>Vehicle / option</th><th>Start → end</th><th>Status</th></tr></thead><tbody>${
-            dayData.bookings
-              .filter((b) => b.charger_id === s.charger_id)
-              .map(
-                (b) =>
-                  `<tr><td>${b.port}</td><td>${escapeHTML(b.vin)} / ${b.plan_id.slice(0, 8)}</td><td>${time(b.start)} → ${time(b.end)}</td><td>${bookingStyle(b)} · ${b.status}</td></tr>`,
-              )
-              .join("") ||
-            `<tr><td colspan="4">All ports have no bookings on this day.</td></tr>`
-          }</tbody></table></div></article>`,
-      )
-      .join("");
+    const openHistory = new Set([...$("charts").querySelectorAll("details[open]")].map(d => d.dataset.stationHistory));
+    const oldDemoRates = ["EVERYDAY_CHOICES", "SHARED_CHARGERS", "DELIVERY_DELAYS", "ASSISTANCE_CASES"].includes(fleet.scenario) && !fleet.tariff_profile_version;
+    $("charts").innerHTML = (oldDemoRates ? '<p class="tariff-note">This saved run uses the earlier flat tariffs. Load / reset a scenario to use the new time-of-day prices. Historical charges keep their original rates.</p>' : "") + Object.values(dayData.stations).map(s => {
+      const rows = dayData.bookings.filter(b => b.charger_id === s.charger_id);
+      const booked = rows.filter(isBookedSlot).sort((a,b) => new Date(a.start) - new Date(b.start));
+      const options = rows.filter(b => !isBookedSlot(b));
+      const table = (items, empty) => `<div class="table-wrap"><table><thead><tr><th>Port</th><th>Vehicle / option</th><th>Start → end</th><th>Status</th><th>Session cost</th></tr></thead><tbody>${items.map(b => `<tr class="${isBookedSlot(b) ? "" : "option-history-row"}"><td>${b.port}</td><td>${escapeHTML(b.vin)} / ${escapeHTML((b.plan_id || "").slice(0,8))}</td><td>${time(b.start)} → ${time(b.end)}</td><td>${escapeHTML(bookingLabel(b))}</td><td>${money(bookingCost(b))}${b.status === "COMPLETED" ? " billed" : " estimate"}</td></tr>`).join("") || `<tr><td colspan="5">${empty}</td></tr>`}</tbody></table></div>`;
+      return `<article class="station"><div class="section-head"><h3>${escapeHTML(s.name)}</h3><span class="badge neutral">${escapeHTML(s.status)} · ${s.power_kw} kW · ${s.port_count} ports</span></div><p class="muted">Port bars show approved reservations and completed charging. Unbooked alternatives are listed separately below.</p><div class="chart-scroll">${stationChart(s, dayData.tariffs[s.charger_id], booked, dayData)}</div><div class="rates" aria-label="Exact price intervals">${dayData.tariffs[s.charger_id].map(r => `<span>${time(r.start)}–${new Date(r.end).getTime() === new Date(dayData.end).getTime() ? "24:00" : time(r.end)} · <b>${money(r.price)}/kWh</b></span>`).join("")}</div><h4>Approved bookings & charging used</h4>${table(booked,"No approved charging slots on this day.")}${options.length ? `<details class="station-history" data-station-history="${escapeHTML(s.charger_id)}" ${openHistory.has(s.charger_id) ? "open" : ""}><summary>Options and cancelled history (${options.length})</summary>${table(options,"No earlier options.")}</details>` : ""}</article>`;
+    }).join("");
   }
 
   function mapProjection(camera, width, height) {
