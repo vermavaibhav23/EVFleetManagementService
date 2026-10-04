@@ -131,6 +131,75 @@ function readiness(v, plans) {
     ? "NORMAL"
     : "NEEDS_CHARGING";
 }
+// Live activity comes from the vehicle's committed journey, never a selected proposal.
+function vehicleProgress(v, fleet) {
+  const allPlans = Object.values(fleet.plans || {}).filter(p => p.vin === v.vin);
+  const assigned = fleet.plans?.[v.plan_id];
+  const plan = assigned && ["APPROVED", "EXECUTING"].includes(assigned.status) ? assigned : null;
+  const operation = plan?.operations?.[v.operation_index || 0];
+  const releasing = allPlans.flatMap(p => p.operations || []).find(o => o.status === "RELEASING");
+  const service = v.deliveries.find(d => d.status === "SERVICING");
+  const current = v.state === "RELEASING" ? releasing || operation : operation;
+  const site = current?.name || service?.name || "the current stop";
+  const port = current?.port ? ` · Port ${current.port}` : "";
+  const endOfCharge = current?.end
+    ? new Date(new Date(current.end).getTime() - (fleet.policy?.release_minutes || 0) * 60000).toISOString()
+    : null;
+  let title = "Waiting for plan approval", detail = "Review and approve a journey to continue.", until = null, timing = "", warning = false;
+  if ((v.health_fault || v.temperature_c >= 60) && v.state !== "RELEASING") {
+    title = "Health check required"; detail = v.incident || "Departure and charging are blocked until the fault is cleared."; warning = true;
+  } else if ((v.state === "ASSISTANCE" || (v.energy_kwh <= 0 && !plan)) && v.state !== "RELEASING") {
+    title = "Assistance / charging needed"; detail = v.incident || "Check charging at the current location or arrange help. Nobody has been dispatched."; warning = true;
+  } else if (v.state === "COMPLETED") {
+    title = "Journey complete"; detail = "Returned to the depot. All scheduled stops are complete.";
+  } else if (v.state === "RELEASING") {
+    title = `Unplugging at ${site}${port}`; detail = "The port stays occupied until the vehicle is released.";
+    until = v.release_until || current?.end; timing = "Port released";
+  } else if (v.state === "SERVICING") {
+    title = `Unloading at ${service?.name || site}`; detail = "Delivery service is in progress.";
+    until = v.service_until || current?.end; timing = "Service finishes";
+  } else if (plan && current) {
+    if (v.state === "TRAVELLING") {
+      title = current.kind === "RETURN" ? `Returning to ${fleet.depots?.[v.depot_id]?.name || "depot"}` : `Driving to ${site}`;
+      detail = current.kind === "CHARGE" ? `Heading to the booked charger${port}.` : "Following the approved journey.";
+      until = current.arrival; timing = "Expected arrival";
+    } else if (v.state === "QUEUING") {
+      title = `Waiting at ${site}${port}`; detail = "Arrived; waiting for the booked charging slot.";
+      until = current.start; timing = "Connection starts";
+    } else if (v.state === "CONNECTING") {
+      title = `Connecting at ${site}${port}`; detail = "Plugging in before energy starts flowing.";
+      until = new Date(new Date(current.start).getTime() + (fleet.policy?.connection_minutes || 0) * 60000).toISOString(); timing = "Charging starts";
+    } else if (v.state === "CHARGING") {
+      title = `Charging at ${site}${port}`;
+      detail = `${number(soc(v), "%")} now → ${number(current.target_soc, "%")} target · ${number(Math.max(0, current.energy_end - v.energy_kwh), " kWh")} still to add.`;
+      until = endOfCharge; timing = "Charging finishes";
+    } else if (v.state === "WAITING_WINDOW") {
+      title = `Waiting at ${site}`; detail = "Arrived before the customer can accept the delivery.";
+      until = current.start; timing = "Unloading starts";
+    } else {
+      title = "Waiting for scheduled departure"; detail = `Next: ${site}.`;
+      until = current.depart; timing = "Departure";
+    }
+  } else if (v.incident) {
+    title = "Stopped — review needed"; detail = v.incident; warning = true;
+  }
+  const done = new Map();
+  for (const p of allPlans) for (const o of p.operations || []) {
+    if (o.status !== "COMPLETED") continue;
+    done.set(o.trip_id || o.stop_id, {name: `${o.kind === "CHARGE" ? "Charged at" : o.kind === "RETURN" ? "Returned to" : "Delivered to"} ${o.kind === "RETURN" ? o.name.replace(/^Return to /, "") : o.name}`, at:o.actual_end || o.end});
+  }
+  for (const d of v.deliveries) if (d.status === "COMPLETED" && !done.has(d.trip_id))
+    done.set(d.trip_id, {name:`Delivered to ${d.name}`, at:d.completed_at});
+  const completed = [...done.values()].sort((a,b) => new Date(a.at || 0) - new Date(b.at || 0));
+  const upcoming = (plan?.operations || []).filter(o => o.status === "PLANNED").map(o => ({name:`${o.kind === "CHARGE" ? "Charge at" : o.kind === "RETURN" ? "Return to" : "Deliver to"} ${o.kind === "RETURN" ? o.name.replace(/^Return to /, "") : o.name}`, at:o.arrival}));
+  const remaining = until ? Math.max(0, Math.ceil((new Date(until) - new Date(fleet.clock)) / 60000)) : null;
+  return {title, detail, until, timing, remaining, warning, completed, upcoming, state:v.state};
+}
+function progressMarkup(v, fleet) {
+  const p = vehicleProgress(v, fleet);
+  const row = (step, tone, symbol, prefix = "") => `<li class="${tone}"><span class="journey-symbol">${symbol}</span><span>${escapeHTML(step.name)}</span><time>${step.at ? `${prefix}${time(step.at)}` : ""}</time></li>`;
+  return `<section class="journey-progress" aria-label="Journey progress"><h3>Journey progress</h3><p class="journey-leg">${fleet.running ? "Live" : "Paused"} · ${slotTime(fleet.clock)} IST</p><strong class="journey-status ${p.warning ? "warning" : ""}">${escapeHTML(p.title)}</strong><p class="journey-extra">${escapeHTML(p.detail)}</p>${p.until ? `<p class="journey-extra"><strong>${escapeHTML(p.timing)}: ${slotTime(p.until)} IST</strong> · ${p.remaining} min remaining${fleet.running ? "" : " (paused)"}</p>` : ""}<ol class="journey-steps">${p.completed.map(step => row(step,"done","✓")).join("")}${v.state !== "COMPLETED" ? `<li class="${p.warning ? "warning" : "current"} stage-${v.state.toLowerCase()}" aria-current="step"><span class="journey-symbol">${p.warning ? "!" : "●"}</span><span>${escapeHTML(p.title)}<small>Current activity</small></span></li>` : ""}${p.upcoming.map(step => row(step,"upcoming","○","ETA ")).join("")}</ol></section>`;
+}
 if (typeof module !== "undefined")
   module.exports = {
     escapeHTML,
@@ -143,6 +212,8 @@ if (typeof module !== "undefined")
     journeyRoute,
     readiness,
     soc,
+    vehicleProgress,
+    progressMarkup,
   };
 if (typeof document !== "undefined") {
   let fleet = null,
@@ -378,7 +449,7 @@ if (typeof document !== "undefined") {
       nextDelivery = deliveries.find((d) => d.status !== "COMPLETED");
     const disclosureOpen = $("selected-detail").querySelector("details")?.open;
     $("selected-detail").innerHTML =
-      `<h2>${escapeHTML(v.name)}</h2><div class="status-row">${badge(readiness(v, fleet.plans))} ${badge("neutral", human(v.state))}</div><div class="battery-readout"><strong>${number(soc(v), "", 0)}</strong><span>% battery</span></div><div class="battery-bar ${soc(v) < 25 ? "low" : ""}"><i style="width:${soc(v)}%"></i></div><div class="detail-body"><dl class="facts">${fact(p?.status === "PROPOSED" ? "Proposed next stop" : "Next stop", destination?.name || "Journey complete")}${fact("Distance to stop", destination ? number(geographicDistance(v, destination), " km") : "—")}${fact("Next arrival deadline", nextDelivery ? time(nextDelivery.deadline) + " IST" : "—")}${fact("Deliveries completed", deliveries.filter((d) => d.status === "COMPLETED").length + " / " + deliveries.length)}</dl>${v.starting_context ? `<p class="short-reason"><strong>${escapeHTML(human(v.case))}</strong><br>Starting snapshot: ${escapeHTML(v.starting_context)}</p>` : ""}<p class="short-reason">${escapeHTML(v.incident || (p ? `${human(p.status)} · ${money(p.total_cost)} whole-journey estimate.` : "Find a journey through every delivery and back to the depot."))}</p><button class="primary" data-select="${escapeHTML(v.vin)}" data-select-tab="plans">Review journey</button><details ${disclosureOpen ? "open" : ""}><summary>Battery & route details</summary><dl class="facts">${fact("Energy", number(v.energy_kwh, " kWh"))}${fact("Normal reserve", number(fleet.policy.reserve_kwh, " kWh"))}${fact("Temperature", number(v.temperature_c, "°C"))}${fact("Connector", v.connector)}</dl></details><button class="detail-link" data-select="${escapeHTML(v.vin)}" data-select-tab="vehicles">View timetable →</button></div>`;
+      `<h2>${escapeHTML(v.name)}</h2><div class="status-row">${badge(readiness(v, fleet.plans))} ${badge("neutral", human(v.state))}</div><div class="battery-readout"><strong>${number(soc(v), "", 0)}</strong><span>% battery</span></div><div class="battery-bar ${soc(v) < 25 ? "low" : ""}"><i style="width:${soc(v)}%"></i></div><div class="detail-body">${progressMarkup(v, fleet)}<dl class="facts">${fact(p?.status === "PROPOSED" ? "Proposed next stop" : "Next stop", destination?.name || "Journey complete")}${fact("Distance to stop", destination ? number(geographicDistance(v, destination), " km") : "—")}${fact("Next arrival deadline", nextDelivery ? time(nextDelivery.deadline) + " IST" : "—")}${fact("Deliveries completed", deliveries.filter((d) => d.status === "COMPLETED").length + " / " + deliveries.length)}</dl>${v.starting_context ? `<p class="short-reason"><strong>${escapeHTML(human(v.case))}</strong><br>Starting snapshot: ${escapeHTML(v.starting_context)}</p>` : ""}<p class="short-reason">${escapeHTML(v.incident || (p ? `${human(p.status)} · ${money(p.total_cost)} whole-journey estimate.` : "Find a journey through every delivery and back to the depot."))}</p><button class="primary" data-select="${escapeHTML(v.vin)}" data-select-tab="plans">Review journey</button><details ${disclosureOpen ? "open" : ""}><summary>Battery & route details</summary><dl class="facts">${fact("Energy", number(v.energy_kwh, " kWh"))}${fact("Normal reserve", number(fleet.policy.reserve_kwh, " kWh"))}${fact("Temperature", number(v.temperature_c, "°C"))}${fact("Connector", v.connector)}</dl></details><button class="detail-link" data-select="${escapeHTML(v.vin)}" data-select-tab="vehicles">View timetable →</button></div>`;
   }
   function renderVehicles() {
     const query = $("directory-search").value.toLowerCase(),

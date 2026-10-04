@@ -8,6 +8,8 @@ const {
   time,
   journeyRoute,
   readiness,
+  vehicleProgress,
+  progressMarkup,
 } = require("../app/static/app.js");
 test("untrusted names are escaped", () =>
   assert.equal(
@@ -131,4 +133,75 @@ test("readiness never reports an unapproved or interrupted proposal as dispatcha
     "BLOCKED",
   );
   assert.equal(readiness({ ...vehicle, state: "ASSISTANCE" }, {}), "EMERGENCY");
+});
+
+
+function progressFixture(state = "CHARGING") {
+  const vehicle = {vin:"V1", state, plan_id:"P1", operation_index:0, energy_kwh:10, capacity_kwh:40, soh_pct:100, deliveries:[], depot_id:"D"};
+  const operation = {stop_id:"charge1", kind:"CHARGE", name:"Economy hub", port:2, status:"ACTIVE", start:"2026-10-04T09:00:00+05:30", depart:"2026-10-04T08:40:00+05:30", arrival:"2026-10-04T08:59:00+05:30", end:"2026-10-04T09:21:00+05:30", target_soc:50, energy_end:20};
+  const fleet = {clock:"2026-10-04T09:10:00+05:30",running:true,policy:{connection_minutes:1,release_minutes:1},depots:{D:{name:"Home"}},plans:{P1:{vin:"V1",status:"EXECUTING",operations:[operation]}}};
+  return {vehicle,operation,fleet};
+}
+test("selected vehicle charging status updates battery target and remaining time",()=>{
+  const {vehicle,fleet}=progressFixture();
+  let p=vehicleProgress(vehicle,fleet);
+  assert.equal(p.title,"Charging at Economy hub · Port 2");
+  assert.match(p.detail,/25.0% now → 50.0% target/);
+  assert.equal(p.remaining,10);
+  vehicle.energy_kwh=15; fleet.clock="2026-10-04T09:15:00+05:30";
+  p=vehicleProgress(vehicle,fleet);
+  assert.match(p.detail,/37.5% now/); assert.equal(p.remaining,5);
+  fleet.running=false;
+  assert.match(progressMarkup(vehicle,fleet),/5 min remaining \(paused\)/);
+});
+test("live progress never presents an unapproved option as current execution",()=>{
+  const {vehicle,fleet}=progressFixture("PARKED");
+  fleet.plans.P1.status="PROPOSED";
+  const p=vehicleProgress(vehicle,fleet);
+  assert.equal(p.title,"Waiting for plan approval"); assert.equal(p.upcoming.length,0); assert.equal(p.until,null);
+});
+test("driving, queue, connection and waiting window show the correct next boundary",()=>{
+  const {vehicle,operation,fleet}=progressFixture();
+  for(const [state,title,until] of [
+    ["TRAVELLING","Driving to Economy hub",operation.arrival],
+    ["QUEUING","Waiting at Economy hub · Port 2",operation.start],
+    ["CONNECTING","Connecting at Economy hub · Port 2","2026-10-04T03:31:00.000Z"],
+    ["WAITING_WINDOW","Waiting at Economy hub",operation.start],
+    ["READY","Waiting for scheduled departure",operation.depart],
+  ]) {
+    vehicle.state=state; const p=vehicleProgress(vehicle,fleet);
+    assert.equal(p.title,title); assert.equal(new Date(p.until).getTime(),new Date(until).getTime());
+  }
+});
+test("interrupted release and ongoing unloading survive loss of the assigned plan",()=>{
+  const {vehicle,operation,fleet}=progressFixture("RELEASING");
+  vehicle.plan_id=null; vehicle.release_until=operation.end;
+  fleet.plans.P1.status="INTERRUPTED"; operation.status="RELEASING";
+  let p=vehicleProgress(vehicle,fleet);
+  assert.equal(p.title,"Unplugging at Economy hub · Port 2"); assert.equal(p.until,vehicle.release_until);
+  vehicle.health_fault=true; vehicle.energy_kwh=0;
+  assert.equal(vehicleProgress(vehicle,fleet).title,"Unplugging at Economy hub · Port 2");
+  vehicle.health_fault=false; vehicle.energy_kwh=5;
+  vehicle.state="SERVICING"; vehicle.service_until="2026-10-04T09:40:00+05:30";
+  vehicle.deliveries=[{trip_id:"D1",name:"Customer B",status:"SERVICING"}];
+  p=vehicleProgress(vehicle,fleet);
+  assert.equal(p.title,"Unloading at Customer B"); assert.equal(p.remaining,30);
+});
+test("progress distinguishes completed visits, planned stops and assistance without invented completion",()=>{
+  const {vehicle,operation,fleet}=progressFixture();
+  operation.status="COMPLETED"; operation.actual_end=operation.end;
+  fleet.plans.P1.operations.push({stop_id:"next",kind:"DELIVERY",name:"Customer C",status:"PLANNED",arrival:"2026-10-04T10:00:00+05:30"});
+  let p=vehicleProgress(vehicle,fleet);
+  assert.equal(p.completed.length,1); assert.equal(p.upcoming.length,1);
+  vehicle.plan_id=null; vehicle.state="ASSISTANCE"; vehicle.energy_kwh=0;
+  p=vehicleProgress(vehicle,fleet); assert.equal(p.warning,true); assert.equal(p.upcoming.length,0);
+  assert.match(p.detail,/Nobody has been dispatched/);
+  vehicle.state="COMPLETED"; vehicle.energy_kwh=3;
+  assert.equal(vehicleProgress(vehicle,fleet).title,"Journey complete");
+});
+test("live progress escapes untrusted station names and incident text",()=>{
+  const {vehicle,operation,fleet}=progressFixture();
+  operation.name='<img src=x onerror=alert(1)>';
+  const html=progressMarkup(vehicle,fleet);
+  assert.ok(!html.includes('<img')); assert.ok(html.includes('&lt;img'));
 });

@@ -54,3 +54,7 @@ The model deliberately does not promise a global fleet optimum, variable shared-
 ## Restored fleet size selection
 
 The browser accepted a fleet size of 12, retained it when switching scenarios, and loaded all 12 vehicles. Five additional tests check expansion in every scenario, preservation of the core vehicles and incident controls, valid added journeys, distinct starting positions, the 4–100 limits and a repeatable 100-vehicle fleet. All 96 added vehicles in the largest fixture received independently validated journeys.
+
+## Restored selected-vehicle progress
+
+Fifteen frontend tests pass, including six progress tests covering changing battery/finish estimates, proposal-versus-execution separation, driving/queue/connection/waiting phases, physical release and unloading after interruption, recorded completion, assistance and escaping. Browser verification advanced a charging vehicle from 08:00 to 08:05: battery rose from 7.3% to 15.9%, target stayed 45.4%, and remaining charge time fell from 23 to 18 minutes. The panel explicitly indicated that the simulation was paused and retained the upcoming delivery/depot timeline. Backend scheduling was unchanged.
