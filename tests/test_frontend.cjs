@@ -16,7 +16,30 @@ const {
   overdueDeliveries,
   planningState,
   planChoiceLabel,
+  planPreference,
+  acknowledgementText,
+  chargerReviewMarkup,
 } = require("../app/static/app.js");
+
+test("default selection keeps reserve protection ahead of a cheaper risky journey", () => {
+  const safe = {plan_id:"safe", total_cost:300, review:{reduced_reserve:false}, comparison_goal:"PROTECT_RESERVE"};
+  const risky = {plan_id:"risky", total_cost:200, review:{reduced_reserve:true}};
+  assert.equal([risky, safe].sort(planPreference)[0], safe);
+  safe.initial_reserve_exception = true;
+  assert.match(planChoiceLabel(safe, "safe"), /restore reserve.*recommended/);
+  safe.review.initial_reserve_exception = true;
+  safe.reserve_kwh = 3;
+  assert.match(acknowledgementText(safe), /first charger, then restoring 3 kWh/);
+});
+
+test("all rejected/unselected chargers are visible without expanding details", () => {
+  const rows = ["UNAVAILABLE", "NOT_SELECTED", "NOT_SEARCHED", "NOT_NEEDED", "SELECTED"].map((state, i) => ({name:`Charger ${i}`,state,reason:"<unsafe text>",notes:[],bookings:[]}));
+  const html = chargerReviewMarkup(rows);
+  assert.equal((html.match(/<article/g) || []).length, 5);
+  assert.equal((html.match(/plan-locked/g) || []).length, 4);
+  assert.ok(!html.includes("<details"));
+  assert.ok(html.includes("&lt;unsafe text&gt;"));
+});
 
 test("only a real rescued deadline gets the emergency trade-off label", () => {
   const plan = { plan_id: "safe", comparison_goal: "PROTECT_RESERVE", review: { reduced_reserve: false } };

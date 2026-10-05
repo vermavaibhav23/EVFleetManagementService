@@ -205,6 +205,7 @@ class JourneyPlan(BaseModel):
     status: str = "PROPOSED"
     recovery: bool = False
     reserve_kwh: float = Field(ge=0)
+    initial_reserve_exception: bool = False
     operations: list[Operation] = Field(min_length=1, max_length=27)
     total_cost: float
     solver: dict

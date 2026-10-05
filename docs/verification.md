@@ -1,5 +1,11 @@
 # Verification status — version 3
 
+## Reserve restoration and complete charger review
+
+On 5 October 2026, the full local suite passed **84 Python tests, 1 cloud-only skip** in 110.88 seconds and **26 frontend tests**. Follow-up safety/scenario checks passed **25 tests** in 66.15 seconds after excluding powerless stations from candidate bounds. Ruff passed. Coverage includes limited initial reserve use, restoration at subsequent stops and depot, required acknowledgement, full simulated execution, external telemetry respecting only the initial exception, and refusing a physically unreachable charger. Charger inventory checks cover failed/incompatible/powerless/out-of-bound stations, actual booking windows, rejected/stale options and pruned job history. Frontend tests check visible grey charger cards, escaped reasons and safe default selection.
+
+A read-only replay of the actual live disrupted Van B1 snapshot produced an on-time **₹298.04** reserve-restoring journey ending with **3 kWh**, with no production booking or mutation. The cloud test now additionally exercises combined North/East failures, initial-exception approval and reserve-preserving completion; its execution is verified separately from these local results.
+
 ## Deadline-versus-battery comparison correction
 
 On 5 October 2026, the full Python suite passed **77 tests, 1 cloud-only skip** in 117.95 seconds, and the frontend suite passed **24 tests**. After adding an additional sole-escape-route check, all **7 focused trade-off tests** passed in 7.43 seconds; Ruff passed. These cover solver-noise duplicates, a genuinely earlier ordinary alternative, a real deadline rescued using emergency reserve, already-missed deadlines, not worsening another delivery, and refusing a route that reaches its first customer but strands the vehicle later. A physically feasible reduced-reserve escape with no normal-reserve route is labelled as an alternative, not an invented two-way choice. These are local regression results; the earlier cloud integration run below remains separate evidence.

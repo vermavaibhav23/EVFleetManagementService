@@ -14,10 +14,25 @@ function planChoiceLabel(plan, recommendedId) {
       ? "Save delivery deadlines · emergency reserve"
       : "Alternative · emergency reserve";
   }
-  if (plan.plan_id === recommendedId) return "Avoid battery emergency · recommended";
+  if (plan.plan_id === recommendedId) return plan.initial_reserve_exception
+    ? "Reach charger, restore reserve · recommended"
+    : "Avoid battery emergency · recommended";
   return plan.comparison_goal === "EARLIER_RETURN"
     ? "Alternative · earlier return"
     : "Alternative · protects battery reserve";
+}
+function planPreference(a, b) {
+  const reduced = p => p.review?.reduced_reserve ? 1 : 0;
+  const ordinary = p => p.comparison_goal === "EARLIER_RETURN" ? 1 : 0;
+  return reduced(a) - reduced(b) || ordinary(a) - ordinary(b) || a.total_cost - b.total_cost;
+}
+function acknowledgementText(plan) {
+  const r = plan.review;
+  if (r.initial_reserve_exception) return `I accept using reserve to reach the first charger, then restoring ${plan.reserve_kwh} kWh reserve, and any listed delivery delays.`;
+  return `I accept this option's listed delays${r.reduced_reserve ? " and increased risk of running out of battery" : ""}, with a ${r.reserve_pct}% reserve floor.`;
+}
+function chargerReviewMarkup(rows = []) {
+  return `<h3>All chargers · current review</h3><p class="muted">Unavailable and unselected chargers stay visible. Not selected does not mean impossible. These are current conditions; slots are checked again at approval.</p><div class="journey-options">${rows.map(r => `<article class="plan ${r.state === "SELECTED" ? "" : "plan-locked"}"><h3>${escapeHTML(r.name)}</h3><b>${escapeHTML(({SELECTED:"Used in current journey",UNAVAILABLE:"Unavailable",NOT_SEARCHED:"Not searched",NOT_NEEDED:"Not needed",NOT_SELECTED:"Not selected"})[r.state] || r.state)}</b><ul class="plan-pointers"><li>${escapeHTML(r.reason)}</li>${(r.notes || []).map(n => `<li>${escapeHTML(n)}</li>`).join("")}${(r.bookings || []).map(b => `<li>Port ${b.port}: booked ${dateIST(b.start)} ${slotTime(b.start)} → ${dateIST(b.end)} ${slotTime(b.end)} IST</li>`).join("")}</ul></article>`).join("") || '<p class="empty">No chargers configured in this scenario.</p>'}</div>`;
 }
 const time = (value) =>
   value
@@ -130,7 +145,7 @@ function displayPlan(vehicle, fleet, selectedId) {
   const assigned = fleet.plans?.[vehicle?.plan_id];
   if (usablePlan(assigned, fleet.clock)) return assigned;
   return Object.values(fleet.plans || {}).filter(p => p.vin === vehicle?.vin && usablePlan(p, fleet.clock))
-    .sort((a,b) => a.total_cost - b.total_cost)[0] || null;
+    .sort(planPreference)[0] || null;
 }
 function overdueDeliveries(v, clock) {
   return v.deliveries.filter(d => !d.is_return && d.status !== "COMPLETED" && d.status !== "SERVICING"
@@ -277,6 +292,9 @@ function progressMarkup(v, fleet) {
 }
 if (typeof module !== "undefined")
   module.exports = {
+    planPreference,
+    acknowledgementText,
+    chargerReviewMarkup,
     planChoiceLabel,
     escapeHTML,
     money,
@@ -962,7 +980,7 @@ if (typeof document !== "undefined") {
         return (
           rank(a) - rank(b) ||
           (rank(a) === 0
-            ? Number(a.review.reduced_reserve) - Number(b.review.reduced_reserve) || a.total_cost - b.total_cost
+            ? planPreference(a, b)
             : new Date(b.created_at) - new Date(a.created_at))
         );
       });
@@ -1000,9 +1018,9 @@ if (typeof document !== "undefined") {
             EXECUTING: "Approved · in progress",
             COMPLETED: "Approved · journey finished",
           }[r.state] || human(r.state);
-      html += `<article class="plan ${locked ? "plan-locked" : ""} ${chosen ? "chosen" : ""}"><div class="plan-head"><div><h3>${r.can_approve ? `<label><input type="radio" name="alternative" value="${plan.plan_id}" ${chosen ? "checked" : ""}> ${label}</label>` : label}</h3><small>${locked ? "Earlier estimate · not a current route" : plan.recovery ? "Allows delivery delays" : "On-time journey"}</small></div><div class="price">${money(plan.total_cost)}<small>${locked ? "earlier estimate" : "total journey charging cost"}</small></div></div>
+      html += `<article class="plan ${locked ? "plan-locked" : ""} ${chosen ? "chosen" : ""}"><div class="plan-head"><div><h3>${r.can_approve ? `<label><input type="radio" name="alternative" value="${plan.plan_id}" ${chosen ? "checked" : ""}> ${label}</label>` : label}</h3><small>${locked ? "Earlier estimate · not a current route" : r.affected_customers?.length ? "Delayed journey" : "On-time journey"}</small></div><div class="price">${money(plan.total_cost)}<small>${locked ? "earlier estimate" : "total journey charging cost"}</small></div></div>
         <p class="tradeoff ${r.reduced_reserve ? "reserve-risk" : ""}"><strong>${locked ? "Earlier option: " : ""}${escapeHTML(r.tradeoff || r.delivery_summary)}</strong></p>
-        <ul class="plan-pointers">${r.reason ? `<li><b>${escapeHTML(r.reason)}</b></li>` : ""}<li>${locked ? "Earlier estimate: " : ""}${escapeHTML(r.delivery_summary)}</li><li>Return ${time(r.return_at)} IST with ${r.return_pct}% battery.</li><li>Reserve floor: ${r.reserve_pct}% (${plan.reserve_kwh} kWh).</li>${r.reduced_reserve ? '<li>The planned route remains reachable. Extra battery use could leave the vehicle stranded because there is less reserve.</li>' : ""}</ul>`;
+        <ul class="plan-pointers">${r.reason ? `<li><b>${escapeHTML(r.reason)}</b></li>` : ""}<li>${locked ? "Earlier estimate: " : ""}${escapeHTML(r.delivery_summary)}</li><li>Return ${time(r.return_at)} IST with ${r.return_pct}% battery.</li><li>${escapeHTML(r.reserve_summary || `Reserve floor: ${r.reserve_pct}% (${plan.reserve_kwh} kWh).`)}</li>${r.reduced_reserve ? '<li>The planned route remains reachable. Extra battery use could leave the vehicle stranded because there is less reserve.</li>' : ""}</ul>`;
       const booked = ["APPROVED", "EXECUTING"].includes(plan.status);
       html += `<h4>${booked ? "Booked charging slots" : locked ? "Earlier requested slots" : r.state === "COMPLETED" ? "Charging slots used" : "Slots requested on approval"}</h4>`;
       if (!r.slots.length)
@@ -1012,8 +1030,8 @@ if (typeof document !== "undefined") {
       if (r.can_approve)
         html += `<p class="slot-check">Available in the latest check; rechecked together when you approve.</p>`;
       if (r.can_approve) {
-        if (plan.recovery)
-          html += `<label class="ack"><input id="ack-${plan.plan_id}" data-ack="${plan.plan_id}" type="checkbox" ${acknowledgedPlans.has(plan.plan_id) ? "checked" : ""}> I accept this option's listed delays${r.reduced_reserve ? " and risk of running out of battery" : ""}, with a ${r.reserve_pct}% reserve floor.</label>`;
+        if (r.requires_acknowledgement || plan.recovery)
+          html += `<label class="ack"><input id="ack-${plan.plan_id}" data-ack="${plan.plan_id}" type="checkbox" ${acknowledgedPlans.has(plan.plan_id) ? "checked" : ""}> ${escapeHTML(acknowledgementText(plan))}</label>`;
         html += `<div class="actions"><button class="primary" data-approve="${plan.plan_id}">${r.slots.length ? "Approve journey & book " + r.slots.length + " slot" + (r.slots.length === 1 ? "" : "s") : "Approve journey"}</button><button data-reject="${plan.plan_id}">Reject option</button></div>`;
       }
       if (r.state === "OUTDATED")
@@ -1033,7 +1051,7 @@ if (typeof document !== "undefined") {
     if (!plans.length && !latest)
       html +=
         '<p class="empty">Choose Recalculate plans to see costs, battery risk and every affected customer. Only feasible journeys can be approved.</p>';
-    html += "</div>";
+    html += "</div>" + chargerReviewMarkup(v.charger_review);
     $("review").innerHTML = html;
     if (focused && $(focused)) $(focused).focus({ preventScroll: true });
   }

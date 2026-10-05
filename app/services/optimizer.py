@@ -20,6 +20,7 @@ from app.services.pricing import intervals, session
 
 def fingerprint(doc, vin):
     state = {k: doc[k] for k in ("run_id", "policy", "stations", "depots")}
+    state["review_rules_version"] = 2
     # Heartbeats and job labels do not change physical planning inputs.
     state["vehicle"] = {
         k: v
@@ -35,6 +36,7 @@ def fingerprint(doc, vin):
             "auto_plan_marker",
             "control_version",
             "reported_activity",
+            "charger_review",
         }
     }
     return hashlib.sha256(
@@ -103,6 +105,25 @@ def blocked_power(doc, station, power, existing, origin, horizon):
     ]
 
 
+def candidate_stations(doc, vehicle):
+    return [
+        s
+        for s in sorted(
+            doc["stations"].values(),
+            key=lambda s: (distance(vehicle, s), s["charger_id"]),
+        )
+        if s["status"] == "AVAILABLE"
+        and s["connector"] == vehicle["connector"]
+        and s["port_count"] > 0
+        and min(
+            s["power_kw"],
+            vehicle["max_power_kw"],
+            doc["depots"][s["depot_id"]]["power_limit_kw"],
+        )
+        > 0
+    ][: doc["policy"]["max_stations"]]
+
+
 def optimize(
     doc,
     vin,
@@ -110,6 +131,7 @@ def optimize(
     reserve_exception=False,
     exclude_choices=None,
     fastest=False,
+    approach_reserve_exception=False,
 ):
     started = monotonic()
     v, p = doc["vehicles"][vin], doc["policy"]
@@ -128,6 +150,10 @@ def optimize(
 
     if reserve_exception and not recovery:
         return fail("ERROR", "A reserve exception requires recovery mode")
+    if reserve_exception and approach_reserve_exception:
+        return fail(
+            "ERROR", "Initial and whole-journey reserve exceptions cannot be combined"
+        )
     if v["health_fault"] or v["temperature_c"] >= 60 or cap <= 0:
         return fail(
             "INFEASIBLE_MODEL",
@@ -148,7 +174,7 @@ def optimize(
         return fail("INFEASIBLE_MODEL", "Service finishes outside the planning horizon")
     # Zero purchased energy is a global lower bound when all tariffs are nonnegative.
     # Forward construction also establishes the earliest possible direct completion.
-    if not recovery and exclude_choices is None:
+    if not recovery and exclude_choices is None and not approach_reserve_exception:
         direct = direct_plan(doc, vin, ready, reserve, scope)
         if direct:
             return dict(
@@ -177,18 +203,16 @@ def optimize(
     existing = bookings(doc, exclude_plan=v.get("plan_id")) + doc.get(
         "external_bookings", []
     )
-    stations = sorted(
-        doc["stations"].values(), key=lambda s: (distance(v, s), s["charger_id"])
-    )
-    stations = [
-        s
-        for s in stations
-        if s["status"] == "AVAILABLE" and s["connector"] == v["connector"]
-    ][: p["max_stations"]]
+    stations = candidate_stations(doc, v)
+    reserve_shortfall = Expr()
     for gap, dest in enumerate(destinations):
         direct_e, direct_t = leg(doc, v, previous, dest)
         arrival, service, finish = [m.var(0, horizon) for _ in range(3)]
         energy = m.var(reserve, cap)
+        if reserve_exception:
+            shortage = m.var(0, p["reserve_kwh"])
+            m.ge(shortage, p["reserve_kwh"] - energy)
+            reserve_shortfall += shortage
         ready_at = (
             max(0, (dt(dest["ready_at"]) - origin).total_seconds() / 60)
             if dest.get("ready_at")
@@ -250,7 +274,19 @@ def optimize(
                 m.le(begin, horizon * y)
                 m.le(end, horizon * y)
                 m.ge(eout - ein, 0.001 * y)
-                m.ge(ein, (0 if gap == 0 and e1 < 1e-9 else reserve) * y)
+                m.ge(
+                    ein,
+                    (
+                        0
+                        if gap == 0 and (e1 < 1e-9 or approach_reserve_exception)
+                        else reserve
+                    )
+                    * y,
+                )
+                if reserve_exception and not (gap == 0 and e1 < 1e-9):
+                    shortage = m.var(0, p["reserve_kwh"])
+                    m.ge(shortage, p["reserve_kwh"] * y - ein)
+                    reserve_shortfall += shortage
                 m.when_eq(y, ein, prev_energy - e1, 3 * cap + e1)
                 m.ge(
                     begin,
@@ -325,6 +361,8 @@ def optimize(
                 candidates.append(candidate)
         chosen = sum(choices, Expr())
         m.le(chosen, 1)
+        if gap == 0 and approach_reserve_exception:
+            m.eq(chosen, 1)
         m.when_eq(1 - chosen, arrival, depart + direct_t, 3 * horizon)
         m.eq(energy, prev_energy - direct_e + sum(deltas, Expr()))
         m.ge(service, arrival)
@@ -373,8 +411,10 @@ def optimize(
             ),
             1,
         )
-    objectives = ([late_count, max_late, late_sum] if recovery else []) + (
-        [prev_time, cost] if fastest else [cost, prev_time]
+    objectives = (
+        ([late_count, max_late, late_sum] if recovery else [])
+        + ([reserve_shortfall] if reserve_exception else [])
+        + ([prev_time, cost] if fastest else [cost, prev_time])
     )
     result = None
     cost_result = None
@@ -392,7 +432,11 @@ def optimize(
         phase_status.append(int(solved.status))
         if solved.x is None:
             if result is None:
-                if solved.status == 1 and not recovery:
+                if (
+                    solved.status == 1
+                    and not recovery
+                    and not approach_reserve_exception
+                ):
                     fallback = depot_fallback(doc, vin, ready, reserve, scope)
                     if fallback:
                         fallback["solver"]["elapsed_seconds"] = monotonic() - started
@@ -538,7 +582,8 @@ def optimize(
         created_at=origin,
         valid_until=operations[0]["depart"],
         status="PROPOSED",
-        recovery=recovery,
+        recovery=recovery or approach_reserve_exception,
+        initial_reserve_exception=approach_reserve_exception,
         reserve_kwh=reserve,
         operations=operations,
         total_cost=sum(o["cost"] for o in operations),

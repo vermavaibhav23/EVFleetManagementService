@@ -44,7 +44,14 @@ def validate(doc, plan):
     reserve = plan["reserve_kwh"]
     if reserve < p["reserve_kwh"] - EPS and not plan["recovery"]:
         errors.append("Unacknowledged reserve exception")
-    for o in plan["operations"]:
+    initial_exception = plan.get("initial_reserve_exception", False)
+    if initial_exception and (
+        not plan["recovery"]
+        or reserve < p["reserve_kwh"] - EPS
+        or plan["operations"][0]["kind"] != "CHARGE"
+    ):
+        errors.append("Invalid initial reserve exception")
+    for operation_index, o in enumerate(plan["operations"]):
         if not all(
             isfinite(o.get(k, 0))
             for k in ("energy_arrival", "energy_end", "cost", "grid_kwh", "power_kw")
@@ -63,7 +70,12 @@ def validate(doc, plan):
         already_at_charger = (
             o["kind"] == "CHARGE" and not charges and index == 0 and consumed < 1e-9
         )
-        if energy < -EPS or (energy < reserve - EPS and not already_at_charger):
+        initial_approach = (
+            initial_exception and operation_index == 0 and o["kind"] == "CHARGE"
+        )
+        if energy < -EPS or (
+            energy < reserve - EPS and not already_at_charger and not initial_approach
+        ):
             errors.append("Arrival reserve violated")
         if abs(energy - o["energy_arrival"]) > EPS:
             errors.append("Arrival energy mismatch")

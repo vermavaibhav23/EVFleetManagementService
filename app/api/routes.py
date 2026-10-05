@@ -16,6 +16,7 @@ from app.domain import (
     Telemetry,
     dt,
 )
+from app.services.charger_review import charger_review
 from app.services.control import approve_or_refresh, reject, request_job
 from app.services.execution import apply_event, interrupt
 from app.services.ledger import Ledger, bookings
@@ -85,6 +86,8 @@ async def state(store: Ledger = Depends(ledger)):
         item["blocked_reason"] = action_block(doc, item)
     for plan in doc["plans"].values():
         plan["review"] = review(doc, plan)
+    for vin, vehicle in doc["vehicles"].items():
+        vehicle["charger_review"] = charger_review(doc, vin)
     for job in doc["jobs"].values():
         for row in job.get("results", []):
             row["message"] = result_message(doc, row)

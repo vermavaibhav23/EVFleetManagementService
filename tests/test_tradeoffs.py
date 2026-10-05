@@ -51,7 +51,8 @@ def test_comparison_offers_real_reserve_delay_tradeoff_and_requires_acknowledgem
     assert "emergency battery reserve" in urgent_review["tradeoff"]
     assert not urgent_review["affected_customers"]
     assert urgent["deadlines_saved"] == ["A", "B"]
-    assert urgent_review["minimum_battery_pct"] == 1
+    # Use the five available minutes to retain more reserve before minimizing cost.
+    assert urgent_review["minimum_battery_pct"] == 1.5
     for plan in plans:
         fresh = deepcopy(doc)
         assert not validate(fresh, plan)

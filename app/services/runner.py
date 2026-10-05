@@ -83,7 +83,12 @@ def deadline_tradeoff(safe, urgent, reserve):
         o["energy_arrival"] < reserve - 0.01
         for i, o in enumerate(urgent["operations"])
         if not (
-            i == 0 and o["kind"] == "CHARGE" and dt(o["arrival"]) == dt(o["depart"])
+            i == 0
+            and o["kind"] == "CHARGE"
+            and (
+                dt(o["arrival"]) == dt(o["depart"])
+                or safe.get("initial_reserve_exception")
+            )
         )
     ):
         return []
@@ -109,10 +114,21 @@ def compare_options(doc, vin, alternatives=True):
         results.append(result)
 
     normal = optimize(doc, vin)
+    if "plan" not in normal and normal["status"] != "ERROR":
+        approach = optimize(doc, vin, approach_reserve_exception=True)
+        if "plan" in approach:
+            normal = approach
     if "plan" in normal:
         add(normal, "PROTECT_RESERVE")
         if alternatives and normal["plan"]["total_cost"] > 0:
-            earlier = optimize(doc, vin, fastest=True)
+            earlier = optimize(
+                doc,
+                vin,
+                fastest=True,
+                approach_reserve_exception=normal["plan"].get(
+                    "initial_reserve_exception", False
+                ),
+            )
             if "plan" not in earlier:
                 add(earlier, "EARLIER_RETURN")
             elif (
@@ -126,7 +142,17 @@ def compare_options(doc, vin, alternatives=True):
         if normal["status"] == "ERROR":
             return results
         safe = optimize(doc, vin, recovery=True)
+        if "plan" not in safe and safe["status"] != "ERROR":
+            restored = optimize(
+                doc, vin, recovery=True, approach_reserve_exception=True
+            )
+            if "plan" in restored:
+                safe = restored
         add(safe, "PROTECT_RESERVE")
+        if "plan" in safe and not any(
+            o.get("lateness_minutes", 0) > 1 / 60 for o in safe["plan"]["operations"]
+        ):
+            return results
         urgent = optimize(doc, vin, recovery=True, reserve_exception=True)
         if "plan" not in urgent:
             add(urgent, "PROTECT_DEADLINES")
@@ -254,7 +280,7 @@ class Runner:
             owner=self.owner,
             lease_until=wall
             + timedelta(
-                seconds=doc["policy"]["solver_seconds"] * max(4, 3 * len(vins)) + 90
+                seconds=doc["policy"]["solver_seconds"] * max(5, 5 * len(vins)) + 90
             ),
         )
         snapshot = await self.ledger.commit(old, doc)

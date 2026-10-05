@@ -181,6 +181,10 @@ def test_real_end_to_end_and_reset_fencing():
                             )
                             == 4
                         )
+                        for vehicle in doc["vehicles"].values():
+                            assert {
+                                r["charger_id"] for r in vehicle["charger_review"]
+                            } == set(doc["stations"])
                         if scenario == "EVERYDAY_CHOICES":
                             doc = await until(
                                 client,
@@ -253,6 +257,56 @@ def test_real_end_to_end_and_reset_fencing():
                             assert doc["vehicles"]["SIM-004"]["plan_id"] == control_plan
                             assert not any(
                                 r["vin"] == "SIM-002" for r in doc["reservations"]
+                            )
+                            # Reproduce the manager's combined charger-failure case.
+                            # Initial reserve use must not authorize an empty return.
+                            await command(
+                                client,
+                                "simulator/actions/fail-north",
+                                {"run_id": run_id},
+                            )
+                            doc = await until(
+                                client,
+                                lambda d: any(
+                                    p["vin"] == "SIM-001"
+                                    and p["review"]["can_approve"]
+                                    and p.get("initial_reserve_exception")
+                                    for p in d["plans"].values()
+                                ),
+                            )
+                            plan = next(
+                                p
+                                for p in doc["plans"].values()
+                                if p["vin"] == "SIM-001"
+                                and p["review"]["can_approve"]
+                                and p.get("initial_reserve_exception")
+                            )
+                            assert plan["operations"][-1]["energy_end"] >= 3 - 0.0002
+                            assert not plan["review"]["affected_customers"]
+                            denied = await client.post(
+                                f"/api/v1/journeys/{plan['plan_id']}/approve",
+                                json={"run_id": run_id},
+                            )
+                            assert denied.status_code == 422
+                            approved = await command(
+                                client,
+                                f"journeys/{plan['plan_id']}/approve",
+                                {"run_id": run_id, "acknowledge_recovery": True},
+                            )
+                            assert approved["status"] == "APPROVED"
+                            await command(
+                                client,
+                                "simulator/tick",
+                                {"run_id": run_id, "seconds": 18000},
+                            )
+                            doc = await until(
+                                client,
+                                lambda d: (
+                                    d["vehicles"]["SIM-001"]["state"] == "COMPLETED"
+                                ),
+                            )
+                            assert (
+                                doc["vehicles"]["SIM-001"]["energy_kwh"] >= 3 - 0.0002
                             )
         finally:
             # Identifiers are generated above, never derived from production names.

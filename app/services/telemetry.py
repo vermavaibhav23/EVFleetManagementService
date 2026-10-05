@@ -77,7 +77,14 @@ def apply_reading(doc, event, checkpoint=None):
                     from app.services.optimizer import leg
 
                     needed, minutes = leg(doc, v, v, remaining[0])
-                    if event.energy_kwh - needed < plan["reserve_kwh"] - 0.001:
+                    reserve = plan["reserve_kwh"]
+                    if (
+                        plan.get("initial_reserve_exception")
+                        and v["operation_index"] == 0
+                        and remaining[0]["kind"] == "CHARGE"
+                    ):
+                        reserve = 0
+                    if event.energy_kwh - needed < reserve - 0.001:
                         interrupt(
                             doc,
                             v["vin"],

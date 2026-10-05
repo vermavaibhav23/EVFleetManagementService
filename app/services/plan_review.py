@@ -42,7 +42,7 @@ def issue_message(doc, plan):
     if "Vehicle health blocks movement" in errors:
         return "A vehicle health check is required before continuing."
     if fingerprint(doc, plan["vin"]) != plan["fingerprint"]:
-        return "Battery, vehicle or charger details changed. Refresh options before booking."
+        return "Planning rules, battery, vehicle or charger details changed. Recalculate before booking."
     if errors:
         return (
             "This journey no longer fits the current route or timing. Refresh options."
@@ -108,6 +108,7 @@ def review(doc, plan):
     affected = "; ".join(f"{o['name']} +{o['lateness_minutes']:.1f} min" for o in late)
     minimum = min(o["energy_arrival"] for o in operations)
     reduced = plan["reserve_kwh"] < doc["policy"]["reserve_kwh"] - 0.001
+    initial_exception = plan.get("initial_reserve_exception", False)
     if reduced:
         tradeoff = (
             "Save deadlines for "
@@ -128,6 +129,12 @@ def review(doc, plan):
         )
     else:
         tradeoff = "Keep chargers and the depot reachable, with reserve. All deliveries on time."
+    if initial_exception:
+        tradeoff = (
+            f"Use reserve only to reach {operations[0]['name']}; "
+            f"restore {plan['reserve_kwh']:g} kWh reserve after charging. "
+            + (f"Delays: {affected}." if late else "All deliveries on time.")
+        )
     if plan.get("comparison_goal") == "EARLIER_RETURN":
         tradeoff = "Alternative: earlier return. " + tradeoff
     return dict(
@@ -136,6 +143,13 @@ def review(doc, plan):
         can_approve=state == "PROPOSED",
         tradeoff=reason if state == "OUTDATED" else tradeoff,
         reduced_reserve=reduced,
+        initial_reserve_exception=initial_exception,
+        requires_acknowledgement=plan["recovery"] or initial_exception,
+        reserve_summary=(
+            f"Temporary exception to first charger; {plan['reserve_kwh']:g} kWh reserve for every later arrival."
+            if initial_exception
+            else f"Reserve floor: {pct(plan['reserve_kwh']):g}% ({plan['reserve_kwh']:g} kWh)."
+        ),
         minimum_battery_pct=pct(minimum),
         affected_customers=[
             dict(name=o["name"], minutes=o["lateness_minutes"]) for o in late
@@ -179,5 +193,5 @@ def result_message(doc, row):
     if row["status"] == "LIMIT_NO_INCUMBENT":
         return "The search timed out without a usable option. Try again."
     if row["status"] == "INFEASIBLE_MODEL":
-        return "No journey fits this option's battery, deadline and charger limits. Compare the other cards; assistance may be needed if stranded."
+        return "No journey found under this option's battery, deadline and charger limits. Other cards may use an initial reserve exception or allow delays. This does not mean assistance was dispatched."
     return "No usable option was returned. Refresh options; technical details are available below."
