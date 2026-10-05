@@ -582,7 +582,7 @@ if (typeof document !== "undefined") {
     $("scenario-actions").innerHTML = (fleet.scenario_actions || []).length
       ? `<strong>Test one incident at a time</strong><span class="muted">Each action pauses the clock for review. Reload to replay.</span><div class="incident-buttons">${fleet.scenario_actions.map(a => `<div><button data-incident="${escapeHTML(a.event_id)}" data-locked="${Boolean(a.blocked_reason)}" ${a.blocked_reason ? "disabled" : ""}>${escapeHTML(a.label)} · ${escapeHTML(fleet.vehicles[a.vin].name)}</button>${a.blocked_reason ? `<small>${escapeHTML(a.blocked_reason)}</small>` : ""}</div>`).join("")}</div>` : "";
     $("freshness").textContent =
-      `${Object.keys(fleet.vehicles).length} vehicles · ${fleet.running ? "Live simulation" : "Telemetry frozen while paused"} · updated ${new Date().toLocaleTimeString()}`;
+      `${Object.keys(fleet.vehicles).length} vehicles · ${fleet.running ? "Live simulation" : "Simulation paused · telemetry continues"} · updated ${new Date().toLocaleTimeString()}`;
     if (activeTab === "overview") renderOverview();
     if (activeTab === "vehicles") renderVehicles();
     if (activeTab === "plans") {

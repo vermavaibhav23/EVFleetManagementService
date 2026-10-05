@@ -44,7 +44,7 @@ Automatic planning runs when fresh data is available, the vehicle is safely stop
 | `KAFKA_REPLICATION_FACTOR` | 1 for one demo broker; use suitable replication for production |
 | `RUN_WORKERS` | true (default) embeds the demo workers |
 
-The forwarder calls `http://127.0.0.1:$PORT` within Railway. `railway.toml` starts one Uvicorn process and checks `/api/v1/health/ready`. Railway builds the Dockerfile **in the cloud**; Docker does not need to run on the laptop. Local Docker Compose has been removed.
+The forwarder calls `http://127.0.0.1:$PORT` within Railway. The Dockerfile starts one Uvicorn process on that same port (8000 if `PORT` is absent). The deployed service sets `PORT=8000` to match its existing public domain target and uses `/api/v1/health/ready` as its Railway healthcheck. Keep the API near PostgreSQL to avoid repeated cross-region database round trips. Railway builds the Dockerfile **in the cloud**; Docker does not need to run on the laptop. Local Docker Compose has been removed.
 
 Open `/portal`, Load / reset a scenario, wait for telemetry and automatic options, approve a journey, then Start or +5 min. `/api/v1/health/live` reports schema version 3; readiness checks PostgreSQL and Kafka metadata and returns worker status. HTTP 202 means Kafka accepted a reading, not that processing or planning has finished.
 
@@ -188,8 +188,12 @@ ruff check app tests scripts
 
 Ordinary tests do not launch Docker, Kafka, PostgreSQL or MongoDB. Real integration tests explicitly skip without all three settings: `FLEET_TEST_POSTGRES`, `FLEET_TEST_KAFKA`, `FLEET_TEST_MONGO`. Use disposable **cloud test services**. Tests create unique PostgreSQL schemas, Kafka topics/groups and MongoDB history databases and clean up only those generated names.
 
+The Railway **Fleet Pipeline Verification** service runs this check inside the cloud over private connections. Its `RAILWAY_DOCKERFILE_PATH` is `tests/Dockerfile.cloud`, its start command is `python -m pytest tests/test_cloud_integration.py -v --tb=short -o log_cli=true`, and its restart policy is **Never**. It has no public endpoint and exits after checking. The three test variables reference the project's PostgreSQL, Kafka and MongoDB services; generated test names isolate the data, and simulator/provider locks are scoped to the PostgreSQL schema. No database password needs to be copied to a laptop.
+
+Railway build/deploy settings are configured in the dashboard: Dockerfile `Dockerfile`, blank custom start command (use the image command), healthcheck `/api/v1/health/ready`, one replica and restart on failure. The unused `railway.toml` was removed after live verification showed this service does not apply it. Railway no longer accepts new Config-as-Code adoption; see [Railway's migration notice](https://docs.railway.com/config-as-code).
+
 ```sh
 python -m pytest tests/test_cloud_integration.py -q
 ```
 
-That test covers HTTP → Kafka → state/history → automatic Kafka planning → optimiser → approval → simulation readings → completion, revision conflict and reset fencing. Test scripts never deploy to Railway. See [actual verification status](docs/verification.md).
+That test covers HTTP → Kafka → state/history → automatic Kafka planning → optimiser → approval → simulation readings → completion, revision conflict, reset fencing, all four preset snapshots, split charging and charger failure during a session. Test scripts never deploy to Railway. See [actual verification status](docs/verification.md).
