@@ -101,7 +101,9 @@ class Pipeline:
         # One dispatcher lease prevents concurrent sends reordering this demo's
         # outbox. No transaction spans the HTTP call; duplicates are harmless.
         async with self.pool.acquire() as connection:
-            locked = await connection.fetchval("SELECT pg_try_advisory_lock(72849103)")
+            locked = await connection.fetchval(
+                "SELECT pg_try_advisory_lock(hashtext(current_schema()),72849103)"
+            )
             if not locked:
                 return
             try:
@@ -141,7 +143,9 @@ class Pipeline:
                     "DELETE FROM outbox WHERE processed_at < now()-interval '1 hour' AND sent_at IS NOT NULL"
                 )
             finally:
-                await connection.execute("SELECT pg_advisory_unlock(72849103)")
+                await connection.execute(
+                    "SELECT pg_advisory_unlock(hashtext(current_schema()),72849103)"
+                )
 
     async def consume(self, role, name):
         topic = (
@@ -246,7 +250,9 @@ class Pipeline:
     async def clock(self):
         # Same database lease across API replicas; physical simulation has one owner.
         async with self.pool.acquire() as connection:
-            locked = await connection.fetchval("SELECT pg_try_advisory_lock(72849104)")
+            locked = await connection.fetchval(
+                "SELECT pg_try_advisory_lock(hashtext(current_schema()),72849104)"
+            )
             if not locked:
                 return
             try:
@@ -270,7 +276,9 @@ class Pipeline:
                 ):
                     await self.simulator.heartbeat()
             finally:
-                await connection.execute("SELECT pg_advisory_unlock(72849104)")
+                await connection.execute(
+                    "SELECT pg_advisory_unlock(hashtext(current_schema()),72849104)"
+                )
 
     async def auto_plan(self, doc):
         if any(j["status"] in ("QUEUED", "RUNNING") for j in doc["jobs"].values()):

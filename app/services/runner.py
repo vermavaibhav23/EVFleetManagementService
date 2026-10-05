@@ -1,4 +1,4 @@
-"""Leased simulated clock and cancellable, process-isolated solver jobs."""
+"""Kafka-dispatched, leased and cancellable process-isolated solver jobs."""
 
 import asyncio
 import multiprocessing

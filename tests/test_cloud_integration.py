@@ -60,6 +60,15 @@ def test_real_end_to_end_and_reset_fencing():
                         return doc
                     await asyncio.sleep(0.25)
 
+        async def command(client, path, body):
+            async with asyncio.timeout(30):
+                while True:
+                    response = await client.post("/api/v1/" + path, json=body)
+                    if response.status_code == 200:
+                        return response.json()
+                    assert response.status_code == 409, response.text
+                    await asyncio.sleep(0.3)
+
         try:
             async with lifespan(app):
                 pipeline = app.state.pipeline
@@ -141,6 +150,110 @@ def test_real_end_to_end_and_reset_fencing():
                         "/api/v1/simulator/tick", json={"run_id": run_id}
                     )
                     assert stale.status_code == 409
+
+                    # Exercise the actual manager presets through SQL and Kafka,
+                    # including multiple partitions and replacement instructions.
+                    for scenario in (
+                        "EVERYDAY_CHOICES",
+                        "SHARED_CHARGERS",
+                        "DELIVERY_DELAYS",
+                        "ASSISTANCE_CASES",
+                    ):
+                        loaded = await client.post(
+                            "/api/v1/simulator/load",
+                            json={
+                                "scenario": scenario,
+                                "vehicle_count": 4,
+                            },
+                        )
+                        assert loaded.status_code == 200, loaded.text
+                        run_id = loaded.json()["run_id"]
+                        doc = await until(
+                            client,
+                            lambda d: all(
+                                v["sequence"] > 0 and v["telemetry_status"] == "LIVE"
+                                for v in d["vehicles"].values()
+                            ),
+                        )
+                        assert (
+                            len(
+                                {(v["lat"], v["lon"]) for v in doc["vehicles"].values()}
+                            )
+                            == 4
+                        )
+                        if scenario == "EVERYDAY_CHOICES":
+                            doc = await until(
+                                client,
+                                lambda d: any(
+                                    p["vin"] == "SIM-001" and p["review"]["can_approve"]
+                                    for p in d["plans"].values()
+                                ),
+                            )
+                            candidates = [
+                                p
+                                for p in doc["plans"].values()
+                                if p["vin"] == "SIM-001" and p["review"]["can_approve"]
+                            ]
+                            plan = min(candidates, key=lambda p: p["total_cost"])
+                            charges = [
+                                o for o in plan["operations"] if o["kind"] == "CHARGE"
+                            ]
+                            assert [o["charger_id"] for o in charges] == [
+                                "SIM-C1",
+                                "SIM-C2",
+                            ]
+                            assert plan["total_cost"] == pytest.approx(
+                                360 / 0.92, abs=0.01
+                            )
+                            result = await command(
+                                client,
+                                f"journeys/{plan['plan_id']}/approve",
+                                {"run_id": run_id},
+                            )
+                            assert result["status"] == "APPROVED"
+                            await command(
+                                client,
+                                "simulator/tick",
+                                {"run_id": run_id, "seconds": 18000},
+                            )
+                            await until(
+                                client,
+                                lambda d: (
+                                    d["vehicles"]["SIM-001"]["state"] == "COMPLETED"
+                                ),
+                            )
+                        elif scenario == "SHARED_CHARGERS":
+                            energy = doc["vehicles"]["SIM-002"]["energy_kwh"]
+                            control_plan = doc["vehicles"]["SIM-004"]["plan_id"]
+                            await command(
+                                client,
+                                "simulator/actions/fail-east",
+                                {"run_id": run_id},
+                            )
+                            doc = await until(
+                                client,
+                                lambda d: (
+                                    d["vehicles"]["SIM-002"]["state"] == "RELEASING"
+                                ),
+                            )
+                            assert doc["vehicles"]["SIM-002"]["energy_kwh"] == energy
+                            await command(
+                                client,
+                                "simulator/tick",
+                                {"run_id": run_id, "seconds": 61},
+                            )
+                            doc = await until(
+                                client,
+                                lambda d: (
+                                    d["vehicles"]["SIM-002"]["state"]
+                                    == "WAITING_REVIEW"
+                                ),
+                            )
+                            assert doc["vehicles"]["SIM-002"]["energy_kwh"] == energy
+                            assert doc["vehicles"]["SIM-004"]["plan_id"] == control_plan
+                            assert not any(
+                                r["vin"] == "SIM-002" for r in doc["reservations"]
+                            )
         finally:
             # Identifiers are generated above, never derived from production names.
             admin = AIOKafkaAdminClient(**settings.kafka_config)

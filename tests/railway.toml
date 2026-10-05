@@ -1,7 +1,0 @@
-# Optional one-shot verification service. Builds and runs only in Railway.
-[build]
-builder = "DOCKERFILE"
-dockerfilePath = "tests/Dockerfile.cloud"
-[deploy]
-startCommand = "python -m pytest tests/test_cloud_integration.py -v --tb=short -o log_cli=true"
-restartPolicyType = "NEVER"
