@@ -15,7 +15,19 @@ const {
   displayPlan,
   overdueDeliveries,
   planningState,
+  planChoiceLabel,
 } = require("../app/static/app.js");
+
+test("only a real rescued deadline gets the emergency trade-off label", () => {
+  const plan = { plan_id: "safe", comparison_goal: "PROTECT_RESERVE", review: { reduced_reserve: false } };
+  assert.equal(planChoiceLabel(plan, "safe"), "Avoid battery emergency · recommended");
+  const earlier = { ...plan, plan_id: "earlier", comparison_goal: "EARLIER_RETURN" };
+  assert.equal(planChoiceLabel(earlier, "safe"), "Alternative · earlier return");
+  const urgent = { ...plan, plan_id: "urgent", comparison_goal: "PROTECT_DEADLINES", review: { reduced_reserve: true } };
+  assert.equal(planChoiceLabel(urgent, "safe"), "Alternative · emergency reserve");
+  urgent.deadlines_saved = ["Customer A"];
+  assert.equal(planChoiceLabel(urgent, "safe"), "Save delivery deadlines · emergency reserve");
+});
 
 test("review explains pending, failed and empty recalculations instead of old results", () => {
   const fleet = { running: false, vehicles: { V1: { state: "PARKED" } }, plans: {}, jobs: {

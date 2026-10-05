@@ -36,6 +36,60 @@ def priority(doc, vin):
     )
 
 
+def same_journey(left, right):
+    """Ignore solver noise, but preserve different routes, slots and charge amounts."""
+    if abs(left["total_cost"] - right["total_cost"]) > 0.01:
+        return False
+    if len(left["operations"]) != len(right["operations"]):
+        return False
+    for a, b in zip(left["operations"], right["operations"]):
+        if any(a.get(k) != b.get(k) for k in ("kind", "charger_id", "port", "trip_id")):
+            return False
+        if any(
+            abs((dt(a[k]) - dt(b[k])).total_seconds()) > 1
+            for k in ("depart", "arrival", "start", "end")
+        ):
+            return False
+        if any(abs(a[k] - b[k]) > 0.01 for k in ("energy_arrival", "energy_end")):
+            return False
+    return True
+
+
+def deadline_tradeoff(safe, urgent, reserve):
+    """Only offer emergency reserve when it rescues an actual missed deadline.
+
+    Both plans have already passed physical feasibility validation. Taking more
+    battery risk for the same delivery outcome is not a useful manager choice.
+    """
+    safe_deliveries = {
+        o["trip_id"]: o for o in safe["operations"] if o["kind"] == "DELIVERY"
+    }
+    urgent_deliveries = {
+        o["trip_id"]: o for o in urgent["operations"] if o["kind"] == "DELIVERY"
+    }
+    if safe_deliveries.keys() != urgent_deliveries.keys():
+        return []
+    saved = []
+    for trip_id, a in safe_deliveries.items():
+        b = urgent_deliveries[trip_id]
+        before, after = a.get("lateness_minutes", 0), b.get("lateness_minutes", 0)
+        if after > before + 1 / 60:
+            return []
+        if before > 1 / 60 and after <= 0.001:
+            saved.append(a["name"])
+    # Exclude charging in place at the starting point: an already-low battery
+    # is not a new risk created by choosing this journey.
+    if not saved or not any(
+        o["energy_arrival"] < reserve - 0.01
+        for i, o in enumerate(urgent["operations"])
+        if not (
+            i == 0 and o["kind"] == "CHARGE" and dt(o["arrival"]) == dt(o["depart"])
+        )
+    ):
+        return []
+    return saved
+
+
 def compare_options(doc, vin, alternatives=True):
     """Compare reserve-preserving and deadline-priority journeys on one snapshot.
 
@@ -50,24 +104,7 @@ def compare_options(doc, vin, alternatives=True):
         if plan:
             plan["comparison_goal"] = goal
 
-            # Different search modes can return the same physical journey.
-            def signature(p):
-                return [
-                    (
-                        o["kind"],
-                        o.get("charger_id"),
-                        o.get("port"),
-                        o.get("trip_id"),
-                        str(o["arrival"]),
-                        str(o["end"]),
-                        round(o["energy_end"], 3),
-                    )
-                    for o in p["operations"]
-                ]
-
-            if any(
-                signature(r["plan"]) == signature(plan) for r in results if "plan" in r
-            ):
+            if any(same_journey(r["plan"], plan) for r in results if "plan" in r):
                 return
         results.append(result)
 
@@ -75,17 +112,35 @@ def compare_options(doc, vin, alternatives=True):
     if "plan" in normal:
         add(normal, "PROTECT_RESERVE")
         if alternatives and normal["plan"]["total_cost"] > 0:
-            add(optimize(doc, vin, fastest=True), "EARLIER_RETURN")
+            earlier = optimize(doc, vin, fastest=True)
+            if "plan" not in earlier:
+                add(earlier, "EARLIER_RETURN")
+            elif (
+                dt(normal["plan"]["operations"][-1]["end"])
+                - dt(earlier["plan"]["operations"][-1]["end"])
+            ).total_seconds() >= 60:
+                add(earlier, "EARLIER_RETURN")
     else:
         # Keep the unavailable strict option visible with its failure reason.
         add(normal, "ON_TIME_WITH_RESERVE")
         if normal["status"] == "ERROR":
             return results
-        add(optimize(doc, vin, recovery=True), "PROTECT_RESERVE")
-        add(
-            optimize(doc, vin, recovery=True, reserve_exception=True),
-            "PROTECT_DEADLINES",
-        )
+        safe = optimize(doc, vin, recovery=True)
+        add(safe, "PROTECT_RESERVE")
+        urgent = optimize(doc, vin, recovery=True, reserve_exception=True)
+        if "plan" not in urgent:
+            add(urgent, "PROTECT_DEADLINES")
+        elif "plan" in safe:
+            saved = deadline_tradeoff(
+                safe["plan"], urgent["plan"], doc["policy"]["reserve_kwh"]
+            )
+            if saved:
+                urgent["plan"]["deadlines_saved"] = saved
+                add(urgent, "PROTECT_DEADLINES")
+        else:
+            # If reserve protection is impossible, a physically feasible escape
+            # remains reviewable, but it is not a two-way deadline trade-off.
+            add(urgent, "REDUCED_RESERVE_ALTERNATIVE")
     return results
 
 
@@ -129,15 +184,14 @@ def solve_job(snapshot, job, output):
                         req["reserve_exception"],
                         fastest=True,
                     )
-                    if "plan" in alt and (
-                        abs(alt["plan"]["total_cost"] - plan["total_cost"]) > 0.01
-                        or abs(
-                            (
-                                dt(alt["plan"]["operations"][-1]["end"])
-                                - dt(plan["operations"][-1]["end"])
-                            ).total_seconds()
-                        )
-                        > 1
+                    if (
+                        "plan" in alt
+                        and not same_journey(plan, alt["plan"])
+                        and (
+                            dt(plan["operations"][-1]["end"])
+                            - dt(alt["plan"]["operations"][-1]["end"])
+                        ).total_seconds()
+                        >= 60
                     ):
                         alt["vin"] = vin
                         results.append(alt)

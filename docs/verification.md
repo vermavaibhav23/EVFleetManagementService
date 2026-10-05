@@ -1,5 +1,9 @@
 # Verification status — version 3
 
+## Deadline-versus-battery comparison correction
+
+On 5 October 2026, the full Python suite passed **77 tests, 1 cloud-only skip** in 117.95 seconds, and the frontend suite passed **24 tests**. After adding an additional sole-escape-route check, all **7 focused trade-off tests** passed in 7.43 seconds; Ruff passed. These cover solver-noise duplicates, a genuinely earlier ordinary alternative, a real deadline rescued using emergency reserve, already-missed deadlines, not worsening another delivery, and refusing a route that reaches its first customer but strands the vehicle later. A physically feasible reduced-reserve escape with no normal-reserve route is labelled as an alternative, not an invented two-way choice. These are local regression results; the earlier cloud integration run below remains separate evidence.
+
 Local checks completed on 5 October 2026 (IST):
 
 - Python regression suite: **73 passed, 1 skipped** in 103.82 seconds. It covers the preserved mathematical/execution/scenario rules plus telemetry ordering, duplicate fencing, old-run/control-version rejection, freshness, heartbeat stability, independently applied simulator progress, pending planning deduplication and history upserts.

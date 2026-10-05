@@ -8,6 +8,17 @@ const escapeHTML = (value) =>
       ],
   );
 const money = (value) => `₹${Number(value || 0).toFixed(2)}`;
+function planChoiceLabel(plan, recommendedId) {
+  if (plan.review?.reduced_reserve) {
+    return plan.comparison_goal === "PROTECT_DEADLINES" && plan.deadlines_saved?.length
+      ? "Save delivery deadlines · emergency reserve"
+      : "Alternative · emergency reserve";
+  }
+  if (plan.plan_id === recommendedId) return "Avoid battery emergency · recommended";
+  return plan.comparison_goal === "EARLIER_RETURN"
+    ? "Alternative · earlier return"
+    : "Alternative · protects battery reserve";
+}
 const time = (value) =>
   value
     ? new Intl.DateTimeFormat("en-IN", {
@@ -266,6 +277,7 @@ function progressMarkup(v, fleet) {
 }
 if (typeof module !== "undefined")
   module.exports = {
+    planChoiceLabel,
     escapeHTML,
     money,
     time,
@@ -970,20 +982,14 @@ if (typeof document !== "undefined") {
       if (!r) continue;
       if (r.can_approve && !usablePlan(plan, fleet.clock)) r = {
         ...r, can_approve: false, state: "OUTDATED",
-        reason: "Departure time has passed. Recalculate from the current time.",
+        reason: "These estimates are outdated. Recalculate from the current time.",
       };
       const locked =
         !r.can_approve &&
         !["APPROVED", "EXECUTING", "COMPLETED"].includes(r.state);
       const chosen = selectedPlan === plan.plan_id;
       const label = r.can_approve
-        ? r.reduced_reserve
-          ? "Prioritise deadlines · reduced reserve"
-          : plan.comparison_goal === "EARLIER_RETURN"
-            ? "Earlier return alternative"
-            : plan.plan_id === available[0]?.plan_id
-              ? "Protect battery reserve · recommended"
-              : "Alternative · protects battery reserve"
+        ? planChoiceLabel(plan, available[0]?.plan_id)
         : {
             OUTDATED: "Needs updating",
             REJECTED: "Rejected by manager",
@@ -996,7 +1002,7 @@ if (typeof document !== "undefined") {
           }[r.state] || human(r.state);
       html += `<article class="plan ${locked ? "plan-locked" : ""} ${chosen ? "chosen" : ""}"><div class="plan-head"><div><h3>${r.can_approve ? `<label><input type="radio" name="alternative" value="${plan.plan_id}" ${chosen ? "checked" : ""}> ${label}</label>` : label}</h3><small>${locked ? "Earlier estimate · not a current route" : plan.recovery ? "Allows delivery delays" : "On-time journey"}</small></div><div class="price">${money(plan.total_cost)}<small>${locked ? "earlier estimate" : "total journey charging cost"}</small></div></div>
         <p class="tradeoff ${r.reduced_reserve ? "reserve-risk" : ""}"><strong>${locked ? "Earlier option: " : ""}${escapeHTML(r.tradeoff || r.delivery_summary)}</strong></p>
-        <ul class="plan-pointers">${r.reason ? `<li><b>${escapeHTML(r.reason)}</b></li>` : ""}<li>${locked ? "Earlier estimate: " : ""}${escapeHTML(r.delivery_summary)}</li><li>Return ${time(r.return_at)} IST with ${r.return_pct}% battery.</li><li>Reserve floor: ${r.reserve_pct}% (${plan.reserve_kwh} kWh).</li>${r.reduced_reserve ? '<li>Less buffer for unexpected traffic or battery use; this raises stranding risk. No assistance is dispatched.</li>' : ""}</ul>`;
+        <ul class="plan-pointers">${r.reason ? `<li><b>${escapeHTML(r.reason)}</b></li>` : ""}<li>${locked ? "Earlier estimate: " : ""}${escapeHTML(r.delivery_summary)}</li><li>Return ${time(r.return_at)} IST with ${r.return_pct}% battery.</li><li>Reserve floor: ${r.reserve_pct}% (${plan.reserve_kwh} kWh).</li>${r.reduced_reserve ? '<li>The planned route remains reachable. Extra battery use could leave the vehicle stranded because there is less reserve.</li>' : ""}</ul>`;
       const booked = ["APPROVED", "EXECUTING"].includes(plan.status);
       html += `<h4>${booked ? "Booked charging slots" : locked ? "Earlier requested slots" : r.state === "COMPLETED" ? "Charging slots used" : "Slots requested on approval"}</h4>`;
       if (!r.slots.length)

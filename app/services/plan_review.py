@@ -110,20 +110,26 @@ def review(doc, plan):
     reduced = plan["reserve_kwh"] < doc["policy"]["reserve_kwh"] - 0.001
     if reduced:
         tradeoff = (
-            "Prioritise deadlines — uses emergency battery reserve"
+            "Save deadlines for "
+            + ", ".join(plan["deadlines_saved"])
+            + " — uses emergency battery reserve"
+            if plan.get("deadlines_saved")
+            else "Alternative — uses emergency battery reserve"
             if minimum < doc["policy"]["reserve_kwh"] - 0.001
-            else "Prioritise deadlines — reduced reserve allowed"
+            else "Alternative — reduced reserve allowed"
         )
         tradeoff += f"; lowest planned battery {pct(minimum):.1f}% ({minimum:.2f} kWh)."
         tradeoff += (
             f" Still delayed: {affected}." if late else " All deliveries on time."
         )
     elif late:
-        tradeoff = f"Protect battery reserve — delays: {affected}."
+        tradeoff = (
+            f"Avoid a battery emergency — charge with reserve; delays: {affected}."
+        )
     else:
-        tradeoff = "Meet all deadlines and protect battery reserve."
+        tradeoff = "Keep chargers and the depot reachable, with reserve. All deliveries on time."
     if plan.get("comparison_goal") == "EARLIER_RETURN":
-        tradeoff = "Earlier return option — " + tradeoff[0].lower() + tradeoff[1:]
+        tradeoff = "Alternative: earlier return. " + tradeoff
     return dict(
         state=state,
         reason=reason,
