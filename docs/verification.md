@@ -8,6 +8,8 @@ A read-only replay of the actual live disrupted Van B1 snapshot produced an on-t
 
 The expanded real PostgreSQL/Kafka/MongoDB integration test passed on Railway for commit `9eefebf`: **1 passed in 26.07 seconds** (deployment `de1f91fc-1fb3-4a80-a31e-8effc5d01466`). It confirmed all charger rows through the API, rejected initial-exception approval without acknowledgement, and completed the acknowledged journey through real telemetry with at least 3 kWh remaining. The previously recorded Pydantic alias warning remains. No live user scenario was reset for this test.
 
+Live UI verification on the subsequent documentation deployment showed Van B1's ₹298.04 recommendation, 3 kWh at return, required acknowledgement, and all four charger cards. A final wording correction prevents failed chargers with existing bookings from suggesting later slots are usable; all **6 focused review-safety tests passed in 10.51 seconds** after that correction.
+
 ## Deadline-versus-battery comparison correction
 
 On 5 October 2026, the full Python suite passed **77 tests, 1 cloud-only skip** in 117.95 seconds, and the frontend suite passed **24 tests**. After adding an additional sole-escape-route check, all **7 focused trade-off tests** passed in 7.43 seconds; Ruff passed. These cover solver-noise duplicates, a genuinely earlier ordinary alternative, a real deadline rescued using emergency reserve, already-missed deadlines, not worsening another delivery, and refusing a route that reaches its first customer but strands the vehicle later. A physically feasible reduced-reserve escape with no normal-reserve route is labelled as an alternative, not an invented two-way choice. These are local regression results; the earlier cloud integration run below remains separate evidence.

@@ -150,3 +150,9 @@ def test_booked_charger_shows_actual_windows_without_claiming_permanent_rejectio
     row = charger_review(doc, "SIM-001")[0]
     assert len(row["bookings"]) == 1
     assert "later slots may still be usable" in row["notes"][-1]
+    doc["stations"]["EXP"]["status"] = "FAILED"
+    failed = charger_review(doc, "SIM-001")[0]
+    assert failed["state"] == "UNAVAILABLE"
+    assert len(failed["notes"]) == 1
+    assert "remains unavailable" in failed["notes"][0]
+    assert "may still be usable" not in failed["notes"][0]

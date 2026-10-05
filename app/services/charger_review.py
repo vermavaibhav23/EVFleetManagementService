@@ -77,12 +77,13 @@ def charger_review(doc, vin):
             )
             if not plans:
                 reason = "No current usable journey selects this charger. Recalculate to check complete routes and slots."
-        if energy > v["energy_kwh"] + 0.001:
+        if state != "UNAVAILABLE" and energy > v["energy_kwh"] + 0.001:
             notes.append(
                 f"Cannot reach directly now: needs {energy:.2f} kWh; vehicle has {v['energy_kwh']:.2f} kWh. It may be reachable after charging elsewhere."
             )
         elif (
-            energy > 0
+            state != "UNAVAILABLE"
+            and energy > 0
             and v["energy_kwh"] - energy < doc["policy"]["reserve_kwh"] - 0.001
         ):
             notes.append(
@@ -95,7 +96,9 @@ def charger_review(doc, vin):
         ]
         if occupied:
             notes.append(
-                "Booked intervals are listed below; other ports or later slots may still be usable."
+                "Recorded booking or unplugging intervals are shown below; this charger remains unavailable."
+                if state == "UNAVAILABLE"
+                else "Booked intervals are listed below; other ports or later slots may still be usable."
             )
         rows.append(
             dict(
