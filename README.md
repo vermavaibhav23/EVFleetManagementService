@@ -2,6 +2,8 @@
 
 Single-fleet deterministic simulation, telemetry, mixed-integer charging decisions and manager approval. The existing four-tab portal, fleet map, fleet-size selector, four scenarios, cost/alternative cards, tariff charts and incident controls remain. No multitenancy or client API-key layer is introduced.
 
+[Open the live Railway portal](https://evfleetmanagementservice-production.up.railway.app/portal). The deployed version uses PostgreSQL for operational state, Kafka for telemetry/planning delivery, and Railway MongoDB for telemetry history. See the [verification record](docs/verification.md) for checks actually performed.
+
 ## Implemented data flow
 
 ```text
