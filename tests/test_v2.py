@@ -138,6 +138,89 @@ def test_710_fixture_and_full_journey_execution():
     )
 
 
+def test_three_consecutive_chargers_can_bridge_one_customer_gap():
+    doc = fixture()
+    now = dt(doc["clock"])
+    v = doc["vehicles"]["SIM-001"]
+    v.update(capacity_kwh=30, energy_kwh=4, node="EXP")
+    v["deliveries"] = [
+        dict(
+            trip_id="A",
+            node="A",
+            sequence=1,
+            name="Long-distance customer",
+            lat=13.3,
+            lon=77.5,
+            ready_at=now,
+            accepts_at=now,
+            deadline=now + timedelta(minutes=200),
+            service_minutes=0,
+            status="PLANNED",
+        )
+    ]
+    doc["policy"].update(
+        reserve_kwh=3,
+        max_stations=4,
+        max_charging_stops_per_gap=4,
+    )
+    doc["stations"]["EXP"].update(price=30, power_kw=60)
+    doc["stations"]["MID"] = {
+        **doc["stations"]["EXP"],
+        "charger_id": "MID",
+        "node": "MID",
+        "name": "Mid-price bridge",
+        "price": 20,
+        "lat": 13.05,
+    }
+    doc["stations"]["CHEAP"].update(price=10, power_kw=60)
+    nodes = ["EXP", "MID", "CHEAP", "A", "DEPOT"]
+    doc["roads"] = {
+        f"{a}>{b}": dict(
+            energy=0 if a == b else 200,
+            minutes=0 if a == b else 200,
+        )
+        for a, b in itertools.product(nodes, repeat=2)
+    }
+    doc["roads"].update(
+        {
+            "EXP>MID": dict(energy=5, minutes=10),
+            "MID>CHEAP": dict(energy=5, minutes=10),
+            "CHEAP>A": dict(energy=10, minutes=10),
+            "A>DEPOT": dict(energy=10, minutes=10),
+        }
+    )
+    doc["external_bookings"] = []
+
+    result = optimize(doc, v["vin"])
+    assert "plan" in result, result
+    plan = result["plan"]
+    assert [o["kind"] for o in plan["operations"]] == [
+        "CHARGE",
+        "CHARGE",
+        "CHARGE",
+        "DELIVERY",
+        "RETURN",
+    ]
+    charges = [o for o in plan["operations"] if o["kind"] == "CHARGE"]
+    assert [o["charger_id"] for o in charges] == ["EXP", "MID", "CHEAP"]
+    assert [o["energy_end"] - o["energy_arrival"] for o in charges] == pytest.approx(
+        [4, 5, 20], abs=0.001
+    )
+    assert plan["total_cost"] == pytest.approx(420, abs=0.02)
+    assert plan["operations"][-1]["energy_arrival"] == pytest.approx(3, abs=0.001)
+    assert not validate(doc, plan)
+    limited = deepcopy(doc)
+    limited["policy"]["max_charging_stops_per_gap"] = 2
+    assert "plan" not in optimize(limited, v["vin"])
+    attach(doc, plan)
+    advance(doc, doc["policy"]["horizon_minutes"] * 60)
+    assert v["state"] == "COMPLETED"
+    assert v["energy_kwh"] == pytest.approx(3, abs=0.001)
+    assert sum(o.get("actual_cost", 0) for o in plan["operations"]) == pytest.approx(
+        420, abs=0.02
+    )
+
+
 def test_arithmetic_enumeration_independent_of_solver():
     feasible = []
     for expensive in range(44):

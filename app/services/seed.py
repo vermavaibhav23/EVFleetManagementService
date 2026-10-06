@@ -165,7 +165,10 @@ def seed(request):
         clock=start.isoformat(),
         running=False,
         speed=30,
-        policy=Policy().model_dump(),
+        # Legacy bulk fixtures keep their historical one-charge search so their
+        # simultaneous scripted incidents remain deterministic and inexpensive.
+        # The four current dashboard scenarios explicitly enable charger chains.
+        policy=Policy(max_charging_stops_per_gap=1).model_dump(),
         vehicles=vehicles,
         stations=stations,
         depots={depot["depot_id"]: depot},

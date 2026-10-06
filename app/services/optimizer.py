@@ -1,6 +1,7 @@
 """Continuous-time, continuous-energy MILP for a fixed customer sequence.
 
-Bounded model: at most one station visit in each customer gap and the return gap.
+Each customer gap contains a bounded layered charger path, so a vehicle may use
+zero or several distinct stations before the next customer or depot return.
 Fleet coordination is constrained-first sequential reservation, not fleet optimality.
 """
 
@@ -138,7 +139,15 @@ def optimize(
     origin, cap = dt(doc["clock"]), effective_capacity(v)
     horizon = p["horizon_minutes"]
     reserve = 0 if recovery and reserve_exception else p["reserve_kwh"]
-    scope = "fixed customer order; at most one charge per gap; continuous time/energy; sequential fleet allocation"
+    max_charges = min(
+        p.get("max_charging_stops_per_gap", p["max_stations"]),
+        p["max_stations"],
+    )
+    scope = (
+        "fixed customer order; zero to "
+        f"{max_charges} distinct charges per gap; continuous time/energy; "
+        "sequential fleet allocation"
+    )
 
     def fail(status, reason):
         return {
@@ -229,73 +238,166 @@ def optimize(
             m.le(depart, ready_at + horizon * (1 - waiting_for_readiness))
         else:
             m.eq(depart, prev_time)
-        choices, deltas = [], []
-        for s in stations:
-            e1, t1 = leg(doc, v, previous, s)
-            e2, t2 = leg(doc, v, s, dest)
-            power = min(
-                s["power_kw"],
-                v["max_power_kw"],
-                doc["depots"][s["depot_id"]]["power_limit_kw"],
-            )
-            if power <= 0 or e1 > cap or e2 + reserve > cap:
-                continue
-            depot_tariffs = doc["depots"][s["depot_id"]].get("tariffs", [])
-            tariff = intervals(
-                origin, origin + timedelta(minutes=horizon), s, depot_tariffs
-            )
-            points = [(0, 0.0)]
-            for ta, tb, rate in tariff:
-                points.append(
-                    (
-                        (tb - origin).total_seconds() / 60,
-                        points[-1][1] + (tb - ta).total_seconds() / 60 * rate,
-                    )
+        # A layer is one possible consecutive charging visit. Layers must be
+        # contiguous, and a station can appear at most once in this gap. Route
+        # arcs connect the chosen station in one layer to the chosen station in
+        # the next, keeping time and energy continuous across the whole chain.
+        stages = []
+        station_uses = {s["charger_id"]: [] for s in stations}
+        for stage in range(min(max_charges, len(stations))):
+            layer = []
+            prior = stages[-1] if stages else []
+            for s in stations:
+                power = min(
+                    s["power_kw"],
+                    v["max_power_kw"],
+                    doc["depots"][s["depot_id"]]["power_limit_kw"],
                 )
-            occupied = {
-                r["port"] for r in existing if r["charger_id"] == s["charger_id"]
-            }
-            empty = next(
-                (
-                    port
-                    for port in range(1, s["port_count"] + 1)
-                    if port not in occupied
-                ),
-                None,
-            )
-            ports = sorted(occupied | ({empty} if empty else set()))
-            for port in ports:
-                y = m.binary()
-                choices.append(y)
+                if power <= 0:
+                    continue
+                first_e, first_t = leg(doc, v, previous, s)
+                if stage == 0 and first_e > cap:
+                    continue
+                depot_tariffs = doc["depots"][s["depot_id"]].get("tariffs", [])
+                tariff = intervals(
+                    origin, origin + timedelta(minutes=horizon), s, depot_tariffs
+                )
+                points = [(0, 0.0)]
+                for ta, tb, rate in tariff:
+                    points.append(
+                        (
+                            (tb - origin).total_seconds() / 60,
+                            points[-1][1]
+                            + (tb - ta).total_seconds() / 60 * rate,
+                        )
+                    )
+                occupied = {
+                    r["port"]
+                    for r in existing
+                    if r["charger_id"] == s["charger_id"]
+                }
+                empty = next(
+                    (
+                        port
+                        for port in range(1, s["port_count"] + 1)
+                        if port not in occupied
+                    ),
+                    None,
+                )
+                ports = sorted(occupied | ({empty} if empty else set()))
+                if not ports:
+                    continue
+                port_choices = []
+                for port in ports:
+                    port_y = m.binary()
+                    choice = dict(
+                        y=port_y,
+                        port=port,
+                        gap=gap,
+                        stage=stage,
+                    )
+                    candidates.append(choice)
+                    choice["index"] = len(candidates) - 1
+                    port_choices.append(choice)
+                selected_station = sum((c["y"] for c in port_choices), Expr())
+                m.le(selected_station, 1)
                 ein, eout = m.var(0, cap), m.var(0, cap)
-                begin, end = m.var(0, horizon), m.var(0, horizon)
-                m.le(ein, cap * y)
-                m.le(eout, cap * y)
-                m.le(begin, horizon * y)
-                m.le(end, horizon * y)
-                m.ge(eout - ein, 0.001 * y)
+                arrive, begin, end = [m.var(0, horizon) for _ in range(3)]
+                m.le(ein, cap * selected_station)
+                m.le(eout, cap * selected_station)
+                m.le(arrive, horizon * selected_station)
+                m.le(begin, horizon * selected_station)
+                m.le(end, horizon * selected_station)
+                m.ge(eout - ein, 0.001 * selected_station)
+
+                node = dict(
+                    selected=selected_station,
+                    ports=port_choices,
+                    ein=ein,
+                    eout=eout,
+                    arrive=arrive,
+                    begin=begin,
+                    end=end,
+                    station=s,
+                    power=power,
+                    gap=gap,
+                    stage=stage,
+                    incoming=[],
+                )
+                for choice in port_choices:
+                    choice["node"] = node
+                station_uses[s["charger_id"]].append(selected_station)
+
+                if stage == 0:
+                    m.when_eq(
+                        selected_station,
+                        ein,
+                        prev_energy - first_e,
+                        3 * cap + first_e,
+                    )
+                    m.when_eq(
+                        selected_station,
+                        arrive,
+                        depart + first_t,
+                        3 * horizon + first_t,
+                    )
+                else:
+                    energy_spent, travel_time = Expr(), Expr()
+                    for prior_node in prior:
+                        if prior_node["station"]["charger_id"] == s["charger_id"]:
+                            continue
+                        between_e, between_t = leg(
+                            doc, v, prior_node["station"], s
+                        )
+                        if between_e > cap:
+                            continue
+                        arc = m.binary()
+                        m.le(arc, prior_node["selected"])
+                        m.le(arc, selected_station)
+                        node["incoming"].append(arc)
+                        energy_spent += between_e * arc
+                        travel_time += between_t * arc
+                    m.eq(sum(node["incoming"], Expr()), selected_station)
+                    previous_energy = sum((n["eout"] for n in prior), Expr())
+                    previous_end = sum((n["end"] for n in prior), Expr())
+                    m.when_eq(
+                        selected_station,
+                        ein,
+                        previous_energy - energy_spent,
+                        4 * cap,
+                    )
+                    m.when_eq(
+                        selected_station,
+                        arrive,
+                        previous_end + travel_time,
+                        4 * horizon,
+                    )
+
+                normal_arrival_required = not (
+                    gap == 0
+                    and stage == 0
+                    and (first_e < 1e-9 or approach_reserve_exception)
+                )
                 m.ge(
                     ein,
-                    (
-                        0
-                        if gap == 0 and (e1 < 1e-9 or approach_reserve_exception)
-                        else reserve
-                    )
-                    * y,
+                    (reserve if normal_arrival_required else 0)
+                    * selected_station,
                 )
-                if reserve_exception and not (gap == 0 and e1 < 1e-9):
+                if reserve_exception and not (
+                    gap == 0 and stage == 0 and first_e < 1e-9
+                ):
                     shortage = m.var(0, p["reserve_kwh"])
-                    m.ge(shortage, p["reserve_kwh"] * y - ein)
+                    m.ge(
+                        shortage,
+                        p["reserve_kwh"] * selected_station - ein,
+                    )
                     reserve_shortfall += shortage
-                m.when_eq(y, ein, prev_energy - e1, 3 * cap + e1)
                 m.ge(
                     begin,
-                    depart
-                    + t1
-                    + p["waiting_allowance_minutes"]
-                    - 3 * horizon * (1 - y),
+                    arrive
+                    + p["waiting_allowance_minutes"] * selected_station,
                 )
-                cursor = begin + p["connection_minutes"] * y
+                cursor = begin + p["connection_minutes"] * selected_station
                 bands = (
                     [
                         (0, 0.8 * cap, 1),
@@ -318,53 +420,101 @@ def optimize(
                     )
                     tariff_end = m.pwl(band_end, points)
                     m.ge(tariff_end, tariff_start)
-                    band_cost = (tariff_end - tariff_start) * (power * factor / 60)
+                    band_cost = (tariff_end - tariff_start) * (
+                        power * factor / 60
+                    )
                     m.ge(
                         band_cost,
-                        amount * (min(rate for _, _, rate in tariff) / p["efficiency"]),
+                        amount
+                        * (min(rate for _, _, rate in tariff) / p["efficiency"]),
                     )
                     cost += band_cost
                     tariff_start = tariff_end
                     cursor = band_end
                 m.eq(sum(band_amounts, Expr()), eout - ein)
-                m.eq(end, cursor + p["release_minutes"] * y)
-                m.when_eq(y, arrival, end + t2, 3 * horizon)
-                deltas.append(eout - ein + (direct_e - e1 - e2) * y)
-                conflicts = [
-                    (
-                        (dt(r["start"]) - origin).total_seconds() / 60,
-                        (dt(r["end"]) - origin).total_seconds() / 60,
-                    )
-                    for r in existing
-                    if r["charger_id"] == s["charger_id"] and r["port"] == port
-                ]
-                conflicts += blocked_power(doc, s, power, existing, origin, horizon)
-                for a, b in conflicts:
-                    if b <= 0 or a >= horizon:
-                        continue
-                    side = m.binary()
-                    m.le(end, a + 3 * horizon * (side + 1 - y))
-                    m.ge(begin, b - 3 * horizon * (2 - side - y))
-                candidate = dict(
-                    y=y,
-                    ein=ein,
-                    eout=eout,
-                    begin=begin,
-                    end=end,
-                    station=s,
-                    port=port,
-                    power=power,
-                    t1=t1,
-                    e1=e1,
-                    gap=gap,
+                m.eq(
+                    end,
+                    cursor + p["release_minutes"] * selected_station,
                 )
-                candidates.append(candidate)
-        chosen = sum(choices, Expr())
-        m.le(chosen, 1)
+                power_conflicts = blocked_power(
+                    doc, s, power, existing, origin, horizon
+                )
+                for port_choice in port_choices:
+                    port, port_y = port_choice["port"], port_choice["y"]
+                    conflicts = [
+                        (
+                            (dt(r["start"]) - origin).total_seconds() / 60,
+                            (dt(r["end"]) - origin).total_seconds() / 60,
+                        )
+                        for r in existing
+                        if r["charger_id"] == s["charger_id"]
+                        and r["port"] == port
+                    ] + power_conflicts
+                    for a, b in conflicts:
+                        if b <= 0 or a >= horizon:
+                            continue
+                        side = m.binary()
+                        m.le(end, a + 3 * horizon * (side + 1 - port_y))
+                        m.ge(begin, b - 3 * horizon * (2 - side - port_y))
+                layer.append(node)
+            active = sum((n["selected"] for n in layer), Expr())
+            m.le(active, 1)
+            if stages:
+                previous_active = sum(
+                    (n["selected"] for n in stages[-1]), Expr()
+                )
+                m.le(active, previous_active)
+            stages.append(layer)
+
+        for uses in station_uses.values():
+            m.le(sum(uses, Expr()), 1)
+        first_active = (
+            sum((n["selected"] for n in stages[0]), Expr())
+            if stages
+            else Expr()
+        )
         if gap == 0 and approach_reserve_exception:
-            m.eq(chosen, 1)
-        m.when_eq(1 - chosen, arrival, depart + direct_t, 3 * horizon)
-        m.eq(energy, prev_energy - direct_e + sum(deltas, Expr()))
+            m.eq(first_active, 1)
+        direct = 1 - first_active
+        m.when_eq(
+            direct,
+            arrival,
+            depart + direct_t,
+            3 * horizon + direct_t,
+        )
+        m.when_eq(
+            direct,
+            energy,
+            prev_energy - direct_e,
+            3 * cap + direct_e,
+        )
+        endings = []
+        for stage, layer in enumerate(stages):
+            next_active = (
+                sum((n["selected"] for n in stages[stage + 1]), Expr())
+                if stage + 1 < len(stages)
+                else Expr()
+            )
+            for node in layer:
+                last = m.binary()
+                m.le(last, node["selected"])
+                m.le(last, 1 - next_active)
+                m.ge(last, node["selected"] - next_active)
+                endings.append(last)
+                end_e, end_t = leg(doc, v, node["station"], dest)
+                m.when_eq(
+                    last,
+                    arrival,
+                    node["end"] + end_t,
+                    3 * horizon + end_t,
+                )
+                m.when_eq(
+                    last,
+                    energy,
+                    node["eout"] - end_e,
+                    3 * cap + end_e,
+                )
+        m.eq(direct + sum(endings, Expr()), 1)
         m.ge(service, arrival)
         if dest.get("accepts_at"):
             acceptance = max(0, (dt(dest["accepts_at"]) - origin).total_seconds() / 60)
@@ -395,6 +545,7 @@ def optimize(
                 finish=finish,
                 energy=energy,
                 depart=depart,
+                stages=stages,
             )
         )
         prev_time, prev_energy, previous = finish, energy, dest
@@ -484,19 +635,22 @@ def optimize(
     selected = []
     for gap, row in enumerate(rows):
         departure = stamp(val(row["depart"]))
-        for i, c in enumerate(candidates):
-            if c["gap"] != gap or val(c["y"]) < 0.5:
+        for layer in row["stages"]:
+            node = next((n for n in layer if val(n["selected"]) >= 0.5), None)
+            if node is None:
                 continue
-            selected.append(i)
-            s = c["station"]
-            ein, eout = max(0, val(c["ein"])), min(cap, val(c["eout"]))
-            start = stamp(val(c["begin"]))
+            port_choice = next(c for c in node["ports"] if val(c["y"]) >= 0.5)
+            selected.append(port_choice["index"])
+            s = node["station"]
+            ein = max(0, val(node["ein"]))
+            eout = min(cap, val(node["eout"]))
+            start = stamp(val(node["begin"]))
             seconds, grid, charge_cost = session(
                 start + timedelta(minutes=p["connection_minutes"]),
                 ein,
                 eout,
                 cap,
-                c["power"],
+                node["power"],
                 p["efficiency"],
                 s,
                 doc["depots"][s["depot_id"]].get("tariffs", []),
@@ -514,14 +668,14 @@ def optimize(
                     lat=s["lat"],
                     lon=s["lon"],
                     charger_id=s["charger_id"],
-                    port=c["port"],
+                    port=port_choice["port"],
                     depart=departure,
-                    arrival=departure + timedelta(minutes=c["t1"]),
+                    arrival=stamp(val(node["arrive"])),
                     start=start,
                     end=end,
                     energy_arrival=ein,
                     energy_end=eout,
-                    power_kw=c["power"],
+                    power_kw=node["power"],
                     grid_kwh=grid,
                     cost=charge_cost,
                     target_soc=eout / cap * 100,

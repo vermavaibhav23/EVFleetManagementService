@@ -54,6 +54,7 @@ class Policy(BaseModel):
     solver_seconds: float = Field(default=8, gt=0, le=60)
     max_customers: int = Field(default=8, ge=1, le=12)
     max_stations: int = Field(default=4, ge=1, le=6)
+    max_charging_stops_per_gap: int = Field(default=4, ge=1, le=6)
     taper: bool = True
 
 

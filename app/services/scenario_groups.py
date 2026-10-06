@@ -44,6 +44,9 @@ def grouped_seed(request):
     )
     doc["scenario"] = str(request.scenario)
     doc["scenario_title"], doc["scenario_description"] = GROUPS[doc["scenario"]]
+    doc["policy"]["max_charging_stops_per_gap"] = min(
+        4, doc["policy"]["max_stations"]
+    )
     start = dt(doc["clock"])
     earlier = start - timedelta(minutes=15)
     base = doc["depots"]["SIM-DEPOT"]
