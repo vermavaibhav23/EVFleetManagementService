@@ -33,6 +33,18 @@ FastAPI serves the HTML/CSS/JavaScript dashboard. PostgreSQL owns all data. Kafk
 
 Explain Kafka buffering, independent validation of solver output, and atomic charger reservations. `python scripts/benchmark.py` produces a deterministic cost comparison; solver timings are not distributed-system throughput.
 
+## Generative AI explanations
+
+In **Plans & Decisions**, choose **Explain this plan with AI**. FastAPI selects the validated plan's charging stops, costs, energy and deadline summary and sends that compact JSON to Gemini. A completed unsuccessful search has an **Explain this result with AI** button; timeouts are distinguished from infeasibility within the bounded model.
+
+The MILP solver calculates the plan; Gemini explains it. The model receives no tools and cannot approve, book, or change the simulation. No coordinates, account credentials or free-form user prompts are sent in the facts. Explanations are advisory, may contain mistakes, and appear alongside a deterministic summary for comparison. The backend rejects results if the selected plan becomes stale while inference is running. Text is escaped before display.
+
+Set `GEMINI_API_KEY` in Render's secret environment, with `GEMINI_MODEL=gemini-2.5-flash-lite`. Never put the key in JavaScript or Git. Google's [pricing](https://ai.google.dev/gemini-api/docs/pricing) lists a free tier for this model; account quotas apply, and free-tier prompts can be used to improve Google's products. Use synthetic demo data and a project without paid billing for the free deployment.
+
+The API uses a 12-second timeout, no automatic retries, one inference at a time, a bounded 10-minute cache, and default limits of 3 uncached calls per minute / 20 per rolling day. Limits and cache are per API process and reset on restart; they are demo quota controls, not a billing cap. On missing configuration, quota exhaustion, blocked/malformed output or provider errors, the UI clearly labels the deterministic fallback **Plan facts · AI unavailable**. Ordinary planning works without an AI key.
+
+API: `POST /api/v1/vehicles/{vin}/explanation` with `{ "run_id": "...", "plan_id": "..." }` or `{ "run_id": "...", "job_id": "..." }`. The server reads the selected record from PostgreSQL; the client cannot provide model instructions or plan facts. No new database table or background worker is needed.
+
 ## Free deployment
 Use one Free PostgreSQL service and one Free Kafka service on Aiven, with topic `vehicle.telemetry.v4`, two partitions and at most three days retention. Select ongoing free plans, not paid plans funded by trial credits. Aiven can power off inactive free services.
 

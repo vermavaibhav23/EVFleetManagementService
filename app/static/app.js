@@ -290,6 +290,12 @@ function progressMarkup(v, fleet) {
   const row = (step, tone, symbol, prefix = "") => `<li class="${tone}"><span class="journey-symbol">${symbol}</span><span>${escapeHTML(step.name)}</span><time>${step.at ? `${prefix}${time(step.at)}` : ""}</time></li>`;
   return `<section class="journey-progress" aria-label="Journey progress"><h3>Journey progress</h3>${v.telemetry_status === "OUTDATED" ? `<p class="journey-status warning">Vehicle data is outdated. Waiting for fresh telemetry.</p>` : ""}<p class="journey-leg">${fleet.running ? "Live" : "Paused"} · ${slotTime(fleet.clock)} IST</p><strong class="journey-status ${p.warning ? "warning" : ""}">${escapeHTML(p.title)}</strong><p class="journey-extra">${escapeHTML(p.detail)}</p>${p.until ? `<p class="journey-extra"><strong>${escapeHTML(p.timing)}: ${slotTime(p.until)} IST</strong> · ${p.remaining} min remaining${fleet.running ? "" : " (paused)"}</p>` : ""}<ol class="journey-steps">${p.completed.map(step => row(step,"done","✓")).join("")}${v.state !== "COMPLETED" ? `<li class="${p.warning ? "warning" : "current"} stage-${v.state.toLowerCase()}" aria-current="step"><span class="journey-symbol">${p.warning ? "!" : "●"}</span><span>${escapeHTML(p.title)}<small>Current activity</small></span></li>` : ""}${p.upcoming.map(step => row(step,"upcoming","○","ETA ")).join("")}</ol></section>`;
 }
+function explanationMarkup(result) {
+  if (!result) return "";
+  const generated = result.source === "gemini";
+  return `<section class="ai-explanation" aria-label="Plan explanation"><h4>${generated ? "AI explanation" : "Plan facts · AI unavailable"}</h4><p class="ai-text">${escapeHTML(result.text || "")}</p><small>${escapeHTML(result.notice || "")}</small>${generated ? `<details><summary>Check against plan facts</summary><p>${escapeHTML(result.facts_summary || "")}</p></details>` : ""}</section>`;
+}
+
 if (typeof module !== "undefined")
   module.exports = {
     planPreference,
@@ -315,6 +321,7 @@ if (typeof module !== "undefined")
     overdueDeliveries,
     deadlineText,
     planningState,
+    explanationMarkup,
   };
 if (typeof document !== "undefined") {
   let fleet = null,
@@ -331,6 +338,34 @@ if (typeof document !== "undefined") {
     mapDrag = null,
     suppressMapClick = false;
   const $ = (id) => document.getElementById(id);
+  const aiResults = new Map(), aiPending = new Set();
+  const aiToken = (target, state = "") => JSON.stringify([fleet.run_id, fleet.clock, selected, target, state]);
+  function aiPanel(target, state = "") {
+    const token = aiToken(target, state);
+    return `<div class="ai-controls"><button data-explain="${escapeHTML(target)}" data-ai-token="${escapeHTML(token)}" ${aiPending.has(token) ? 'disabled' : ''}>${aiPending.has(token) ? "Explaining…" : target.startsWith("plan:") ? "Explain this plan with AI" : "Explain this result with AI"}</button></div>${explanationMarkup(aiResults.get(token))}`;
+  }
+  async function explainSelection(button) {
+    const token = button.dataset.aiToken;
+    if (aiPending.has(token)) return;
+    const [kind, id] = button.dataset.explain.split(":");
+    const run = fleet.run_id, vin = selected;
+    aiPending.add(token);
+    renderReview(); updateControls();
+    try {
+      const result = await api(`/vehicles/${encodeURIComponent(vin)}/explanation`, {
+        run_id: run, ...(kind === "plan" ? {plan_id: id} : {job_id: id}),
+      });
+      if (fleet?.run_id === run) {
+        if (aiResults.size >= 50) aiResults.delete(aiResults.keys().next().value);
+        aiResults.set(token, result);
+      }
+    } catch (error) {
+      if (fleet?.run_id === run) aiResults.set(token, {source: "facts", text: error.message, notice: "Refresh the current plan and try again."});
+    } finally {
+      aiPending.delete(token);
+      if (fleet && activeTab === "plans") { renderReview(); updateControls(); }
+    }
+  }
   const selectedVehicle = () => fleet?.vehicles[selected];
   const labels = {
     NORMAL: "Journey approved",
@@ -382,7 +417,7 @@ if (typeof document !== "undefined") {
       );
     document.querySelectorAll("#review button, #scenario-actions button, [data-plan], [data-refresh]").forEach((b) => {
       const plan = b.dataset.approve && fleet?.plans[b.dataset.approve];
-      b.disabled = busy || b.dataset.locked === "true" ||
+      b.disabled = busy || b.dataset.locked === "true" || aiPending.has(b.dataset.aiToken) ||
         Boolean(active && (b.dataset.plan !== undefined || b.dataset.refresh || b.dataset.approve)) ||
         Boolean(plan && (!usablePlan(plan, fleet.clock) || (plan.recovery && !acknowledgedPlans.has(plan.plan_id))));
     });
@@ -661,6 +696,7 @@ if (typeof document !== "undefined") {
       const result = await api("/fleet");
       if (ticket !== epoch) return;
       if (fleet?.run_id !== result.run_id) {
+        aiResults.clear();
         pendingSearchId = null;
         selected = null;
         selectedPlan = null;
@@ -826,6 +862,10 @@ if (typeof document !== "undefined") {
     }
     const b = e.target.closest("button");
     if (!b || b.disabled || busy || !fleet) return;
+    if (b.dataset.explain) {
+      explainSelection(b);
+      return;
+    }
     if (b.dataset.incident) {
       action(async () => {
         const response = await api(`/simulator/actions/${encodeURIComponent(b.dataset.incident)}`, {run_id: fleet.run_id});
@@ -1038,6 +1078,8 @@ if (typeof document !== "undefined") {
         html += `<button class="primary" data-refresh="${plan.plan_id}">${search.active ? "Searching…" : "Recalculate plans"}</button>`;
       if (booked)
         html += `<button data-cancel="${plan.plan_id}">Cancel remaining journey</button>`;
+      if (["PROPOSED", "APPROVED"].includes(r.state))
+        html += aiPanel(`plan:${plan.plan_id}`, `${plan.version}:${r.state}`);
       html += `<details class="journey-details" data-detail="${plan.plan_id}" ${open.has(plan.plan_id) ? "open" : ""}><summary>View journey details</summary><div class="table-wrap"><table><thead><tr><th>Stop</th><th>Arrive</th><th>Finish</th><th>Deadline</th><th>Battery kWh</th><th>Cost</th></tr></thead><tbody>`;
       for (const op of plan.operations)
         html += `<tr><td>${escapeHTML(op.name)}<small>${human(op.status)}</small></td><td>${time(op.arrival)}</td><td>${time(op.end)}</td><td>${time(op.deadline)}${op.lateness_minutes > 0.001 ? `<br>${op.lateness_minutes.toFixed(1)} min late` : ""}</td><td>${op.energy_arrival.toFixed(2)} → ${op.energy_end.toFixed(2)}</td><td>${money(op.cost)}</td></tr>`;
@@ -1047,7 +1089,7 @@ if (typeof document !== "undefined") {
     for (const row of (latest?.results || []).filter(
       (r) => r.vin === selected && !r.plan_id,
     ))
-      html += `<article class="plan plan-locked"><h3>${escapeHTML(({ON_TIME_WITH_RESERVE:"On time + normal reserve", PROTECT_RESERVE:"Protect battery reserve", PROTECT_DEADLINES:"Prioritise deadlines", EARLIER_RETURN:"Earlier return"})[row.comparison_goal] || "No usable option")} · unavailable</h3><ul class="plan-pointers"><li>${escapeHTML(row.message || "Refresh options to search again.")}</li><li>Cannot approve. No charging slots booked.</li></ul></article>`;
+      html += `<article class="plan plan-locked"><h3>${escapeHTML(({ON_TIME_WITH_RESERVE:"On time + normal reserve", PROTECT_RESERVE:"Protect battery reserve", PROTECT_DEADLINES:"Prioritise deadlines", EARLIER_RETURN:"Earlier return"})[row.comparison_goal] || "No usable option")} · unavailable</h3><ul class="plan-pointers"><li>${escapeHTML(row.message || "Refresh options to search again.")}</li><li>Cannot approve. No charging slots booked.</li></ul>${latest.status === "COMPLETED" ? aiPanel(`job:${latest.job_id}`, row.status) : ""}</article>`;
     if (!plans.length && !latest)
       html +=
         '<p class="empty">Choose Recalculate plans to see costs, battery risk and every affected customer. Only feasible journeys can be approved.</p>';

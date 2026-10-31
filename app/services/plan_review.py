@@ -27,7 +27,7 @@ def issue_message(doc, plan):
             return (
                 "Arrival deadline passed for "
                 + ", ".join(missed)
-                + ". On-time delivery is no longer possible. Update options for a feasible delayed journey; nothing new is booked."
+                + ". On-time delivery is no longer possible under the original deadlines. Review the delivery requirements; nothing new is booked."
             )
         return "The simulation has moved on since these estimates were calculated. Refresh options for current delivery times and charging slots."
     errors = validate(doc, plan)
@@ -193,5 +193,5 @@ def result_message(doc, row):
     if row["status"] == "LIMIT_NO_INCUMBENT":
         return "The search timed out without a usable option. Try again."
     if row["status"] == "INFEASIBLE_MODEL":
-        return "No journey found under this option's battery, deadline and charger limits. Other cards may use an initial reserve exception or allow delays. This does not mean assistance was dispatched."
+        return "No journey found within the bounded search under the battery reserve, delivery deadline and charger constraints. No charging slots were booked and no assistance was dispatched."
     return "No usable option was returned. Refresh options; technical details are available below."

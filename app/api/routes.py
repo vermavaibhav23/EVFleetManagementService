@@ -19,6 +19,7 @@ from app.domain import (
 from app.services.charger_review import charger_review
 from app.services.control import approve_or_refresh, reject, request_job
 from app.services.execution import apply_event, interrupt
+from app.services.explanations import ExplanationRequest, explain_current, explainer
 from app.services.ledger import Ledger, bookings
 from app.services.plan_review import result_message, review
 from app.services.pricing import intervals
@@ -32,6 +33,13 @@ router = APIRouter()
 
 def ledger(db=Depends(get_database)):
     return Ledger(db)
+
+
+@router.post("/vehicles/{vin}/explanation")
+async def explain_vehicle(
+    vin: str, request: ExplanationRequest, store: Ledger = Depends(ledger)
+):
+    return await explain_current(store, explainer, vin, request)
 
 
 @router.get("/health/live")

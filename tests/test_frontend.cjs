@@ -19,7 +19,18 @@ const {
   planPreference,
   acknowledgementText,
   chargerReviewMarkup,
+  explanationMarkup,
 } = require("../app/static/app.js");
+
+test("AI explanation content is escaped and factual fallback is not labelled AI-generated", () => {
+  const html = explanationMarkup({source:"gemini",text:'<img src=x onerror="alert(1)">',notice:"Check facts",facts_summary:"INR 391.30"});
+  assert.ok(!html.includes("<img"));
+  assert.match(html, /&lt;img/);
+  assert.match(html, /Check against plan facts/);
+  const fallback = explanationMarkup({source:"facts",text:"Plan facts",notice:"Not configured"});
+  assert.match(fallback, /AI unavailable/);
+  assert.ok(!fallback.includes("<h4>AI explanation</h4>"));
+});
 
 test("default selection keeps reserve protection ahead of a cheaper risky journey", () => {
   const safe = {plan_id:"safe", total_cost:300, review:{reduced_reserve:false}, comparison_goal:"PROTECT_RESERVE"};

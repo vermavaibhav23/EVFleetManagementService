@@ -32,3 +32,9 @@ services:
         value: "1"
       - key: OMP_NUM_THREADS
         value: "1"
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash-lite
+      - key: AI_REQUESTS_PER_DAY
+        value: "20"

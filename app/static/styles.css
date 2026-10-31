@@ -2190,3 +2190,10 @@ details summary {
 .demo-options summary { cursor: pointer; padding: 8px; }
 .demo-options[open] { padding: 8px; border: 1px solid #cbded8; border-radius: 8px; }
 .demo-options label { display: block; margin-top: 8px; }
+.ai-controls { margin: 16px 0 10px; }
+.ai-controls button { border-color: #7b8ac7; color: #34477b; }
+.ai-explanation { background: #f2f5ff; border: 1px solid #d9e0f4; border-radius: 12px; padding: 16px; margin: 12px 0; }
+.ai-explanation h4 { margin-top: 0; }
+.ai-text { white-space: pre-wrap; line-height: 1.6; overflow-wrap: anywhere; }
+.ai-explanation small { display: block; color: #526079; }
+.ai-explanation details { margin-top: 12px; }
