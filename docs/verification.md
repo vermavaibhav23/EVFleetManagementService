@@ -28,3 +28,19 @@ The opt-in local integration test remains skipped; hosted browser/API checks and
 ## Optional integration test
 
 Set `FLEET_TEST_POSTGRES`, `FLEET_TEST_KAFKA`, and `FLEET_TEST_TOPIC` to disposable test resources and run `pytest tests/test_cloud_integration.py -q`. The test uses a unique SQL schema, a precreated dedicated topic, and configured TLS/SASL settings. It exercises telemetry ingestion, persisted history, planning, approval, reservations, and stale-plan rejection after reset.
+
+
+## Generative AI addition (31 October 2026)
+
+Deployed code commit `a4f2b51` adds an optional, read-only Gemini explanation of a validated plan or latest unsuccessful search.
+
+- Full backend regression: `python -m pytest -q --tb=short` — **91 passed, 1 skipped**, 114.89 seconds. The skipped test remains the opt-in cloud integration test.
+- Frontend regression: `node --test tests/test_frontend.cjs` — **27 passed**.
+- Focused coverage includes stale/cross-vehicle requests, missing keys, quota/timeouts/malformed or truncated responses, cache and request limits, HTML escaping, and simulation reset during inference.
+- Render reports **Deploy succeeded | Live**. The Gemini key is stored only in Render's secret environment, never in the repository or browser JavaScript.
+- A real hosted request returns HTTP 200, `source: gemini`, `model: gemini-3.1-flash-lite`, and `cached: false`. The explanation describes the INR 391.30 two-stop Van A1 plan, energy additions, reserve, return time, and approval requirement.
+- Repeating the request returns `cached: true`. Plans and reservations before/after the explanation are identical. Readiness remains HTTP 200.
+- The live dashboard shows the generated explanation and a separate factual comparison. The ordinary scenario remains paused for demonstration.
+- The initial Gemini 2.5 Flash-Lite configuration returned provider HTTP 404; the current model above was verified live. Provider failures display an explicitly labelled factual fallback, never a fabricated AI success.
+
+This is a functional smoke test, not an evaluation proving all future generated explanations are accurate. The MILP and server validation determine plans; the model cannot approve, book, change routes, or operate vehicles. Free-tier quota exhaustion falls back to facts. The per-process request limits and cache reset on restart.
