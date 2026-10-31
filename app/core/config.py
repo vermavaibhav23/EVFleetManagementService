@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     database_ssl_ca_pem: str | None = None
     gemini_api_key: SecretStr | None = None
     gemini_model: str = Field(
-        default="gemini-2.5-flash-lite", pattern=r"^[a-zA-Z0-9._-]+$"
+        default="gemini-3.1-flash-lite", pattern=r"^[a-zA-Z0-9._-]+$"
     )
     ai_requests_per_minute: int = Field(default=3, ge=1, le=60)
     ai_requests_per_day: int = Field(default=20, ge=1, le=1000)
