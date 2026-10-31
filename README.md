@@ -2,6 +2,8 @@
 
 A final-year interview demo: optimize charging cost while meeting fixed delivery deadlines, battery reserve and shared charger availability. Vehicles are simulated; customer order is fixed.
 
+**Live demo:** [EV Fleet Charging Scheduler](https://ev-fleet-interview.onrender.com/portal). The free instance can take 50 seconds or longer to wake after inactivity; open it before your interview.
+
 ## Architecture
 ```
 Simulator → HTTP telemetry API → Kafka (vehicle ID key)
@@ -35,6 +37,8 @@ Explain Kafka buffering, independent validation of solver output, and atomic cha
 Use one Free PostgreSQL service and one Free Kafka service on Aiven, with topic `vehicle.telemetry.v4`, two partitions and at most three days retention. Select ongoing free plans, not paid plans funded by trial credits. Aiven can power off inactive free services.
 
 Deploy branch `codex/interview-render-aiven` to a Free Render web service using the Dockerfile and `/api/v1/health/ready`. `render.yaml` records the deployment. Supply `.env.example` values in Render. Use the Aiven SASL endpoint, `SASL_SSL`, `SCRAM-SHA-256`, and the project CA in `KAFKA_SSL_CA_PEM` and `DATABASE_SSL_CA_PEM`. Never commit secrets.
+
+The live service was connected as a public Git repository. For later code changes, push this branch and choose **Manual Deploy → Deploy latest commit** in Render; this connection does not automatically deploy Git pushes.
 
 One consumer and one SQL dispatcher run in the API process. Solves run one at a time in a child process. The simulator pauses after five minutes without dashboard reads; no new heartbeats are generated while idle. Render can sleep and take about a minute to wake. This is an interactive demo, not continuous monitoring. Check peak memory against the free instance's 512 MB limit.
 
