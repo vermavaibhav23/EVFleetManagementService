@@ -1,0 +1,50 @@
+{
+  "method": "nearest-first single-station restriction with MILP; identical hard constraints",
+  "results": [
+    {
+      "vehicle": "SIM-001",
+      "optimized": {
+        "status": "OPTIMAL_MODEL",
+        "cost_inr": 391.3,
+        "late_deliveries": 0,
+        "seconds": 0.706
+      },
+      "station_first": {
+        "status": "OPTIMAL_MODEL",
+        "cost_inr": 608.7,
+        "late_deliveries": 0,
+        "seconds": 0.1
+      }
+    },
+    {
+      "vehicle": "SIM-002",
+      "optimized": {
+        "status": "OPTIMAL_MODEL",
+        "cost_inr": 216.8,
+        "late_deliveries": 0,
+        "seconds": 3.485
+      },
+      "station_first": {
+        "status": "OPTIMAL_MODEL",
+        "cost_inr": 249.83,
+        "late_deliveries": 0,
+        "seconds": 0.433
+      }
+    },
+    {
+      "vehicle": "SIM-003",
+      "optimized": {
+        "status": "OPTIMAL_MODEL",
+        "cost_inr": 91.1,
+        "late_deliveries": 0,
+        "seconds": 2.026
+      },
+      "station_first": {
+        "status": "OPTIMAL_MODEL",
+        "cost_inr": 91.1,
+        "late_deliveries": 0,
+        "seconds": 0.204
+      }
+    }
+  ]
+}

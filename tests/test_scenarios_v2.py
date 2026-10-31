@@ -21,7 +21,7 @@ def plan_and_approve(doc):
 
 
 def test_normal_day_every_journey_returns_home():
-    doc = seed(LoadRequest(vehicle_count=12))
+    doc = seed(LoadRequest(scenario="NORMAL_DAY", vehicle_count=12))
     doc["policy"]["solver_seconds"] = 5
     results = plan_and_approve(doc)
     assert all("plan" in r for r in results), [
@@ -42,7 +42,7 @@ def test_normal_day_every_journey_returns_home():
 
 
 def test_edge_events_leave_safe_states_without_automatic_recovery_approval():
-    doc = seed(LoadRequest(scenario="EDGE_CASE_DAY"))
+    doc = seed(LoadRequest(scenario="EDGE_CASE_DAY", vehicle_count=12))
     doc["policy"]["solver_seconds"] = 5
     deadlines = {
         vin: [d["deadline"] for d in v["deliveries"]]

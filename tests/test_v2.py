@@ -411,8 +411,8 @@ def test_stale_snapshot_and_idempotent_approval():
 
 
 def test_old_telemetry_and_deterministic_seed():
-    a = seed(LoadRequest(scenario="EDGE_CASE_DAY"))
-    b = seed(LoadRequest(scenario="EDGE_CASE_DAY"))
+    a = seed(LoadRequest(scenario="EDGE_CASE_DAY", vehicle_count=12))
+    b = seed(LoadRequest(scenario="EDGE_CASE_DAY", vehicle_count=12))
     assert a["vehicles"] == b["vehicles"] and a["events"] == b["events"]
     assert len({v["case"] for v in a["vehicles"].values()}) == 12
     assert all(

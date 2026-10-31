@@ -2185,3 +2185,8 @@ details summary {
 .tradeoff.reserve-risk { background: #fff0dd; border-left-color: #c57617; color: #774307; }
 .plan-locked .tradeoff { background: #eef0f1; border-left-color: #98a3a8; color: #657278; }
 .deadline-alert { padding: 12px; background: #fff0eb; color: #943b24; border-left: 4px solid #bd4637; line-height: 1.6; }
+
+.demo-options { position: relative; }
+.demo-options summary { cursor: pointer; padding: 8px; }
+.demo-options[open] { padding: 8px; border: 1px solid #cbded8; border-radius: 8px; }
+.demo-options label { display: block; margin-top: 8px; }

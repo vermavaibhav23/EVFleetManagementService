@@ -1,80 +1,76 @@
-"""Reproducible local benchmark. No HTTP or production writes."""
+"""Solver-assisted station-first baseline versus full candidate search.
 
-import argparse
+Both use identical constraints. Baseline tries stations nearest-first and chooses
+the first feasible single-station journey. It is not a pure greedy scheduler.
+"""
+
 import json
 import sys
-from collections import Counter
 from copy import deepcopy
-from datetime import datetime, timezone
 from pathlib import Path
 from time import monotonic
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.domain import LoadRequest
-from app.services.optimizer import optimize
-from app.services.runner import priority
+from app.services.optimizer import candidate_stations, optimize
 from app.services.seed import seed
 from app.services.validation import validate
 
 
-def run(scenario, count, seconds):
-    doc = seed(
-        LoadRequest(
-            scenario=scenario,
-            vehicle_count=count,
-            seed=42,
-            start_time="2026-10-04T08:00:00+05:30",
-        )
-    )
-    doc["policy"]["solver_seconds"] = seconds
+def measure(doc, vin, baseline=False):
     started = monotonic()
-    rows = []
-    for vin in sorted(doc["vehicles"], key=lambda v: priority(doc, v)):
+    result = {"status": "INFEASIBLE_MODEL"}
+    if baseline:
+        for station in candidate_stations(doc, doc["vehicles"][vin]):
+            limited = deepcopy(doc)
+            limited["stations"] = {station["charger_id"]: station}
+            limited["external_bookings"] = [
+                r
+                for r in doc.get("external_bookings", [])
+                if r["charger_id"] in limited["stations"]
+            ]
+            # Preserve every committed reservation; the benchmark uses only the everyday snapshot.
+            limited["plans"] = {}
+            result = optimize(limited, vin)
+            if "plan" in result:
+                assert not validate(limited, result["plan"])
+                break
+    else:
         result = optimize(doc, vin)
-        row = {k: v for k, v in result.items() if k != "plan"}
-        row["vin"] = vin
         if "plan" in result:
-            plan = deepcopy(result["plan"])
-            assert not validate(doc, plan)
-            plan["status"] = "APPROVED"
-            doc["plans"][plan["plan_id"]] = plan
-            row.update(cost=plan["total_cost"], solver=plan["solver"])
-        rows.append(row)
-    return dict(
-        scenario=scenario,
-        vehicles=count,
-        per_vehicle_seconds=seconds,
-        elapsed_seconds=monotonic() - started,
-        statuses=dict(Counter(r["status"] for r in rows)),
-        results=rows,
-    )
+            assert not validate(doc, result["plan"])
+    plan = result.get("plan")
+    return {
+        "status": result["status"],
+        "cost_inr": round(plan["total_cost"], 2) if plan else None,
+        "late_deliveries": sum(
+            o.get("lateness_minutes", 0) > 0.001 for o in plan["operations"]
+        )
+        if plan
+        else None,
+        "seconds": round(monotonic() - started, 3),
+    }
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--counts", nargs="+", type=int, default=[12, 24])
-    parser.add_argument("--seconds", type=float, default=8)
-    parser.add_argument("--output", default="benchmark.json")
-    args = parser.parse_args()
-    results = []
-    for count in args.counts:
-        for scenario in ("NORMAL_DAY", "EDGE_CASE_DAY"):
-            result = run(scenario, count, args.seconds)
-            results.append(result)
-            print(
-                scenario,
-                count,
-                result["statuses"],
-                round(result["elapsed_seconds"], 2),
-                flush=True,
-            )
-            Path(args.output).write_text(
-                json.dumps(
-                    dict(
-                        recorded_at=datetime.now(timezone.utc).isoformat(),
-                        results=results,
-                    ),
-                    indent=2,
-                ),
-                encoding="utf-8",
-            )
+    doc = seed(LoadRequest(scenario="EVERYDAY_CHOICES", vehicle_count=4))
+    # Compare the same uncommitted snapshot for both methods.
+    doc["plans"] = {}
+    rows = []
+    for vin in ("SIM-001", "SIM-002", "SIM-003"):
+        rows.append(
+            {
+                "vehicle": vin,
+                "optimized": measure(doc, vin),
+                "station_first": measure(doc, vin, True),
+            }
+        )
+    print(
+        json.dumps(
+            {
+                "method": "nearest-first single-station restriction with MILP; identical hard constraints",
+                "results": rows,
+            },
+            indent=2,
+        )
+    )

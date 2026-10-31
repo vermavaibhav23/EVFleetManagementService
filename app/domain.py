@@ -224,9 +224,9 @@ class PlanRequest(BaseModel):
     run_id: str | None = None
     pause_for_review: bool = False
     compare_tradeoffs: bool = False
-    recovery: bool = False
-    reserve_exception: bool = False
-    alternatives: bool = True
+    recovery: Literal[False] = False
+    reserve_exception: Literal[False] = False
+    alternatives: bool = False
 
 
 class Telemetry(BaseModel):

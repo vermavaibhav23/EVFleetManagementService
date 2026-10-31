@@ -18,6 +18,10 @@ services:
         sync: false
       - key: KAFKA_PASSWORD
         sync: false
+      - key: KAFKA_SSL_CA_PEM
+        sync: false
+      - key: DATABASE_SSL_CA_PEM
+        sync: false
       - key: KAFKA_TELEMETRY_TOPIC
         value: vehicle.telemetry.v4
       - key: KAFKA_GROUP_PREFIX

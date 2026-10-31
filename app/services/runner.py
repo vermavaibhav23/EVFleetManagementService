@@ -36,25 +36,6 @@ def priority(doc, vin):
     )
 
 
-def same_journey(left, right):
-    """Ignore solver noise, but preserve different routes, slots and charge amounts."""
-    if abs(left["total_cost"] - right["total_cost"]) > 0.01:
-        return False
-    if len(left["operations"]) != len(right["operations"]):
-        return False
-    for a, b in zip(left["operations"], right["operations"]):
-        if any(a.get(k) != b.get(k) for k in ("kind", "charger_id", "port", "trip_id")):
-            return False
-        if any(
-            abs((dt(a[k]) - dt(b[k])).total_seconds()) > 1
-            for k in ("depart", "arrival", "start", "end")
-        ):
-            return False
-        if any(abs(a[k] - b[k]) > 0.01 for k in ("energy_arrival", "energy_end")):
-            return False
-    return True
-
-
 def compare_options(doc, vin, alternatives=True):
     """One recommendation with hard battery reserve and delivery deadlines."""
     result = optimize(doc, vin)
@@ -80,42 +61,12 @@ def solve_job(snapshot, job, output):
                 key=lambda vin: priority(working, vin),
             )
         )
-        req = job["request"]
         for vin in vins:
-            if req.get("compare_tradeoffs"):
-                options = compare_options(working, vin, req["alternatives"])
-                results.extend(options)
-                selected = next((r["plan"] for r in options if "plan" in r), None)
-                if selected:
-                    plan = deepcopy(selected)
-                    plan["status"] = "APPROVED"
-                    working["plans"][plan["plan_id"]] = plan
-                continue
-            result = optimize(working, vin, req["recovery"], req["reserve_exception"])
-            result["vin"] = vin
-            results.append(result)
-            if "plan" in result:
-                plan = deepcopy(result["plan"])
-                if job["vin"] and req["alternatives"] and plan["total_cost"] > 0:
-                    alt = optimize(
-                        working,
-                        vin,
-                        req["recovery"],
-                        req["reserve_exception"],
-                        fastest=True,
-                    )
-                    if (
-                        "plan" in alt
-                        and not same_journey(plan, alt["plan"])
-                        and (
-                            dt(plan["operations"][-1]["end"])
-                            - dt(alt["plan"]["operations"][-1]["end"])
-                        ).total_seconds()
-                        >= 60
-                    ):
-                        alt["vin"] = vin
-                        results.append(alt)
-                # Synthetic reservations coordinate subsequent vehicles in the batch.
+            options = compare_options(working, vin)
+            results.extend(options)
+            selected = next((r["plan"] for r in options if "plan" in r), None)
+            if selected:
+                plan = deepcopy(selected)
                 plan["status"] = "APPROVED"
                 working["plans"][plan["plan_id"]] = plan
         output.put(

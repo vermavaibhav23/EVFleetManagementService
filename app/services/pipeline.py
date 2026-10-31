@@ -1,4 +1,4 @@
-"""Provider forwarding, Kafka state/history consumers and planning dispatch."""
+"""Kafka telemetry consumer, SQL planning dispatcher and interactive simulator."""
 
 import asyncio
 import logging

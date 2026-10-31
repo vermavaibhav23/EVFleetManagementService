@@ -1,4 +1,4 @@
-"""Optional separate Railway worker. Default API deployment embeds the same workers."""
+"""Optional separate worker (not needed on free Render). Default API deployment embeds the same workers."""
 
 import asyncio
 
