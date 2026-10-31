@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 from collections import OrderedDict, deque
 from time import monotonic
 
@@ -14,6 +15,8 @@ from app.core.config import settings
 from app.domain import BaseModel
 from app.services.plan_review import review
 from app.services.validation import validate
+
+log = logging.getLogger(__name__)
 
 
 class ExplanationRequest(BaseModel):
@@ -228,8 +231,28 @@ class PlanExplainer:
                 ).strip()
                 if not text or len(text) > 2500:
                     raise ValueError("Invalid generation")
-            except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError):
+            except (
+                httpx.HTTPError,
+                ValueError,
+                KeyError,
+                IndexError,
+                TypeError,
+            ) as exc:
                 # Never return provider response bodies, headers or credentials.
+                status = (
+                    exc.response.status_code
+                    if isinstance(exc, httpx.HTTPStatusError)
+                    else None
+                )
+                log.warning(
+                    "AI explanation unavailable: type=%s status=%s",
+                    type(exc).__name__,
+                    status,
+                )
+                if status == 429:
+                    return fallback(
+                        "The AI provider's free quota is currently exhausted. Showing verified plan facts; try again later."
+                    )
                 return fallback(
                     "AI is temporarily unavailable. Showing verified plan facts; planning still works."
                 )
