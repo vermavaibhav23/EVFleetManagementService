@@ -716,12 +716,12 @@ if (typeof document !== "undefined") {
     if (
       !Number.isInteger(count) ||
       count < min ||
-      count > 100 ||
+      count > 10 ||
       !$("start").value ||
       !Number.isInteger(Number($("seed").value))
     ) {
       message(
-        `Choose ${min}–100 vehicles, an integer seed and an IST start time.`,
+        `Choose ${min}–10 vehicles, an integer seed and an IST start time.`,
         true,
       );
       return;
@@ -990,7 +990,7 @@ if (typeof document !== "undefined") {
       const replacement = available[0]?.plan_id || null;
       selectedPlan = replacement;
     }
-    let html = `<h3>${escapeHTML(v.name)} · ${human(v.state)}</h3>${v.starting_context ? `<p class="muted">Starting snapshot: ${escapeHTML(v.starting_context)}</p>` : ""}<p>${escapeHTML(v.incident || "Compare the complete journey, then approve its charging slots.")}</p>
+    let html = `<h3>${escapeHTML(v.name)} · ${human(v.state)}</h3>${v.starting_context ? `<p class="muted">Starting snapshot: ${escapeHTML(v.starting_context)}</p>` : ""}<p>${escapeHTML(v.incident || "Review the charging plan, then approve its reserved slots.")}</p>
       ${deadlineText(v, fleet.clock) ? `<p class="deadline-alert">${escapeHTML(deadlineText(v, fleet.clock))}</p>` : ""}
       <div class="controls"><button data-plan="compare">${search.active ? "Searching…" : fleet.running ? "Pause & recalculate plans" : "Recalculate plans"}</button></div>
       <p class="slot-check" role="status" aria-live="polite">${escapeHTML(search.message || "Search from the current time and available slots. Searching pauses the simulation for review.")}</p>

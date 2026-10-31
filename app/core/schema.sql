@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS simulator_state (
 CREATE TABLE IF NOT EXISTS outbox (
     id text PRIMARY KEY,
     run_id text NOT NULL REFERENCES fleet_run(run_id) ON DELETE CASCADE,
-    kind text NOT NULL CHECK (kind IN ('TELEMETRY', 'PLANNING')),
+    kind text NOT NULL CHECK (kind = 'TELEMETRY'),
     message_key text NOT NULL,
     payload jsonb NOT NULL,
     checkpoint jsonb,
@@ -60,3 +60,13 @@ CREATE TABLE IF NOT EXISTS telemetry_receipts (
 );
 CREATE TABLE IF NOT EXISTS schema_version (version integer PRIMARY KEY);
 INSERT INTO schema_version VALUES (3) ON CONFLICT DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS telemetry_history (
+    run_id text NOT NULL REFERENCES fleet_run(run_id) ON DELETE CASCADE,
+    event_id text NOT NULL, vehicle_id text NOT NULL,
+    observed_at timestamptz NOT NULL,
+    received_at timestamptz NOT NULL DEFAULT now(), data jsonb NOT NULL,
+    PRIMARY KEY(run_id, event_id)
+);
+CREATE INDEX IF NOT EXISTS telemetry_history_received ON telemetry_history(received_at);
+INSERT INTO schema_version VALUES (4) ON CONFLICT DO NOTHING;

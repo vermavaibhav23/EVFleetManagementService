@@ -7,7 +7,6 @@ from app.core.dependencies import (
     close_clients,
     connect_clients,
     get_database,
-    get_history_database,
 )
 from app.services.pipeline import Pipeline
 
@@ -19,7 +18,7 @@ async def main():
         )
     settings.run_workers = True
     await connect_clients()
-    pipeline = Pipeline(get_database(), get_history_database())
+    pipeline = Pipeline(get_database())
     try:
         await pipeline.start()
         await asyncio.Event().wait()

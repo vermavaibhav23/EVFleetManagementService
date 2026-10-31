@@ -23,8 +23,8 @@ class Scenario(StrEnum):
 
 
 class LoadRequest(BaseModel):
-    scenario: Scenario = Scenario.NORMAL_DAY
-    vehicle_count: int = Field(default=12, ge=1, le=100)
+    scenario: Scenario = Scenario.EVERYDAY_CHOICES
+    vehicle_count: int = Field(default=4, ge=1, le=100)
     seed: int = 42
     start_time: AwareDatetime | None = None
 
@@ -54,7 +54,7 @@ class Policy(BaseModel):
     solver_seconds: float = Field(default=8, gt=0, le=60)
     max_customers: int = Field(default=8, ge=1, le=12)
     max_stations: int = Field(default=4, ge=1, le=6)
-    max_charging_stops_per_gap: int = Field(default=4, ge=1, le=6)
+    max_charging_stops_per_gap: int = Field(default=1, ge=1, le=1)
     taper: bool = True
 
 

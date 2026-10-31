@@ -37,7 +37,7 @@ def reading(doc, **changes):
 
 
 def snapshot():
-    return seed(LoadRequest(vehicle_count=1))
+    return seed(LoadRequest(scenario="NORMAL_DAY", vehicle_count=1))
 
 
 def test_duplicate_and_late_reading_cannot_restore_old_battery():
@@ -144,25 +144,21 @@ def test_v3_planning_requires_fresh_observation_and_deduplicates_pending():
     assert first["job_id"] == second["job_id"] and len(doc["jobs"]) == 1
 
 
-def test_history_has_one_document_per_event_and_independent_upsert():
+def test_sql_dispatch_picks_durable_job_and_hands_it_to_leased_runner():
+    from unittest.mock import MagicMock
+
     async def run():
-        history = SimpleNamespace(
-            telemetry_history=SimpleNamespace(
-                create_index=AsyncMock(), update_one=AsyncMock()
-            )
-        )
         pipeline = object.__new__(Pipeline)
-        pipeline.history = history
-        doc = snapshot()
-        for sequence in (101, 102, 102):
-            await pipeline.save_history(
-                reading(doc, sequence=sequence, event_id=f"reading-{sequence}")
-            )
-        calls = history.telemetry_history.update_one.call_args_list
-        assert calls[0].args[0] != calls[1].args[0]
-        assert calls[1].args[0] == calls[2].args[0]
-        assert "$setOnInsert" in calls[0].args[1]
-        assert calls[0].kwargs["upsert"]
+        connection = AsyncMock()
+        connection.fetchrow.return_value = {"id": "job-1", "run_id": "run-1"}
+        pool = MagicMock()
+        pool.acquire.return_value.__aenter__.return_value = connection
+        pipeline.pool = pool
+        pipeline.planner = SimpleNamespace(handle=AsyncMock())
+        await pipeline.dispatch()
+        pipeline.planner.handle.assert_awaited_once_with(
+            {"job_id": "job-1", "run_id": "run-1"}
+        )
 
     asyncio.run(run())
 

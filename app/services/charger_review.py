@@ -87,7 +87,7 @@ def charger_review(doc, vin):
             and v["energy_kwh"] - energy < doc["policy"]["reserve_kwh"] - 0.001
         ):
             notes.append(
-                f"Direct arrival would leave {v['energy_kwh'] - energy:.2f} kWh, below the normal reserve. An initial reserve exception needs approval."
+                f"Direct arrival would leave {v['energy_kwh'] - energy:.2f} kWh, below the normal reserve. This direct approach cannot be approved; charge elsewhere or request assistance."
             )
         occupied = [
             dict(port=r["port"], start=r["start"], end=r["end"])

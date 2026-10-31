@@ -44,9 +44,7 @@ def grouped_seed(request):
     )
     doc["scenario"] = str(request.scenario)
     doc["scenario_title"], doc["scenario_description"] = GROUPS[doc["scenario"]]
-    doc["policy"]["max_charging_stops_per_gap"] = min(
-        4, doc["policy"]["max_stations"]
-    )
+    doc["policy"]["max_charging_stops_per_gap"] = 1
     start = dt(doc["clock"])
     earlier = start - timedelta(minutes=15)
     base = doc["depots"]["SIM-DEPOT"]
@@ -446,7 +444,9 @@ def grouped_seed(request):
                 trip_id=f"{v['vin']}-D{j + 1}",
                 sequence=j + 1,
                 name=f"Customer {i + 1}.{j + 1}",
-                **point(origin["lat"], origin["lon"], first_km + j * 2, bearing + j * 15),
+                **point(
+                    origin["lat"], origin["lon"], first_km + j * 2, bearing + j * 15
+                ),
                 ready_at=ready,
                 accepts_at=ready,
                 deadline=start + timedelta(minutes=90 + j * 70),

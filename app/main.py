@@ -12,7 +12,6 @@ from app.core.dependencies import (
     close_clients,
     connect_clients,
     get_database,
-    get_history_database,
 )
 from app.services.pipeline import Pipeline
 
@@ -20,7 +19,7 @@ from app.services.pipeline import Pipeline
 @asynccontextmanager
 async def lifespan(app):
     await connect_clients()
-    pipeline = Pipeline(get_database(), get_history_database())
+    pipeline = Pipeline(get_database())
     app.state.pipeline = pipeline
     try:
         await pipeline.start()
@@ -30,7 +29,7 @@ async def lifespan(app):
         await close_clients()
 
 
-app = FastAPI(title=settings.app_name, version="3.0", lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="4.0", lifespan=lifespan)
 app.include_router(router, prefix=settings.api_v1_prefix)
 static = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static), name="static")

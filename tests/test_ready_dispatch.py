@@ -15,14 +15,14 @@ from tests.test_v2 import attach, fixture
 
 
 def direct():
-    doc = seed(LoadRequest(vehicle_count=1))
+    doc = seed(LoadRequest(scenario="NORMAL_DAY", vehicle_count=1))
     plan = optimize(doc, "SIM-001")["plan"]
     attach(doc, plan)
     return doc, plan
 
 
 def test_old_review_policy_no_longer_adds_a_dispatch_hold():
-    doc = seed(LoadRequest(vehicle_count=1))
+    doc = seed(LoadRequest(scenario="NORMAL_DAY", vehicle_count=1))
     assert "review_minutes" not in doc["policy"]
     doc["policy"]["review_minutes"] = 99  # existing persisted run
     plan = optimize(doc, "SIM-001")["plan"]
@@ -50,7 +50,7 @@ def test_saved_departure_does_not_hold_vehicle_and_restart_keeps_progress():
 
 
 def test_route_readiness_and_customer_acceptance_are_still_real_waits():
-    doc = seed(LoadRequest(vehicle_count=1))
+    doc = seed(LoadRequest(scenario="NORMAL_DAY", vehicle_count=1))
     v = doc["vehicles"]["SIM-001"]
     now = dt(doc["clock"])
     first = v["deliveries"][0]
@@ -150,7 +150,7 @@ def test_replanned_vehicle_finishes_active_service_before_moving():
 
 
 def test_validator_rejects_discretionary_dispatch_wait():
-    doc = seed(LoadRequest(vehicle_count=1))
+    doc = seed(LoadRequest(scenario="NORMAL_DAY", vehicle_count=1))
     plan = optimize(doc, "SIM-001")["plan"]
     for op in plan["operations"]:
         for key in ("depart", "arrival", "start", "end"):

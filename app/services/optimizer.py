@@ -134,6 +134,11 @@ def optimize(
     fastest=False,
     approach_reserve_exception=False,
 ):
+    if recovery or reserve_exception or approach_reserve_exception:
+        return {
+            "status": "INFEASIBLE_MODEL",
+            "reason": "Interview demo enforces delivery deadlines and the normal battery reserve; exceptions are disabled.",
+        }
     started = monotonic()
     v, p = doc["vehicles"][vin], doc["policy"]
     origin, cap = dt(doc["clock"]), effective_capacity(v)
@@ -267,14 +272,11 @@ def optimize(
                     points.append(
                         (
                             (tb - origin).total_seconds() / 60,
-                            points[-1][1]
-                            + (tb - ta).total_seconds() / 60 * rate,
+                            points[-1][1] + (tb - ta).total_seconds() / 60 * rate,
                         )
                     )
                 occupied = {
-                    r["port"]
-                    for r in existing
-                    if r["charger_id"] == s["charger_id"]
+                    r["port"] for r in existing if r["charger_id"] == s["charger_id"]
                 }
                 empty = next(
                     (
@@ -346,9 +348,7 @@ def optimize(
                     for prior_node in prior:
                         if prior_node["station"]["charger_id"] == s["charger_id"]:
                             continue
-                        between_e, between_t = leg(
-                            doc, v, prior_node["station"], s
-                        )
+                        between_e, between_t = leg(doc, v, prior_node["station"], s)
                         if between_e > cap:
                             continue
                         arc = m.binary()
@@ -380,8 +380,7 @@ def optimize(
                 )
                 m.ge(
                     ein,
-                    (reserve if normal_arrival_required else 0)
-                    * selected_station,
+                    (reserve if normal_arrival_required else 0) * selected_station,
                 )
                 if reserve_exception and not (
                     gap == 0 and stage == 0 and first_e < 1e-9
@@ -394,8 +393,7 @@ def optimize(
                     reserve_shortfall += shortage
                 m.ge(
                     begin,
-                    arrive
-                    + p["waiting_allowance_minutes"] * selected_station,
+                    arrive + p["waiting_allowance_minutes"] * selected_station,
                 )
                 cursor = begin + p["connection_minutes"] * selected_station
                 bands = (
@@ -420,13 +418,10 @@ def optimize(
                     )
                     tariff_end = m.pwl(band_end, points)
                     m.ge(tariff_end, tariff_start)
-                    band_cost = (tariff_end - tariff_start) * (
-                        power * factor / 60
-                    )
+                    band_cost = (tariff_end - tariff_start) * (power * factor / 60)
                     m.ge(
                         band_cost,
-                        amount
-                        * (min(rate for _, _, rate in tariff) / p["efficiency"]),
+                        amount * (min(rate for _, _, rate in tariff) / p["efficiency"]),
                     )
                     cost += band_cost
                     tariff_start = tariff_end
@@ -447,8 +442,7 @@ def optimize(
                             (dt(r["end"]) - origin).total_seconds() / 60,
                         )
                         for r in existing
-                        if r["charger_id"] == s["charger_id"]
-                        and r["port"] == port
+                        if r["charger_id"] == s["charger_id"] and r["port"] == port
                     ] + power_conflicts
                     for a, b in conflicts:
                         if b <= 0 or a >= horizon:
@@ -460,18 +454,14 @@ def optimize(
             active = sum((n["selected"] for n in layer), Expr())
             m.le(active, 1)
             if stages:
-                previous_active = sum(
-                    (n["selected"] for n in stages[-1]), Expr()
-                )
+                previous_active = sum((n["selected"] for n in stages[-1]), Expr())
                 m.le(active, previous_active)
             stages.append(layer)
 
         for uses in station_uses.values():
             m.le(sum(uses, Expr()), 1)
         first_active = (
-            sum((n["selected"] for n in stages[0]), Expr())
-            if stages
-            else Expr()
+            sum((n["selected"] for n in stages[0]), Expr()) if stages else Expr()
         )
         if gap == 0 and approach_reserve_exception:
             m.eq(first_active, 1)

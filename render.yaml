@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: ev-fleet-interview
+    runtime: docker
+    plan: free
+    branch: codex/interview-render-aiven
+    healthCheckPath: /api/v1/health/ready
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: KAFKA_BOOTSTRAP_SERVERS
+        sync: false
+      - key: KAFKA_SECURITY_PROTOCOL
+        value: SASL_SSL
+      - key: KAFKA_SASL_MECHANISM
+        value: SCRAM-SHA-256
+      - key: KAFKA_USERNAME
+        sync: false
+      - key: KAFKA_PASSWORD
+        sync: false
+      - key: KAFKA_TELEMETRY_TOPIC
+        value: vehicle.telemetry.v4
+      - key: KAFKA_GROUP_PREFIX
+        value: fleet-interview-v4
+      - key: KAFKA_AUTO_CREATE_TOPICS
+        value: "false"
+      - key: OPENBLAS_NUM_THREADS
+        value: "1"
+      - key: OMP_NUM_THREADS
+        value: "1"

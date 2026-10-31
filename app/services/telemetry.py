@@ -147,6 +147,15 @@ class TelemetryProcessor:
                         422, "Event ID conflicts with a simulator reading"
                     )
                 checkpoint = row["checkpoint"]
+            await connection.execute(
+                "INSERT INTO telemetry_history(run_id,event_id,vehicle_id,observed_at,data) "
+                "VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
+                event.run_id,
+                event.event_id,
+                event.vehicle_id,
+                event.observed_at,
+                event.model_dump(mode="json"),
+            )
             result = apply_reading(doc, event, checkpoint)
             if result["accepted"]:
                 doc["revision"] += 1

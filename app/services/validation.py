@@ -42,6 +42,12 @@ def validate(doc, plan):
     if v["health_fault"] or v["temperature_c"] >= 60:
         errors.append("Vehicle health blocks movement")
     reserve = plan["reserve_kwh"]
+    if (
+        plan["recovery"]
+        or plan.get("initial_reserve_exception")
+        or reserve < p["reserve_kwh"] - EPS
+    ):
+        errors.append("Interview policy does not permit deadline or reserve exceptions")
     if reserve < p["reserve_kwh"] - EPS and not plan["recovery"]:
         errors.append("Unacknowledged reserve exception")
     initial_exception = plan.get("initial_reserve_exception", False)

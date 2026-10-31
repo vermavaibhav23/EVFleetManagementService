@@ -36,7 +36,7 @@ def ledger(db=Depends(get_database)):
 
 @router.get("/health/live")
 async def live():
-    return {"status": "ok", "schema_version": 3}
+    return {"status": "ok", "schema_version": 4}
 
 
 @router.get("/health/ready")
@@ -52,7 +52,10 @@ async def ready(request: Request, db=Depends(get_database)):
 
 @router.get("/fleet")
 @router.get("/simulator/state")
-async def state(store: Ledger = Depends(ledger)):
+async def state(request: Request, store: Ledger = Depends(ledger)):
+    from time import monotonic
+
+    request.app.state.pipeline.last_viewed = monotonic()
     doc = await store.read()
     doc.pop("_id", None)
     doc["reservations"] = bookings(doc) + doc.get("external_bookings", [])
@@ -96,6 +99,14 @@ async def state(store: Ledger = Depends(ledger)):
 
 @router.post("/simulator/load")
 async def load(request: LoadRequest, store: Ledger = Depends(ledger)):
+    if request.vehicle_count < 4 or request.vehicle_count > 10:
+        raise HTTPException(422, "Interview demos support 4 to 10 vehicles")
+    if request.scenario not in (
+        "EVERYDAY_CHOICES",
+        "SHARED_CHARGERS",
+        "DELIVERY_DELAYS",
+    ):
+        raise HTTPException(422, "Choose one of the three interview scenarios")
     doc = await store.replace_run(await asyncio.to_thread(seed, request))
     return {
         "run_id": doc["run_id"],

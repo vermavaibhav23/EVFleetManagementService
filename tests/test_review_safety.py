@@ -1,19 +1,10 @@
-from copy import deepcopy
 from datetime import timedelta
 
-import pytest
-from fastapi import HTTPException
-
-from app.domain import Approval, dt
+from app.domain import dt
 from app.services.charger_review import charger_review
-from app.services.control import approve
-from app.services.execution import advance
 from app.services.optimizer import fingerprint
 from app.services.plan_review import review
 from app.services.runner import compare_options
-from app.services.telemetry import apply_reading
-from app.services.validation import validate
-from tests.test_telemetry_pipeline import reading
 from tests.test_tradeoffs import tradeoff_fixture
 
 
@@ -30,66 +21,9 @@ def approach_fixture():
     return doc
 
 
-def test_initial_exception_restores_reserve_instead_of_returning_empty():
+def test_below_reserve_charger_approach_is_not_offered():
     doc = approach_fixture()
-    results = compare_options(doc, "SIM-001")
-    plans = [r["plan"] for r in results if "plan" in r]
-    assert len(plans) == 1
-    plan = plans[0]
-    assert plan["initial_reserve_exception"]
-    assert plan["reserve_kwh"] == 3
-    assert plan["operations"][0]["energy_arrival"] == pytest.approx(1.55)
-    assert all(o["energy_arrival"] >= 3 - 0.0002 for o in plan["operations"][1:])
-    assert plan["operations"][-1]["energy_end"] == pytest.approx(3, abs=0.0002)
-    assert not validate(doc, plan)
-    explanation = review(doc, plan)
-    assert explanation["initial_reserve_exception"]
-    assert not explanation["affected_customers"]
-    assert "restore 3 kWh" in explanation["tradeoff"]
-    doc["plans"][plan["plan_id"]] = plan
-    with pytest.raises(HTTPException) as error:
-        approve(doc, plan["plan_id"], Approval(run_id=doc["run_id"]))
-    assert error.value.status_code == 422
-    approve(
-        doc, plan["plan_id"], Approval(run_id=doc["run_id"], acknowledge_recovery=True)
-    )
-    advance(doc, 6 * 3600)
-    assert doc["vehicles"]["SIM-001"]["state"] == "COMPLETED"
-    assert doc["vehicles"]["SIM-001"]["energy_kwh"] >= 3 - 0.0002
-
-
-def test_initial_exception_is_not_a_whole_journey_waiver():
-    doc = approach_fixture()
-    plan = next(r["plan"] for r in compare_options(doc, "SIM-001") if "plan" in r)
-    changed = deepcopy(plan)
-    changed["initial_reserve_exception"] = False
-    assert "Arrival reserve violated" in validate(doc, changed)
-    changed = deepcopy(plan)
-    changed["reserve_kwh"] = 0
-    assert "Invalid initial reserve exception" in validate(doc, changed)
-    changed = deepcopy(plan)
-    changed["recovery"] = False
-    assert "Invalid initial reserve exception" in validate(doc, changed)
-    doc["roads"]["START>EXP"]["energy"] = 4.5
     assert not any("plan" in r for r in compare_options(doc, "SIM-001"))
-
-
-def test_live_reading_honors_exception_only_on_first_charger_approach():
-    doc = approach_fixture()
-    plan = next(r["plan"] for r in compare_options(doc, "SIM-001") if "plan" in r)
-    doc["plans"][plan["plan_id"]] = plan
-    approve(
-        doc, plan["plan_id"], Approval(run_id=doc["run_id"], acknowledge_recovery=True)
-    )
-    assert apply_reading(doc, reading(doc))["accepted"]
-    assert doc["vehicles"]["SIM-001"]["plan_id"] == plan["plan_id"]
-    stranded = deepcopy(doc)
-    apply_reading(stranded, reading(stranded, sequence=102, energy_kwh=2))
-    assert not stranded["vehicles"]["SIM-001"].get("plan_id")
-    v = doc["vehicles"]["SIM-001"]
-    v.update(operation_index=1, node="EXP")
-    apply_reading(doc, reading(doc, sequence=102, energy_kwh=5))
-    assert not v.get("plan_id")  # 5 - 3 kWh to A is below the restored 3-kWh floor.
 
 
 def test_charger_inventory_never_disappears_and_does_not_invent_rejections():
@@ -112,13 +46,14 @@ def test_charger_inventory_never_disappears_and_does_not_invent_rejections():
     )
     assert indexed["FAR"]["state"] == "NOT_SEARCHED"
     assert indexed["EXP"]["state"] == "NOT_SELECTED"
-    assert "initial reserve exception" in indexed["EXP"]["notes"][0]
+    assert "cannot be approved" in indexed["EXP"]["notes"][0]
     doc["vehicles"]["SIM-001"]["charger_review"] = rows
     assert fingerprint(doc, "SIM-001") == before
 
 
 def test_charger_inventory_survives_rejection_staleness_and_job_pruning():
     doc = approach_fixture()
+    doc["vehicles"]["SIM-001"]["energy_kwh"] = 8
     plan = next(r["plan"] for r in compare_options(doc, "SIM-001") if "plan" in r)
     doc["plans"][plan["plan_id"]] = plan
     plan["review"] = review(doc, plan)

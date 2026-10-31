@@ -143,7 +143,7 @@ def test_delay_and_consumption_keep_deadlines_and_actual_position():
     assert moving["consumption_kwh_km"] == 0.5
     assert moving["state"] == "WAITING_REVIEW"
     assert "plan" not in optimize(doc, "SIM-003")
-    assert "plan" in optimize(doc, "SIM-003", recovery=True)
+    assert "plan" not in optimize(doc, "SIM-003", recovery=True)
 
 
 def test_stranding_health_and_deadline_are_distinct_and_guarded():
@@ -157,7 +157,7 @@ def test_stranding_health_and_deadline_are_distinct_and_guarded():
     trigger_action(doc, "health")
     assert "plan" not in optimize(doc, "SIM-003", recovery=True, reserve_exception=True)
     assert "plan" not in optimize(doc, "SIM-004")
-    assert "plan" in optimize(doc, "SIM-004", recovery=True)
+    assert "plan" not in optimize(doc, "SIM-004", recovery=True)
     fresh = seed(LoadRequest(scenario="ASSISTANCE_CASES"))
     fresh["vehicles"]["SIM-002"]["state"] = "PARKED"
     with pytest.raises(HTTPException):

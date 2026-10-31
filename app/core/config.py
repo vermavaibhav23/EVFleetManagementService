@@ -8,23 +8,27 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
-    app_name: str = "EV Fleet Charging Management"
+    app_name: str = "EV Fleet Charging Scheduler"
     api_v1_prefix: str = "/api/v1"
     database_url: str = "postgresql://fleet:fleet@127.0.0.1:5432/fleet"
-    mongodb_uri: str = "mongodb://localhost:27017"
-    mongodb_db: str = "ev_fleet"
     kafka_bootstrap_servers: str = "localhost:9092"
     kafka_client_id: str = "ev-fleet-api"
-    kafka_telemetry_topic: str = "vehicle.telemetry.v3"
-    kafka_planning_topic: str = "planning.requests.v3"
-    kafka_group_prefix: str = "fleet-v3"
-    kafka_partitions: int = 3
+    kafka_telemetry_topic: str = "vehicle.telemetry.v4"
+    kafka_group_prefix: str = "fleet-interview-v4"
+    kafka_partitions: int = 2
     kafka_replication_factor: int = 1
-    telemetry_workers: int = 3
     telemetry_max_age_seconds: float = 120
     provider_api_url: str | None = None
     run_workers: bool = True
-    mongo_history_days: int = 30
+    telemetry_history_days: int = 3
+    demo_idle_seconds: int = 300
+    kafka_auto_create_topics: bool = False
+    kafka_ssl_ca_pem: str | None = None
+    kafka_ssl_cafile: str | None = None
+    kafka_ssl_certfile: str | None = None
+    kafka_ssl_keyfile: str | None = None
+    database_ssl_cafile: str | None = None
+    database_ssl_ca_pem: str | None = None
 
     @property
     def provider_url(self):
@@ -55,7 +59,12 @@ class Settings(BaseSettings):
         if self.kafka_security_protocol in ("SSL", "SASL_SSL"):
             import ssl
 
-            config["ssl_context"] = ssl.create_default_context()
+            context = ssl.create_default_context(
+                cafile=self.kafka_ssl_cafile, cadata=self.kafka_ssl_ca_pem
+            )
+            if self.kafka_ssl_certfile and self.kafka_ssl_keyfile:
+                context.load_cert_chain(self.kafka_ssl_certfile, self.kafka_ssl_keyfile)
+            config["ssl_context"] = context
         return config
 
 

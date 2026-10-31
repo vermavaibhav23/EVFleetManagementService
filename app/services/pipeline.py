@@ -1,10 +1,10 @@
 """Provider forwarding, Kafka state/history consumers and planning dispatch."""
 
 import asyncio
-import json
 import logging
 from contextlib import suppress
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
+from time import monotonic
 
 import httpx
 from aiokafka import TopicPartition
@@ -26,8 +26,9 @@ log = logging.getLogger(__name__)
 
 
 class Pipeline:
-    def __init__(self, pool, history):
-        self.pool, self.history = pool, history
+    def __init__(self, pool):
+        self.pool = pool
+        self.last_viewed = monotonic()
         self.store, self.simulator = Ledger(pool), Simulator(pool)
         self.processor, self.planner = TelemetryProcessor(pool), Runner(pool)
         self.producer = build_producer()
@@ -39,25 +40,13 @@ class Pipeline:
         await ensure_topics()
         await self.producer.start()
         if settings.run_workers:
-            for i in range(settings.telemetry_workers):
-                name = f"state-{i}"
-                self.tasks.append(
-                    asyncio.create_task(
-                        self.repeat(name, lambda name=name: self.consume("state", name))
-                    )
-                )
             self.tasks.append(
-                asyncio.create_task(
-                    self.repeat("history", lambda: self.consume("history", "history"))
-                )
+                asyncio.create_task(self.repeat("telemetry", self.consume))
             )
             self.tasks.append(
-                asyncio.create_task(
-                    self.repeat(
-                        "planning", lambda: self.consume("planning", "planning")
-                    )
-                )
+                asyncio.create_task(self.repeat("planning", self.dispatch))
             )
+            self.tasks.append(asyncio.create_task(self.repeat("cleanup", self.cleanup)))
             self.tasks.append(
                 asyncio.create_task(self.repeat("provider", self.forward))
             )
@@ -108,7 +97,7 @@ class Pipeline:
                 return
             try:
                 rows = await connection.fetch(
-                    "SELECT * FROM outbox WHERE sent_at IS NULL ORDER BY created_at,id LIMIT 100"
+                    "SELECT * FROM outbox WHERE kind='TELEMETRY' AND sent_at IS NULL ORDER BY created_at,id LIMIT 100"
                 )
                 for row in rows:
                     if row["kind"] == "TELEMETRY":
@@ -125,20 +114,11 @@ class Pipeline:
                             if current != row["run_id"]:
                                 continue
                         response.raise_for_status()
-                    else:
-                        await asyncio.wait_for(
-                            self.producer.send_and_wait(
-                                settings.kafka_planning_topic,
-                                row["payload"],
-                                key=row["message_key"].encode(),
-                            ),
-                            timeout=10,
-                        )
                     await connection.execute(
                         "UPDATE outbox SET sent_at=now() WHERE id=$1", row["id"]
                     )
                 # Processed duplicates are fenced by sequence even after checkpoint
-                # cleanup. MongoDB's reader has its own Kafka position.
+                # cleanup; SQL history has already committed before acknowledgement.
                 await connection.execute(
                     "DELETE FROM outbox WHERE processed_at < now()-interval '1 hour' AND sent_at IS NOT NULL"
                 )
@@ -147,38 +127,19 @@ class Pipeline:
                     "SELECT pg_advisory_unlock(hashtext(current_schema()),72849103)"
                 )
 
-    async def consume(self, role, name):
-        topic = (
-            settings.kafka_planning_topic
-            if role == "planning"
-            else settings.kafka_telemetry_topic
+    async def consume(self):
+        name = "telemetry"
+        consumer = build_consumer(
+            settings.kafka_telemetry_topic, f"{settings.kafka_group_prefix}-state"
         )
-        consumer = build_consumer(topic, f"{settings.kafka_group_prefix}-{role}")
         self.consumers.append(consumer)
         try:
             await consumer.start()
             async for message in consumer:
                 while True:
                     try:
-                        if role == "planning":
-                            body = json.loads(message.value)
-                            if not isinstance(body, dict) or not all(
-                                isinstance(body.get(k), str)
-                                for k in ("run_id", "job_id")
-                            ):
-                                raise ValueError("Invalid planning request")
-                            await self.planner.handle(body)
-                            async with self.pool.acquire() as connection:
-                                await connection.execute(
-                                    "UPDATE outbox SET processed_at=now() WHERE id=$1",
-                                    body["job_id"],
-                                )
-                        else:
-                            event = Telemetry.model_validate_json(message.value)
-                            if role == "state":
-                                await self.processor.process(event)
-                            else:
-                                await self.save_history(event)
+                        event = Telemetry.model_validate_json(message.value)
+                        await self.processor.process(event)
                         self.status[name] = "OK"
                         break
                     except (ValidationError, ValueError) as exc:
@@ -191,7 +152,7 @@ class Pipeline:
                             await self.reject(message, str(exc.detail))
                             break
                         # Empty/changed run: old messages must not block the new run.
-                        if role != "planning" and "Load / reset" in str(exc.detail):
+                        if "Load / reset" in str(exc.detail):
                             break
                         self.status[name] = str(exc.detail)
                         await asyncio.sleep(1)
@@ -230,22 +191,24 @@ class Pipeline:
                 reason,
             )
 
-    async def save_history(self, event):
-        # _id is deterministic, so crashes after insert cannot duplicate a reading.
-        await self.history.telemetry_history.create_index(
-            "expires_at", expireAfterSeconds=0
-        )
-        body = event.model_dump(mode="json")
-        body.update(
-            observed_at=event.observed_at,
-            received_at=datetime.now(UTC),
-            expires_at=datetime.now(UTC) + timedelta(days=settings.mongo_history_days),
-        )
-        await self.history.telemetry_history.update_one(
-            {"_id": f"{event.run_id}:{event.event_id}"},
-            {"$setOnInsert": body},
-            upsert=True,
-        )
+    async def dispatch(self):
+        # The durable SQL job is the queue. Runner leases it before spawning a solver.
+        async with self.pool.acquire() as connection:
+            row = await connection.fetchrow(
+                "SELECT id,run_id FROM planning_jobs WHERE data->>'status'='QUEUED' "
+                "OR (data->>'status'='RUNNING' AND (data->>'lease_until')::timestamptz < now()) "
+                "ORDER BY data->>'created_at',id LIMIT 1"
+            )
+        if row:
+            await self.planner.handle({"job_id": row["id"], "run_id": row["run_id"]})
+
+    async def cleanup(self):
+        async with self.pool.acquire() as connection:
+            await connection.execute(
+                "DELETE FROM telemetry_history WHERE received_at < now() - $1 * interval '1 day'",
+                settings.telemetry_history_days,
+            )
+        await asyncio.sleep(60)
 
     async def clock(self):
         # Same database lease across API replicas; physical simulation has one owner.
@@ -257,6 +220,12 @@ class Pipeline:
                 return
             try:
                 doc = await self.store.read()
+                if monotonic() - self.last_viewed > settings.demo_idle_seconds:
+                    if doc["running"]:
+                        await self.store.mutate(
+                            lambda d: d.update(running=False), doc["run_id"]
+                        )
+                    return
                 simulator = await connection.fetchval(
                     "SELECT data FROM simulator_state WHERE run_id=$1", doc["run_id"]
                 )

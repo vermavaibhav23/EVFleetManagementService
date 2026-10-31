@@ -1,4 +1,4 @@
-"""Kafka-dispatched, leased and cancellable process-isolated solver jobs."""
+"""PostgreSQL-dispatched, leased and cancellable process-isolated solver jobs."""
 
 import asyncio
 import multiprocessing
@@ -55,119 +55,13 @@ def same_journey(left, right):
     return True
 
 
-def deadline_tradeoff(safe, urgent, reserve):
-    """Only offer emergency reserve when it rescues an actual missed deadline.
-
-    Both plans have already passed physical feasibility validation. Taking more
-    battery risk for the same delivery outcome is not a useful manager choice.
-    """
-    safe_deliveries = {
-        o["trip_id"]: o for o in safe["operations"] if o["kind"] == "DELIVERY"
-    }
-    urgent_deliveries = {
-        o["trip_id"]: o for o in urgent["operations"] if o["kind"] == "DELIVERY"
-    }
-    if safe_deliveries.keys() != urgent_deliveries.keys():
-        return []
-    saved = []
-    for trip_id, a in safe_deliveries.items():
-        b = urgent_deliveries[trip_id]
-        before, after = a.get("lateness_minutes", 0), b.get("lateness_minutes", 0)
-        if after > before + 1 / 60:
-            return []
-        if before > 1 / 60 and after <= 0.001:
-            saved.append(a["name"])
-    # Exclude charging in place at the starting point: an already-low battery
-    # is not a new risk created by choosing this journey.
-    if not saved or not any(
-        o["energy_arrival"] < reserve - 0.01
-        for i, o in enumerate(urgent["operations"])
-        if not (
-            i == 0
-            and o["kind"] == "CHARGE"
-            and (
-                dt(o["arrival"]) == dt(o["depart"])
-                or safe.get("initial_reserve_exception")
-            )
-        )
-    ):
-        return []
-    return saved
-
-
 def compare_options(doc, vin, alternatives=True):
-    """Compare reserve-preserving and deadline-priority journeys on one snapshot.
-
-    Reduced reserve is searched only when the normal constraints cannot both
-    be satisfied. It never relaxes physical energy, health, ports or power.
-    """
-    results = []
-
-    def add(result, goal):
-        result.update(vin=vin, comparison_goal=goal)
-        plan = result.get("plan")
-        if plan:
-            plan["comparison_goal"] = goal
-
-            if any(same_journey(r["plan"], plan) for r in results if "plan" in r):
-                return
-        results.append(result)
-
-    normal = optimize(doc, vin)
-    if "plan" not in normal and normal["status"] != "ERROR":
-        approach = optimize(doc, vin, approach_reserve_exception=True)
-        if "plan" in approach:
-            normal = approach
-    if "plan" in normal:
-        add(normal, "PROTECT_RESERVE")
-        if alternatives and normal["plan"]["total_cost"] > 0:
-            earlier = optimize(
-                doc,
-                vin,
-                fastest=True,
-                approach_reserve_exception=normal["plan"].get(
-                    "initial_reserve_exception", False
-                ),
-            )
-            if "plan" not in earlier:
-                add(earlier, "EARLIER_RETURN")
-            elif (
-                dt(normal["plan"]["operations"][-1]["end"])
-                - dt(earlier["plan"]["operations"][-1]["end"])
-            ).total_seconds() >= 60:
-                add(earlier, "EARLIER_RETURN")
-    else:
-        # Keep the unavailable strict option visible with its failure reason.
-        add(normal, "ON_TIME_WITH_RESERVE")
-        if normal["status"] == "ERROR":
-            return results
-        safe = optimize(doc, vin, recovery=True)
-        if "plan" not in safe and safe["status"] != "ERROR":
-            restored = optimize(
-                doc, vin, recovery=True, approach_reserve_exception=True
-            )
-            if "plan" in restored:
-                safe = restored
-        add(safe, "PROTECT_RESERVE")
-        if "plan" in safe and not any(
-            o.get("lateness_minutes", 0) > 1 / 60 for o in safe["plan"]["operations"]
-        ):
-            return results
-        urgent = optimize(doc, vin, recovery=True, reserve_exception=True)
-        if "plan" not in urgent:
-            add(urgent, "PROTECT_DEADLINES")
-        elif "plan" in safe:
-            saved = deadline_tradeoff(
-                safe["plan"], urgent["plan"], doc["policy"]["reserve_kwh"]
-            )
-            if saved:
-                urgent["plan"]["deadlines_saved"] = saved
-                add(urgent, "PROTECT_DEADLINES")
-        else:
-            # If reserve protection is impossible, a physically feasible escape
-            # remains reviewable, but it is not a two-way deadline trade-off.
-            add(urgent, "REDUCED_RESERVE_ALTERNATIVE")
-    return results
+    """One recommendation with hard battery reserve and delivery deadlines."""
+    result = optimize(doc, vin)
+    result.update(vin=vin, comparison_goal="PROTECT_RESERVE")
+    if "plan" in result:
+        result["plan"]["comparison_goal"] = "PROTECT_RESERVE"
+    return [result]
 
 
 def solve_job(snapshot, job, output):
@@ -246,7 +140,7 @@ class Runner:
             await asyncio.to_thread(self.process.join, 2)
 
     async def handle(self, message):
-        """Kafka delivery wakes a job; PostgreSQL fences duplicate ownership."""
+        """A SQL job is leased before solving; PostgreSQL fences duplicate ownership."""
         old = await self.ledger.read()
         if old["run_id"] != message["run_id"]:
             return

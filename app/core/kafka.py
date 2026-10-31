@@ -28,12 +28,13 @@ def build_producer():
 
 
 async def ensure_topics():
+    if not settings.kafka_auto_create_topics:
+        return
     admin = AIOKafkaAdminClient(**settings.kafka_config)
     await admin.start()
     try:
         for topic, partitions in (
             (settings.kafka_telemetry_topic, settings.kafka_partitions),
-            (settings.kafka_planning_topic, 1),
         ):
             try:
                 await admin.create_topics(
@@ -42,7 +43,7 @@ async def ensure_topics():
                             topic,
                             partitions,
                             settings.kafka_replication_factor,
-                            topic_configs={"retention.ms": "604800000"},
+                            topic_configs={"retention.ms": "259200000"},
                         )
                     ]
                 )

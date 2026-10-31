@@ -48,7 +48,7 @@ class Ledger:
 
     async def replace_run(self, document):
         document = copy.deepcopy(document)
-        document.update(schema_version=3, revision=1)
+        document.update(schema_version=4, revision=1)
         document.pop("_id", None)
         for vehicle in document["vehicles"].values():
             vehicle.update(control_version=0, sequence=0)
@@ -93,15 +93,6 @@ class Ledger:
                     f"INSERT INTO {table}(id,run_id,data) VALUES($1,$2,$3) "
                     "ON CONFLICT(id) DO UPDATE SET data=EXCLUDED.data",
                     rows,
-                )
-        for ident, job in updated["jobs"].items():
-            if ident not in (previous or {}).get("jobs", {}):
-                await connection.execute(
-                    "INSERT INTO outbox(id,run_id,kind,message_key,payload) VALUES($1,$2,'PLANNING',$3,$4) ON CONFLICT DO NOTHING",
-                    ident,
-                    updated["run_id"],
-                    job.get("vin") or "fleet",
-                    {"job_id": ident, "run_id": updated["run_id"]},
                 )
         await connection.execute(
             "DELETE FROM reservations WHERE run_id=$1", updated["run_id"]
