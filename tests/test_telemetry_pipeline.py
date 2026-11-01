@@ -150,7 +150,7 @@ def test_sql_dispatch_picks_durable_job_and_hands_it_to_leased_runner():
     async def run():
         pipeline = object.__new__(Pipeline)
         connection = AsyncMock()
-        connection.fetchrow.return_value = {"id": "job-1", "run_id": "run-1"}
+        connection.fetch.return_value = [{"id": "job-1", "run_id": "run-1"}]
         pool = MagicMock()
         pool.acquire.return_value.__aenter__.return_value = connection
         pipeline.pool = pool

@@ -8,11 +8,17 @@ from fastapi import HTTPException
 from app.core.database import dumps
 
 TABLES = {
+    "depots": "depots",
+    "stations": "stations",
     "vehicles": "vehicles",
     "plans": "journey_plans",
     "jobs": "planning_jobs",
-    "stations": "stations",
-    "depots": "depots",
+}
+LINKS = {
+    "stations": ("depot_id", "depot_id"),
+    "vehicles": ("depot_id", "depot_id"),
+    "plans": ("vehicle_id", "vin"),
+    "jobs": ("vehicle_id", "vin"),
 }
 
 
@@ -36,17 +42,22 @@ class Ledger:
             run_id=row["run_id"],
             scenario=row["scenario"],
             revision=row["revision"],
-            schema_version=6,
+            schema_version=7,
         )
         for key, table in TABLES.items():
             order = "data->>'created_at', id" if key == "jobs" else "id"
-            doc[key] = {
-                r["id"]: r["data"]
-                for r in await connection.fetch(
-                    f"SELECT id, data FROM {table} WHERE run_id=$1 ORDER BY {order}",
-                    row["run_id"],
-                )
-            }
+            column = LINKS[key][0] if key in LINKS else None
+            rows = await connection.fetch(
+                f"SELECT id, data{', ' + column if column else ''} "
+                f"FROM {table} WHERE run_id=$1 ORDER BY {order}",
+                row["run_id"],
+            )
+            doc[key] = {}
+            for item in rows:
+                value = copy.deepcopy(item["data"])
+                if column:
+                    value[LINKS[key][1]] = item[column]
+                doc[key][item["id"]] = value
         return doc
 
     async def read(self, run_id):
@@ -58,7 +69,7 @@ class Ledger:
 
     async def replace_run(self, document):
         document = copy.deepcopy(document)
-        document.update(schema_version=6, revision=1)
+        document.update(schema_version=7, revision=1)
         document.pop("_id", None)
         for vehicle in document["vehicles"].values():
             vehicle.update(control_version=0, sequence=0)
@@ -115,27 +126,41 @@ class Ledger:
             from app.services.simulator import sync_commands
 
             await sync_commands(connection, previous, updated)
-        for key, table in TABLES.items():
+        # Remove bookings first because they can reference chargers being removed.
+        await connection.execute(
+            "DELETE FROM reservations WHERE run_id=$1", updated["run_id"]
+        )
+        for key, table in reversed(list(TABLES.items())):
             for ident in (previous or {}).get(key, {}).keys() - updated[key].keys():
                 await connection.execute(
                     f"DELETE FROM {table} WHERE id=$1 AND run_id=$2",
                     ident,
                     updated["run_id"],
                 )
+        for key, table in TABLES.items():
+            column, json_key = LINKS.get(key, (None, None))
             rows = [
-                (ident, updated["run_id"], value)
+                (
+                    (
+                        ident,
+                        updated["run_id"],
+                        {k: v for k, v in value.items() if k != json_key},
+                        value.get(json_key),
+                    )
+                    if column
+                    else (ident, updated["run_id"], value)
+                )
                 for ident, value in updated[key].items()
                 if (previous or {}).get(key, {}).get(ident) != value
             ]
             if rows:
                 await connection.executemany(
-                    f"INSERT INTO {table}(id,run_id,data) VALUES($1,$2,$3) "
-                    "ON CONFLICT(run_id,id) DO UPDATE SET data=EXCLUDED.data",
+                    f"INSERT INTO {table}(id,run_id,data{',' + column if column else ''}) "
+                    f"VALUES($1,$2,$3{',$4' if column else ''}) "
+                    "ON CONFLICT(run_id,id) DO UPDATE SET data=EXCLUDED.data"
+                    + (f", {column}=EXCLUDED.{column}" if column else ""),
                     rows,
                 )
-        await connection.execute(
-            "DELETE FROM reservations WHERE run_id=$1", updated["run_id"]
-        )
         rows = bookings(updated) + updated.get("external_bookings", [])
         if rows:
             from app.domain import dt

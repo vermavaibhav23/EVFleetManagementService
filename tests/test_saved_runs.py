@@ -22,7 +22,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.mark.parametrize("legacy", [False, True, "v5"])
+@pytest.mark.parametrize("legacy", [False, True, "v5", "v6"])
 def test_saved_scenarios_switch_reset_and_delayed_telemetry(legacy):
     async def run():
         url = os.environ["FLEET_TEST_POSTGRES"]
@@ -73,8 +73,57 @@ def test_saved_scenarios_switch_reset_and_delayed_telemetry(legacy):
                         "INSERT INTO vehicles VALUES('SIM-001','legacy',$1)",
                         {"marker": "preserved"},
                     )
+                if legacy == "v6":
+                    await c.execute(
+                        Path("tests/fixtures/schema_v6.sql").read_text(
+                            encoding="utf-8-sig"
+                        )
+                    )
+                    await c.execute(
+                        "INSERT INTO fleet_run(run_id,scenario,revision,data) VALUES('legacy','EVERYDAY_CHOICES',7,$1)",
+                        {"running": False},
+                    )
+                    await c.execute(
+                        "INSERT INTO vehicles(id,run_id,data) VALUES('SIM-001','legacy',$1)",
+                        {"marker": "preserved"},
+                    )
+                    populated = seed(
+                        LoadRequest(scenario="SHARED_CHARGERS", vehicle_count=4)
+                    )
+                    await c.execute(
+                        "INSERT INTO fleet_run(run_id,scenario,revision,data) VALUES($1,$2,7,'{}')",
+                        populated["run_id"],
+                        populated["scenario"],
+                    )
+                    for name, values in (
+                        ("depots", populated["depots"]),
+                        ("stations", populated["stations"]),
+                        ("vehicles", populated["vehicles"]),
+                        ("journey_plans", populated["plans"]),
+                    ):
+                        for ident, value in values.items():
+                            await c.execute(
+                                f"INSERT INTO {name}(id,run_id,data) VALUES($1,$2,$3)",
+                                ident,
+                                populated["run_id"],
+                                value,
+                            )
                 await c.execute(sql)
                 await c.execute(sql)  # Startup migration must be repeatable.
+                assert await c.fetchval("SELECT max(version) FROM schema_version") == 7
+                if legacy == "v6":
+                    assert await c.fetchval(
+                        "SELECT count(*) FROM journey_plans WHERE run_id=$1 AND vehicle_id IS NOT NULL",
+                        populated["run_id"],
+                    ) == len(populated["plans"])
+                    assert await c.fetchval(
+                        "SELECT count(*) FROM stations WHERE run_id=$1 AND depot_id IS NOT NULL",
+                        populated["run_id"],
+                    ) == len(populated["stations"])
+                    assert await c.fetchval(
+                        "SELECT count(*) FROM journey_plans WHERE run_id=$1 AND data ? 'vin'",
+                        populated["run_id"],
+                    ) == 0
                 if legacy:
                     assert (
                         await c.fetchval(
@@ -101,7 +150,7 @@ def test_saved_scenarios_switch_reset_and_delayed_telemetry(legacy):
                     "SELECT payload FROM outbox WHERE run_id=$1 LIMIT 1", a["run_id"]
                 )
                 await c.execute(
-                    "INSERT INTO planning_jobs VALUES('waiting-job',$1,$2)",
+                    "INSERT INTO planning_jobs(id,run_id,data) VALUES('waiting-job',$1,$2)",
                     a["run_id"],
                     {"status": "QUEUED", "vin": None, "results": []},
                 )
@@ -200,6 +249,35 @@ def test_saved_scenarios_switch_reset_and_delayed_telemetry(legacy):
                 assert ("outbox", "kind") not in fields
                 assert ("outbox", "message_key") not in fields
                 assert ("reservations", "data") not in fields
+                assert {
+                    ("journey_plans", "vehicle_id"),
+                    ("planning_jobs", "vehicle_id"),
+                    ("vehicles", "depot_id"),
+                    ("stations", "depot_id"),
+                } <= fields
+                assert (
+                    await c.fetchval(
+                        "SELECT vehicle_id FROM journey_plans WHERE run_id=$1 LIMIT 1",
+                        a["run_id"],
+                    )
+                    in (await store.read(a["run_id"]))["vehicles"]
+                )
+                with pytest.raises(asyncpg.ForeignKeyViolationError):
+                    await c.execute(
+                        "INSERT INTO journey_plans(id,run_id,vehicle_id,data) VALUES('bad-plan',$1,'UNKNOWN','{}')",
+                        a["run_id"],
+                    )
+                with pytest.raises(asyncpg.ForeignKeyViolationError):
+                    await c.execute(
+                        "INSERT INTO stations(id,run_id,depot_id,data) VALUES('bad-station',$1,'UNKNOWN','{}')",
+                        a["run_id"],
+                    )
+                with pytest.raises(asyncpg.ForeignKeyViolationError):
+                    await c.execute(
+                        "INSERT INTO reservations(id,run_id,vehicle_id,charger_id,port,starts_at,ends_at) "
+                        "VALUES('bad-slot',$1,'VISITOR','UNKNOWN',1,now(),now()+interval '10 minutes')",
+                        a["run_id"],
+                    )
                 metadata = await c.fetchval(
                     "SELECT data FROM fleet_run WHERE run_id=$1", a["run_id"]
                 )

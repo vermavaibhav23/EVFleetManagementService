@@ -1,4 +1,4 @@
-# Database field guide — v6
+# Database field guide — v7
 
 One saved row per scenario. Each browser tab remembers its own run ID. GET requests
 send `?run_id=R42`; changes send `{"run_id":"R42", ...}`. The server validates it.
@@ -8,12 +8,12 @@ There is no global selected run and no tenant/authentication system.
 | Table | Every SQL field and purpose |
 |---|---|
 | fleet_run | `run_id`: saved simulation identity; `scenario`: unique preset name; `revision`: change counter to reject stale writes; `data`: JSONB clock, running flag, seed, policy, events and scenario metadata |
-| vehicles | `run_id`: owning scenario run; `id`: vehicle identity within it; `data`: JSONB battery, position, deliveries, connector, execution and telemetry state |
-| stations | `run_id`: owning run; `id`: charger identity; `data`: JSONB name, location, connector, port count, power, availability and depot reference |
+| vehicles | `run_id`: owning scenario run; `id`: vehicle identity within it; `depot_id`: optional SQL link to its home depot; `data`: JSONB battery, position, deliveries, connector, execution and telemetry state |
+| stations | `run_id`: owning run; `id`: charger identity; `depot_id`: SQL link to its power supply/depot; `data`: JSONB name, location, connector, port count, power and availability |
 | depots | `run_id`: owning run; `id`: depot identity; `data`: JSONB location, total power limit and electricity tariffs |
-| planning_jobs | `run_id`: owning run; `id`: search job identity; `data`: JSONB vehicle/request, status, worker owner, lease expiry, timestamps, results/error. This tracks the work of finding charging plans. |
-| journey_plans | `run_id`: owning run; `id`: proposed journey identity; `data`: JSONB vehicle, charging/delivery operations, cost, status, version and approval information. This stores the answer from the search. |
-| reservations | `run_id`: owning run; `id`: charging-stop or external booking identity; `vehicle_id`: booked vehicle; `charger_id`: booked charger; `port`: socket number; `starts_at`: booking start; `ends_at`: booking end |
+| planning_jobs | `run_id`: owning run; `id`: search job identity; `vehicle_id`: optional SQL link to one vehicle (null for a fleet-wide search); `data`: JSONB request, status, worker owner, lease expiry, timestamps, results/error. This tracks the work of finding charging plans. |
+| journey_plans | `run_id`: owning run; `id`: proposed journey identity; `vehicle_id`: SQL link to its vehicle; `data`: JSONB charging/delivery operations, cost, status, version and approval information. This stores the answer from the search. |
+| reservations | `run_id`: owning run; `id`: charging-stop or external booking identity; `vehicle_id`: booked vehicle or external visitor (no vehicle FK); `charger_id`: SQL link to the charger; `port`: socket number; `starts_at`: booking start; `ends_at`: booking end |
 | simulator_state | `run_id`: owning run and primary key; `data`: JSONB simulated device checkpoint. Separate from observed vehicle state so telemetry genuinely passes through Kafka. |
 | outbox | `id`: event identity; `run_id`: owning run; `payload`: JSONB telemetry message; `checkpoint`: trusted internal simulation result; `created_at`: queued time; `sent_at`: HTTP/Kafka acknowledgement time (null means retry); `processed_at`: consumer completion time (used for cleanup) |
 | telemetry_receipts | `run_id`: owning run; `event_id`: processed event identity; `body_hash`: detects reuse of an ID with different contents; `created_at`: receipt time. Kept for the run even after detailed history expires. |
@@ -23,8 +23,10 @@ There is no global selected run and no tenant/authentication system.
 
 The five entity tables and reservations use `(run_id,id)` as the primary key.
 Receipts and history use `(run_id,event_id)`. All stored run references use a foreign
-key with cascade cleanup when that scenario is reset. References inside JSON are
-validated in application code, not by SQL foreign keys.
+key with cascade cleanup when that scenario is reset. Composite foreign keys
+now enforce plan/job-to-vehicle, vehicle/station-to-depot, and booking-to-charger
+within the same run. External visitor bookings deliberately have no vehicle FK.
+Nested charging-stop IDs inside plan JSON are checked by application code.
 
 Example: reservation `stop-1`, run `R42`, vehicle `SIM-001`, charger `SIM-C1`, port `1`,
 08:02–08:13 means that port is booked for those eleven minutes in that scenario.

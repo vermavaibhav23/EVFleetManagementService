@@ -8,21 +8,25 @@ CREATE TABLE IF NOT EXISTS fleet_run (
 CREATE TABLE IF NOT EXISTS vehicles (
     id text NOT NULL, run_id text NOT NULL REFERENCES fleet_run(run_id) ON DELETE CASCADE,
     PRIMARY KEY(run_id,id),
+    depot_id text,
     data jsonb NOT NULL
 );
 CREATE TABLE IF NOT EXISTS journey_plans (
     id text NOT NULL, run_id text NOT NULL REFERENCES fleet_run(run_id) ON DELETE CASCADE,
     PRIMARY KEY(run_id,id),
+    vehicle_id text,
     data jsonb NOT NULL
 );
 CREATE TABLE IF NOT EXISTS planning_jobs (
     id text NOT NULL, run_id text NOT NULL REFERENCES fleet_run(run_id) ON DELETE CASCADE,
     PRIMARY KEY(run_id,id),
+    vehicle_id text,
     data jsonb NOT NULL
 );
 CREATE TABLE IF NOT EXISTS stations (
     id text NOT NULL, run_id text NOT NULL REFERENCES fleet_run(run_id) ON DELETE CASCADE,
     PRIMARY KEY(run_id,id),
+    depot_id text,
     data jsonb NOT NULL
 );
 CREATE TABLE IF NOT EXISTS depots (
@@ -116,3 +120,33 @@ BEGIN
 END $$;
 DROP INDEX IF EXISTS reservations_port_time;
 CREATE INDEX IF NOT EXISTS outbox_unsent ON outbox(created_at,id) WHERE sent_at IS NULL;
+
+-- v7: enforce the core links within each saved run. Fleet-wide jobs have no vehicle.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM schema_version WHERE version=7) THEN
+    ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS depot_id text;
+    ALTER TABLE stations ADD COLUMN IF NOT EXISTS depot_id text;
+    ALTER TABLE journey_plans ADD COLUMN IF NOT EXISTS vehicle_id text;
+    ALTER TABLE planning_jobs ADD COLUMN IF NOT EXISTS vehicle_id text;
+    UPDATE vehicles SET depot_id=data->>'depot_id' WHERE depot_id IS NULL;
+    UPDATE stations SET depot_id=data->>'depot_id' WHERE depot_id IS NULL;
+    UPDATE journey_plans SET vehicle_id=data->>'vin' WHERE vehicle_id IS NULL;
+    UPDATE planning_jobs SET vehicle_id=data->>'vin' WHERE vehicle_id IS NULL;
+    ALTER TABLE vehicles ADD CONSTRAINT vehicles_depot_fk
+      FOREIGN KEY(run_id,depot_id) REFERENCES depots(run_id,id);
+    ALTER TABLE stations ADD CONSTRAINT stations_depot_fk
+      FOREIGN KEY(run_id,depot_id) REFERENCES depots(run_id,id);
+    ALTER TABLE journey_plans ADD CONSTRAINT plans_vehicle_fk
+      FOREIGN KEY(run_id,vehicle_id) REFERENCES vehicles(run_id,id);
+    ALTER TABLE planning_jobs ADD CONSTRAINT jobs_vehicle_fk
+      FOREIGN KEY(run_id,vehicle_id) REFERENCES vehicles(run_id,id);
+    ALTER TABLE reservations ADD CONSTRAINT reservations_charger_fk
+      FOREIGN KEY(run_id,charger_id) REFERENCES stations(run_id,id);
+    UPDATE vehicles SET data=data-'depot_id';
+    UPDATE stations SET data=data-'depot_id';
+    UPDATE journey_plans SET data=data-'vin';
+    UPDATE planning_jobs SET data=data-'vin';
+    INSERT INTO schema_version VALUES(7);
+  END IF;
+END $$;
