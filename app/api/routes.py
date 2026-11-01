@@ -44,7 +44,7 @@ async def explain_vehicle(
 
 @router.get("/health/live")
 async def live():
-    return {"status": "ok", "schema_version": 6}
+    return {"status": "ok", "schema_version": 7}
 
 
 @router.get("/health/ready")

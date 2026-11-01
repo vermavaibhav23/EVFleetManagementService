@@ -1,4 +1,4 @@
-# Saved scenarios (schema v6)
+# Saved scenarios (schema v7)
 
 Each browser tab remembers its selected run ID in sessionStorage and sends it with every request.
 `fleet_run` stores run_id, scenario, revision and data. No active flag or singleton.
@@ -13,7 +13,7 @@ Migration covers fresh databases, legacy v4 and saved-scenario v5, and is repeat
 Tests cover separate API selections, independent mutations, stale writes, scenario reset,
 old and duplicate telemetry, preserved bookings and removed redundant fields.
 
-[Updated Excalidraw HLD and complete schema](https://excalidraw.com/#json=9k3pOeGHeRX4v5rrWbT8w,nJALdkNVnK9JBSx383vpgw). This is a read-only snapshot.
+[Updated Excalidraw HLD and complete schema](https://excalidraw.com/#json=cjR7BzA1Lyp9GA6KJWHwn,-ncMuHkU6pX20jsFkIc-BA). This is a read-only snapshot.
 
 Verified live on schema v6: all three saved run IDs retained; four vehicles per scenario;
 booked intervals preserved; all twelve vehicles receiving LIVE Kafka telemetry.

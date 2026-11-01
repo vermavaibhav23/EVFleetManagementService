@@ -70,7 +70,7 @@ Ordinary tests use no external services. Cloud tests require a disposable SQL da
 ## Limits
 Shared dashboard selection (not separate user accounts); no physical devices; straight-line map and deterministic road fixtures; bounded search; fixed delivery order; conservative site-power reservations. Reset replaces only the selected scenario's data. The advanced v3 implementation remains in Git history.
 
-## Saved scenario schema (v6)
+## Saved scenario schema (v7)
 `fleet_run` stores `run_id`, unique `scenario`, `revision`, and JSONB `data`.
 The browser stores the selected run ID in sessionStorage. GET requests send `?run_id=...`;
 mutations send `run_id` in JSON. Opening a scenario returns its ID without changing other runs.
@@ -80,3 +80,7 @@ Workers explicitly use run IDs. Each scenario pauses after five minutes without 
 The v6 migration removes `active`, redundant outbox `kind` and `message_key`, and duplicate
 reservation `data`. Existing saved runs are preserved. Deploy API and workers together:
 older clients/workers need the previous schema. See [field guide](docs/schema-fields.md).
+
+The v7 migration adds composite foreign keys for the main same-run relationships:
+plans/jobs to vehicles, vehicles/stations to depots, and reservations to stations.
+Fleet-wide jobs and external visitor bookings remain supported.
