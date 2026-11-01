@@ -21,21 +21,23 @@ class Ledger:
         self.pool = db
 
     async def read_on(self, connection, lock=False, run_id=None):
+        if not run_id:
+            raise HTTPException(422, "Select a scenario and supply run_id")
         row = await connection.fetchrow(
-            (
-                "SELECT * FROM fleet_run WHERE run_id=$1"
-                if run_id
-                else "SELECT * FROM fleet_run WHERE active"
-            )
-            + (" FOR UPDATE" if lock else ""),
-            *([run_id] if run_id else []),
+            "SELECT * FROM fleet_run WHERE run_id=$1" + (" FOR UPDATE" if lock else ""),
+            run_id,
         )
         if row is None:
             if run_id:
                 raise HTTPException(409, "Old-run telemetry rejected: run was reset")
             raise HTTPException(409, "Choose a scenario and select Load / reset first")
         doc = copy.deepcopy(row["data"])
-        doc.update(run_id=row["run_id"], revision=row["revision"])
+        doc.update(
+            run_id=row["run_id"],
+            scenario=row["scenario"],
+            revision=row["revision"],
+            schema_version=6,
+        )
         for key, table in TABLES.items():
             order = "data->>'created_at', id" if key == "jobs" else "id"
             doc[key] = {
@@ -47,28 +49,27 @@ class Ledger:
             }
         return doc
 
-    async def read(self):
+    async def read(self, run_id):
         async with (
             self.pool.acquire() as connection,
             connection.transaction(isolation="repeatable_read"),
         ):
-            return await self.read_on(connection)
+            return await self.read_on(connection, run_id=run_id)
 
     async def replace_run(self, document):
         document = copy.deepcopy(document)
-        document.update(schema_version=5, revision=1)
+        document.update(schema_version=6, revision=1)
         document.pop("_id", None)
         for vehicle in document["vehicles"].values():
             vehicle.update(control_version=0, sequence=0)
         self.check_size(document)
         async with self.pool.acquire() as connection, connection.transaction():
             await connection.execute("SELECT pg_advisory_xact_lock(72849102)")
-            await self.pause_selected(connection)
             await connection.execute(
                 "DELETE FROM fleet_run WHERE scenario=$1", document["scenario"]
             )
             await connection.execute(
-                "INSERT INTO fleet_run(run_id,scenario,active,revision,data) VALUES($1,$2,true,0,'{}')",
+                "INSERT INTO fleet_run(run_id,scenario,revision,data) VALUES($1,$2,0,'{}')",
                 document["run_id"],
                 document["scenario"],
             )
@@ -78,52 +79,27 @@ class Ledger:
             await initialize_simulator(connection, document)
         return document
 
-    @staticmethod
-    async def pause_selected(connection):
-        # Lock and version the old run before switching, fencing in-flight solves.
-        old = await connection.fetchval(
-            "SELECT run_id FROM fleet_run WHERE active FOR UPDATE"
-        )
-        if old:
-            await connection.execute(
-                "UPDATE fleet_run SET active=false,revision=revision+1, "
-                "data=jsonb_set(data,'{running}','false') WHERE run_id=$1",
-                old,
-            )
-            await connection.execute(
-                "UPDATE planning_jobs SET data=jsonb_set(data,'{status}','\"CANCELLED\"') "
-                "WHERE run_id=$1 AND data->>'status' IN ('QUEUED','RUNNING')",
-                old,
-            )
-
     async def saved_runs(self):
         async with self.pool.acquire() as connection:
             return [
                 dict(row)
                 for row in await connection.fetch(
-                    "SELECT run_id,scenario,active,revision,data->>'clock' AS clock "
+                    "SELECT run_id,scenario,revision,data->>'clock' AS clock "
                     "FROM fleet_run ORDER BY scenario"
                 )
             ]
 
     async def select_scenario(self, scenario):
-        async with self.pool.acquire() as connection, connection.transaction():
-            await connection.execute("SELECT pg_advisory_xact_lock(72849102)")
+        # Opening a scenario only returns its identity; it changes no shared state.
+        async with self.pool.acquire() as connection:
             row = await connection.fetchrow(
-                "SELECT run_id,active FROM fleet_run WHERE scenario=$1", scenario
+                "SELECT run_id,scenario FROM fleet_run WHERE scenario=$1", scenario
             )
             if not row:
                 raise HTTPException(
                     404, "No saved run for this scenario. Use Load / reset first."
                 )
-            if not row["active"]:
-                await self.pause_selected(connection)
-                await connection.execute(
-                    "UPDATE fleet_run SET active=true,revision=revision+1, "
-                    "data=jsonb_set(data,'{running}','false') WHERE run_id=$1",
-                    row["run_id"],
-                )
-            return {"run_id": row["run_id"], "scenario": scenario}
+            return dict(row)
 
     @staticmethod
     def check_size(doc):
@@ -165,7 +141,7 @@ class Ledger:
             from app.domain import dt
 
             await connection.executemany(
-                "INSERT INTO reservations(id,run_id,vehicle_id,charger_id,port,starts_at,ends_at,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
+                "INSERT INTO reservations(id,run_id,vehicle_id,charger_id,port,starts_at,ends_at) VALUES($1,$2,$3,$4,$5,$6,$7)",
                 [
                     (
                         r.get("stop_id", r["plan_id"]),
@@ -175,12 +151,16 @@ class Ledger:
                         r["port"],
                         dt(r["start"]),
                         dt(r["end"]),
-                        r,
                     )
                     for r in rows
                 ],
             )
-        metadata = {k: v for k, v in updated.items() if k not in TABLES and k != "_id"}
+        metadata = {
+            k: v
+            for k, v in updated.items()
+            if k not in TABLES
+            and k not in {"_id", "run_id", "scenario", "revision", "schema_version"}
+        }
         await connection.execute(
             "UPDATE fleet_run SET revision=$1,data=$2 WHERE run_id=$3",
             updated["revision"],
@@ -194,7 +174,7 @@ class Ledger:
         updated["updated_at"] = datetime.now(UTC)
         async with self.pool.acquire() as connection, connection.transaction():
             row = await connection.fetchrow(
-                "SELECT run_id,revision FROM fleet_run WHERE run_id=$1 AND active FOR UPDATE",
+                "SELECT run_id,revision FROM fleet_run WHERE run_id=$1 FOR UPDATE",
                 previous["run_id"],
             )
             if (
@@ -213,7 +193,7 @@ class Ledger:
         # Actions are pure edits to a private document. Recheck on CAS contention,
         # including clock-lease renewals; never retry a failed business validation.
         for attempt in range(4):
-            previous = await self.read()
+            previous = await self.read(run_id)
             if run_id is not None and previous["run_id"] != run_id:
                 raise HTTPException(409, "This action belongs to an old simulation run")
             updated = copy.deepcopy(previous)

@@ -28,7 +28,7 @@ log = logging.getLogger(__name__)
 class Pipeline:
     def __init__(self, pool):
         self.pool = pool
-        self.last_viewed = monotonic()
+        self.last_viewed = {}
         self.store, self.simulator = Ledger(pool), Simulator(pool)
         self.processor, self.planner = TelemetryProcessor(pool), Runner(pool)
         self.producer = build_producer()
@@ -97,24 +97,23 @@ class Pipeline:
                 return
             try:
                 rows = await connection.fetch(
-                    "SELECT * FROM outbox WHERE kind='TELEMETRY' AND sent_at IS NULL ORDER BY created_at,id LIMIT 100"
+                    "SELECT * FROM outbox WHERE sent_at IS NULL ORDER BY created_at,id LIMIT 100"
                 )
                 for row in rows:
-                    if row["kind"] == "TELEMETRY":
-                        response = await self.http.post(
-                            settings.provider_url.rstrip("/")
-                            + settings.api_v1_prefix
-                            + "/telemetry",
-                            json=row["payload"],
+                    response = await self.http.post(
+                        settings.provider_url.rstrip("/")
+                        + settings.api_v1_prefix
+                        + "/telemetry",
+                        json=row["payload"],
+                    )
+                    if response.status_code == 409:
+                        current = await connection.fetchval(
+                            "SELECT run_id FROM fleet_run WHERE run_id=$1",
+                            row["run_id"],
                         )
-                        if response.status_code == 409:
-                            current = await connection.fetchval(
-                                "SELECT run_id FROM fleet_run WHERE run_id=$1",
-                                row["run_id"],
-                            )
-                            if current != row["run_id"]:
-                                continue
-                        response.raise_for_status()
+                        if current != row["run_id"]:
+                            continue
+                    response.raise_for_status()
                     await connection.execute(
                         "UPDATE outbox SET sent_at=now() WHERE id=$1", row["id"]
                     )
@@ -195,13 +194,21 @@ class Pipeline:
     async def dispatch(self):
         # The durable SQL job is the queue. Runner leases it before spawning a solver.
         async with self.pool.acquire() as connection:
-            row = await connection.fetchrow(
-                "SELECT id,run_id FROM planning_jobs WHERE run_id IN (SELECT run_id FROM fleet_run WHERE active) AND (data->>'status'='QUEUED' "
+            rows = await connection.fetch(
+                "SELECT id,run_id FROM planning_jobs WHERE (data->>'status'='QUEUED' "
                 "OR (data->>'status'='RUNNING' AND (data->>'lease_until')::timestamptz < now())) "
-                "ORDER BY data->>'created_at',id LIMIT 1"
+                "ORDER BY data->>'created_at',id LIMIT 10"
             )
-        if row:
-            await self.planner.handle({"job_id": row["id"], "run_id": row["run_id"]})
+        for row in rows:
+            try:
+                await self.planner.handle({"job_id": row["id"], "run_id": row["run_id"]})
+                return
+            except HTTPException as exc:
+                if exc.status_code != 409:
+                    raise
+                # A reset, leased job or stale telemetry in one run must not
+                # prevent another scenario's queued search from being served.
+                continue
 
     async def cleanup(self):
         async with self.pool.acquire() as connection:
@@ -220,35 +227,42 @@ class Pipeline:
             if not locked:
                 return
             try:
-                doc = await self.store.read()
-                if monotonic() - self.last_viewed > settings.demo_idle_seconds:
-                    if doc["running"]:
-                        await self.store.mutate(
-                            lambda d: d.update(running=False), doc["run_id"]
-                        )
-                    return
-                simulator = await connection.fetchval(
-                    "SELECT data FROM simulator_state WHERE run_id=$1", doc["run_id"]
-                )
-                if not caught_up(doc, simulator):
-                    return
-                await self.auto_plan(doc)
-                doc = await self.store.read()
-                if doc["running"]:
-                    await self.simulator.step(doc["run_id"], doc["speed"])
-                elif any(
-                    not v.get("received_at")
-                    or (
-                        datetime.now(UTC) - datetime.fromisoformat(v["received_at"])
-                    ).total_seconds()
-                    >= 10
-                    for v in doc["vehicles"].values()
-                ):
-                    await self.simulator.heartbeat()
+                for saved in await self.store.saved_runs():
+                    run_id = saved["run_id"]
+                    try:
+                        await self.clock_run(connection, run_id)
+                    except HTTPException:
+                        # A concurrent reset of one scenario must not block the others.
+                        continue
             finally:
                 await connection.execute(
                     "SELECT pg_advisory_unlock(hashtext(current_schema()),72849104)"
                 )
+
+    async def clock_run(self, connection, run_id):
+        doc = await self.store.read(run_id)
+        if monotonic() - self.last_viewed.get(run_id, 0) > settings.demo_idle_seconds:
+            if doc["running"]:
+                await self.store.mutate(lambda d: d.update(running=False), run_id)
+            return
+        simulator = await connection.fetchval(
+            "SELECT data FROM simulator_state WHERE run_id=$1", run_id
+        )
+        if not caught_up(doc, simulator):
+            return
+        await self.auto_plan(doc)
+        doc = await self.store.read(run_id)
+        if doc["running"]:
+            await self.simulator.step(run_id, doc["speed"])
+        elif any(
+            not v.get("received_at")
+            or (
+                datetime.now(UTC) - datetime.fromisoformat(v["received_at"])
+            ).total_seconds()
+            >= 10
+            for v in doc["vehicles"].values()
+        ):
+            await self.simulator.heartbeat(run_id)
 
     async def auto_plan(self, doc):
         if any(j["status"] in ("QUEUED", "RUNNING") for j in doc["jobs"].values()):

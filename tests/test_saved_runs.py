@@ -22,7 +22,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("legacy", [False, True, "v5"])
 def test_saved_scenarios_switch_reset_and_delayed_telemetry(legacy):
     async def run():
         url = os.environ["FLEET_TEST_POSTGRES"]
@@ -45,7 +45,7 @@ def test_saved_scenarios_switch_reset_and_delayed_telemetry(legacy):
         try:
             sql = Path("app/core/schema.sql").read_text()
             async with pool.acquire() as c:
-                if legacy:
+                if legacy is True:
                     await c.execute(
                         Path("tests/fixtures/schema_v4.sql").read_text(
                             encoding="utf-8-sig"
@@ -53,6 +53,20 @@ def test_saved_scenarios_switch_reset_and_delayed_telemetry(legacy):
                     )
                     await c.execute(
                         "INSERT INTO fleet_run VALUES(true,'legacy',7,$1)",
+                        {"scenario": "EVERYDAY_CHOICES", "running": False},
+                    )
+                    await c.execute(
+                        "INSERT INTO vehicles VALUES('SIM-001','legacy',$1)",
+                        {"marker": "preserved"},
+                    )
+                if legacy == "v5":
+                    await c.execute(
+                        Path("tests/fixtures/schema_v5.sql").read_text(
+                            encoding="utf-8-sig"
+                        )
+                    )
+                    await c.execute(
+                        "INSERT INTO fleet_run VALUES('legacy','EVERYDAY_CHOICES',true,7,$1)",
                         {"scenario": "EVERYDAY_CHOICES", "running": False},
                     )
                     await c.execute(
@@ -78,7 +92,7 @@ def test_saved_scenarios_switch_reset_and_delayed_telemetry(legacy):
             a = await store.replace_run(
                 seed(LoadRequest(scenario="EVERYDAY_CHOICES", vehicle_count=4))
             )
-            old = await store.read()
+            old = await store.read(a["run_id"])
             edited = deepcopy(old)
             edited["test_marker"] = "preserve my progress"
             await store.commit(old, edited)
@@ -89,12 +103,45 @@ def test_saved_scenarios_switch_reset_and_delayed_telemetry(legacy):
                 await c.execute(
                     "INSERT INTO planning_jobs VALUES('waiting-job',$1,$2)",
                     a["run_id"],
-                    {"status": "QUEUED"},
+                    {"status": "QUEUED", "vin": None, "results": []},
                 )
             b = await store.replace_run(
                 seed(LoadRequest(scenario="SHARED_CHARGERS", vehicle_count=4))
             )
-            stale_b = await store.read()
+            stale_b = await store.read(b["run_id"])
+            # Independent browser requests must never rely on a global selection.
+            from types import SimpleNamespace
+
+            import httpx
+            from fastapi import FastAPI
+
+            from app.api.routes import ledger, router
+
+            api = FastAPI()
+            api.include_router(router)
+            api.dependency_overrides[ledger] = lambda: store
+            api.state.pipeline = SimpleNamespace(last_viewed={})
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=api), base_url="http://test"
+            ) as client:
+                assert (await client.get("/fleet")).status_code == 422
+                for saved in (a, b, a):
+                    response = await client.get(
+                        "/fleet", params={"run_id": saved["run_id"]}
+                    )
+                    assert response.status_code == 200
+                    assert response.json()["run_id"] == saved["run_id"]
+                response = await client.post(
+                    "/simulator/start", json={"run_id": b["run_id"], "speed": 30}
+                )
+                assert response.status_code == 200
+                assert (await store.read(b["run_id"]))["running"]
+                assert not (await store.read(a["run_id"]))["running"]
+                assert (
+                    await client.get("/day-view", params={"run_id": b["run_id"]})
+                ).status_code == 200
+            stale_b = await store.read(b["run_id"])
+
             assert len(await store.saved_runs()) == 2
             async with pool.acquire() as c:
                 assert (
@@ -102,7 +149,7 @@ def test_saved_scenarios_switch_reset_and_delayed_telemetry(legacy):
                         "SELECT data->>'status' FROM planning_jobs WHERE run_id=$1",
                         a["run_id"],
                     )
-                    == "CANCELLED"
+                    == "QUEUED"
                 )
                 b_bookings = await c.fetch(
                     "SELECT * FROM reservations WHERE run_id=$1 ORDER BY id",
@@ -112,12 +159,10 @@ def test_saved_scenarios_switch_reset_and_delayed_telemetry(legacy):
                     await c.fetchval("SELECT count(*) FROM vehicles WHERE id='SIM-001'")
                     == 2
                 )
-                assert (
-                    await c.fetchval("SELECT count(*) FROM fleet_run WHERE active") == 1
-                )
+                assert await c.fetchval("SELECT count(*) FROM fleet_run") == 2
             # Previously queued readings must finish in A even while B is selected.
             await TelemetryProcessor(pool).process(Telemetry(**pending_a))
-            assert (await store.read())["run_id"] == b["run_id"]
+            assert (await store.read(b["run_id"]))["run_id"] == b["run_id"]
             async with pool.acquire() as c:
                 assert (
                     await c.fetch(
@@ -131,7 +176,7 @@ def test_saved_scenarios_switch_reset_and_delayed_telemetry(legacy):
             )
             assert len(await store.saved_runs()) == 3
             await store.select_scenario("EVERYDAY_CHOICES")
-            restored = await store.read()
+            restored = await store.read(a["run_id"])
             assert restored["run_id"] == a["run_id"]
             assert restored["test_marker"] == "preserve my progress"
             assert not restored["running"]
@@ -139,11 +184,31 @@ def test_saved_scenarios_switch_reset_and_delayed_telemetry(legacy):
                 restored["vehicles"][pending_a["vehicle_id"]]["sequence"]
                 == pending_a["sequence"]
             )
+            # Other scenarios can update independently; stale writes in the same run fail.
+            await store.commit(stale_b, deepcopy(stale_b))
             with pytest.raises(HTTPException):
                 await store.commit(stale_b, deepcopy(stale_b))
             with pytest.raises(HTTPException):
                 await store.select_scenario("NOT_LOADED")
-            assert (await store.read())["run_id"] == a["run_id"]
+            assert (await store.read(a["run_id"]))["run_id"] == a["run_id"]
+            async with pool.acquire() as c:
+                columns = await c.fetch(
+                    "SELECT table_name,column_name FROM information_schema.columns WHERE table_schema=current_schema()"
+                )
+                fields = {(v["table_name"], v["column_name"]) for v in columns}
+                assert ("fleet_run", "active") not in fields
+                assert ("outbox", "kind") not in fields
+                assert ("outbox", "message_key") not in fields
+                assert ("reservations", "data") not in fields
+                metadata = await c.fetchval(
+                    "SELECT data FROM fleet_run WHERE run_id=$1", a["run_id"]
+                )
+                assert (
+                    not {"run_id", "scenario", "revision", "schema_version"}
+                    & metadata.keys()
+                )
+            with pytest.raises(HTTPException):
+                await store.read(None)
             reset = await store.replace_run(
                 seed(LoadRequest(scenario="EVERYDAY_CHOICES", vehicle_count=5))
             )
@@ -171,7 +236,7 @@ def test_saved_scenarios_switch_reset_and_delayed_telemetry(legacy):
             with pytest.raises(HTTPException, match="Old-run"):
                 await TelemetryProcessor(pool).process(Telemetry(**pending_a))
             await store.select_scenario("SHARED_CHARGERS")
-            assert (await store.read())["run_id"] == b["run_id"]
+            assert (await store.read(b["run_id"]))["run_id"] == b["run_id"]
         finally:
             await pool.close()
             await admin.execute(f'DROP SCHEMA "{schema}" CASCADE')

@@ -92,7 +92,7 @@ class Runner:
 
     async def handle(self, message):
         """A SQL job is leased before solving; PostgreSQL fences duplicate ownership."""
-        old = await self.ledger.read()
+        old = await self.ledger.read(message["run_id"])
         if old["run_id"] != message["run_id"]:
             return
         doc = deepcopy(old)
@@ -130,7 +130,7 @@ class Runner:
         )
         snapshot = await self.ledger.commit(old, doc)
         await self.execute(snapshot, job)
-        current = await self.ledger.read()
+        current = await self.ledger.read(snapshot["run_id"])
         active = current["jobs"].get(job["job_id"])
         if (
             current["run_id"] == snapshot["run_id"]
@@ -153,7 +153,7 @@ class Runner:
         try:
             while result is None:
                 await asyncio.sleep(0.2)
-                current = await self.ledger.read()
+                current = await self.ledger.read(snapshot["run_id"])
                 active = current["jobs"].get(job["job_id"])
                 if (
                     current["run_id"] != snapshot["run_id"]
@@ -171,7 +171,7 @@ class Runner:
                     if not process.is_alive():
                         result = {"error": "Solver worker exited without a result"}
             for _ in range(5):
-                old = await self.ledger.read()
+                old = await self.ledger.read(snapshot["run_id"])
                 if old["run_id"] != snapshot["run_id"]:
                     return
                 doc = deepcopy(old)

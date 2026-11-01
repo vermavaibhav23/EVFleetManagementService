@@ -274,10 +274,10 @@ explainer = PlanExplainer()
 
 
 async def explain_current(store, service, vin, request):
-    facts = facts_for(await store.read(), vin, request)
+    facts = facts_for(await store.read(request.run_id), vin, request)
     result = await service.explain(facts)
     # A reset, approval, conflict or superseded result during inference must not leak stale advice.
-    current = facts_for(await store.read(), vin, request)
+    current = facts_for(await store.read(request.run_id), vin, request)
     if facts_key(current) != facts_key(facts):
         raise HTTPException(
             409, "The plan changed while explaining it. Refresh and try again."

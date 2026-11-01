@@ -380,6 +380,11 @@ if (typeof document !== "undefined") {
     `<div><dt>${escapeHTML(label)}</dt><dd>${escapeHTML(value)}</dd></div>`;
   const currentPlan = () => displayPlan(selectedVehicle(), fleet, selectedPlan);
   async function api(path, body, method = "POST") {
+    if (body === undefined && !path.startsWith("/simulator/runs")) {
+      const runId = sessionStorage.getItem("ev-fleet-run");
+      if (!runId) throw new Error("Choose a scenario, then Open saved scenario or Load / reset.");
+      path += `${path.includes("?") ? "&" : "?"}run_id=${encodeURIComponent(runId)}`;
+    }
     const response = await fetch(
       `/api/v1${path}`,
       body === undefined
@@ -397,6 +402,9 @@ if (typeof document !== "undefined") {
           ? data.detail
           : JSON.stringify(data.detail),
       );
+    if (body !== undefined && data.run_id && (path === "/simulator/load" || path.endsWith("/select"))) {
+      sessionStorage.setItem("ev-fleet-run", data.run_id);
+    }
     return data;
   }
   function message(text, error = false) {
@@ -776,7 +784,7 @@ if (typeof document !== "undefined") {
   };
   $("open-scenario").onclick = () => action(
     () => api(`/simulator/scenarios/${encodeURIComponent($("scenario").value)}/select`, {}),
-    "Saved scenario opened. Its vehicles, plans and bookings are preserved. Start to resume.",
+    "Saved scenario opened in this tab. Its vehicles, plans and bookings are preserved.",
   );
   $("scenario").onchange = () => {
     $("vehicle-count").min = 4;

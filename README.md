@@ -70,9 +70,13 @@ Ordinary tests use no external services. Cloud tests require a disposable SQL da
 ## Limits
 Shared dashboard selection (not separate user accounts); no physical devices; straight-line map and deterministic road fixtures; bounded search; fixed delivery order; conservative site-power reservations. Reset replaces only the selected scenario's data. The advanced v3 implementation remains in Git history.
 
-## Saved scenario schema (v5)
-`fleet_run` has `run_id` as its primary key, a unique `scenario`, `active`, `revision`, and `data`. There is no `singleton` column. The partial unique index on `active` permits many saved rows and at most one selected row. Runs are created on first load; three loaded scenarios produce three rows.
+## Saved scenario schema (v6)
+`fleet_run` stores `run_id`, unique `scenario`, `revision`, and JSONB `data`.
+The browser stores the selected run ID in sessionStorage. GET requests send `?run_id=...`;
+mutations send `run_id` in JSON. Opening a scenario returns its ID without changing other runs.
+Reset replaces only that scenario. This is a shared demo, not authenticated multitenancy.
+Workers explicitly use run IDs. Each scenario pauses after five minutes without dashboard reads.
 
-Vehicles, stations, depots, planning jobs, journey plans and reservations use `(run_id, id)` as their primary key. This allows each scenario to contain its own `SIM-001` and `SIM-C1`. Switching pauses the previous run and cancels its unfinished searches; committed plans and bookings remain. Pending telemetry still finishes against its own saved run. Reset assigns a fresh run ID, so delayed messages from the replaced run are rejected.
-
-Schema v5 migrates existing data at startup. Deploy the API and its workers together; older v4 workers are incompatible with this schema. `GET /api/v1/simulator/runs` lists saved scenarios; `POST /api/v1/simulator/scenarios/{scenario}/select` opens one without resetting it.
+The v6 migration removes `active`, redundant outbox `kind` and `message_key`, and duplicate
+reservation `data`. Existing saved runs are preserved. Deploy API and workers together:
+older clients/workers need the previous schema. See [field guide](docs/schema-fields.md).

@@ -137,8 +137,9 @@ class TelemetryProcessor:
                 return {"accepted": False, "reason": "Duplicate event_id"}
             doc = deepcopy(previous)
             row = await connection.fetchrow(
-                "SELECT payload,checkpoint FROM outbox WHERE id=$1 AND kind='TELEMETRY'",
+                "SELECT payload,checkpoint FROM outbox WHERE id=$1 AND run_id=$2",
                 event.event_id,
+                event.run_id,
             )
             checkpoint = None
             if row:

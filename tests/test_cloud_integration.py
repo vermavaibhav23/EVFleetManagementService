@@ -56,7 +56,7 @@ def test_real_telemetry_sql_history_planning_approval_and_reset():
                     run_id = loaded.json()["run_id"]
                     async with asyncio.timeout(120):
                         while True:
-                            response = await client.get("/api/v1/fleet")
+                            response = await client.get("/api/v1/fleet", params={"run_id": run_id})
                             response.raise_for_status()
                             doc = response.json()
                             plans = [
@@ -86,11 +86,11 @@ def test_real_telemetry_sql_history_planning_approval_and_reset():
                             == 2
                         )
                         assert not await db.fetchval(
-                            "SELECT count(*) FROM outbox WHERE kind <> 'TELEMETRY'"
+                            "SELECT count(*) FROM outbox WHERE payload IS NULL"
                         )
                     response = await client.post(
                         "/api/v1/simulator/load",
-                        json={"scenario": "SHARED_CHARGERS", "vehicle_count": 4},
+                        json={"scenario": "EVERYDAY_CHOICES", "vehicle_count": 4},
                     )
                     response.raise_for_status()
                     assert response.json()["run_id"] != run_id

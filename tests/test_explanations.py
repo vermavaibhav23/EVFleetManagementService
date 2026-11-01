@@ -149,7 +149,7 @@ def test_reset_during_generation_rejects_result(snapshot):
     doc, request = deepcopy(snapshot)
 
     class Store:
-        async def read(self):
+        async def read(self, run_id):
             return deepcopy(doc)
 
     class Service:

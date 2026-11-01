@@ -44,7 +44,7 @@ async def explain_vehicle(
 
 @router.get("/health/live")
 async def live():
-    return {"status": "ok", "schema_version": 5}
+    return {"status": "ok", "schema_version": 6}
 
 
 @router.get("/health/ready")
@@ -60,11 +60,11 @@ async def ready(request: Request, db=Depends(get_database)):
 
 @router.get("/fleet")
 @router.get("/simulator/state")
-async def state(request: Request, store: Ledger = Depends(ledger)):
+async def state(request: Request, run_id: str, store: Ledger = Depends(ledger)):
     from time import monotonic
 
-    request.app.state.pipeline.last_viewed = monotonic()
-    doc = await store.read()
+    request.app.state.pipeline.last_viewed[run_id] = monotonic()
+    doc = await store.read(run_id)
     doc.pop("_id", None)
     doc["reservations"] = bookings(doc) + doc.get("external_bookings", [])
     for vin, vehicle in doc["vehicles"].items():
@@ -179,8 +179,8 @@ async def plan_vehicle(vin: str, request: PlanRequest, store: Ledger = Depends(l
 
 
 @router.get("/jobs/{job_id}")
-async def job(job_id: str, store: Ledger = Depends(ledger)):
-    doc = await store.read()
+async def job(job_id: str, run_id: str, store: Ledger = Depends(ledger)):
+    doc = await store.read(run_id)
     if job_id not in doc["jobs"]:
         raise HTTPException(404, "Job not found in this run")
     return doc["jobs"][job_id]
@@ -300,9 +300,9 @@ async def resource(
 
 @router.get("/day-view")
 async def day_view(
-    day: str | None = Query(default=None), store: Ledger = Depends(ledger)
+    run_id: str, day: str | None = Query(default=None), store: Ledger = Depends(ledger)
 ):
-    doc = await store.read()
+    doc = await store.read(run_id)
     zone = ZoneInfo("Asia/Kolkata")
     try:
         date = (

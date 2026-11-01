@@ -1,8 +1,7 @@
--- One saved run per scenario. The dashboard selects one active run.
+-- One saved run per scenario. Requests explicitly identify their run_id.
 CREATE TABLE IF NOT EXISTS fleet_run (
-    run_id text PRIMARY KEY UNIQUE,
-    scenario text NOT NULL UNIQUE,
-    active boolean NOT NULL DEFAULT false,
+    run_id text PRIMARY KEY,
+    scenario text NOT NULL,
     revision bigint NOT NULL,
     data jsonb NOT NULL
 );
@@ -36,9 +35,8 @@ CREATE TABLE IF NOT EXISTS reservations (
     PRIMARY KEY(run_id,id),
     vehicle_id text NOT NULL, charger_id text NOT NULL, port integer NOT NULL,
     starts_at timestamptz NOT NULL, ends_at timestamptz NOT NULL,
-    data jsonb NOT NULL, CHECK (ends_at >= starts_at)
+    CHECK (ends_at >= starts_at)
 );
-CREATE INDEX IF NOT EXISTS reservations_port_time ON reservations(charger_id, port, starts_at, ends_at);
 CREATE TABLE IF NOT EXISTS simulator_state (
     run_id text PRIMARY KEY REFERENCES fleet_run(run_id) ON DELETE CASCADE,
     data jsonb NOT NULL
@@ -47,15 +45,13 @@ CREATE TABLE IF NOT EXISTS simulator_state (
 CREATE TABLE IF NOT EXISTS outbox (
     id text PRIMARY KEY,
     run_id text NOT NULL REFERENCES fleet_run(run_id) ON DELETE CASCADE,
-    kind text NOT NULL CHECK (kind = 'TELEMETRY'),
-    message_key text NOT NULL,
     payload jsonb NOT NULL,
     checkpoint jsonb,
     created_at timestamptz NOT NULL DEFAULT now(),
     sent_at timestamptz,
     processed_at timestamptz
 );
-CREATE INDEX IF NOT EXISTS outbox_pending ON outbox(kind, created_at) WHERE sent_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS rejected_events (
     id text PRIMARY KEY, reason text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
 );
@@ -103,5 +99,20 @@ BEGIN
   END IF;
 END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS fleet_run_scenario ON fleet_run(scenario);
-CREATE UNIQUE INDEX IF NOT EXISTS fleet_run_active ON fleet_run(active) WHERE active;
+
 CREATE INDEX IF NOT EXISTS reservations_run_port_time ON reservations(run_id,charger_id,port,starts_at,ends_at);
+
+-- v6: selection belongs to the browser; retain only useful stored attributes.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM schema_version WHERE version=6) THEN
+    ALTER TABLE fleet_run DROP COLUMN IF EXISTS active;
+    ALTER TABLE outbox DROP COLUMN IF EXISTS kind;
+    ALTER TABLE outbox DROP COLUMN IF EXISTS message_key;
+    ALTER TABLE reservations DROP COLUMN IF EXISTS data;
+    UPDATE fleet_run SET data=data - 'run_id' - 'scenario' - 'revision' - 'schema_version';
+    INSERT INTO schema_version VALUES(6);
+  END IF;
+END $$;
+DROP INDEX IF EXISTS reservations_port_time;
+CREATE INDEX IF NOT EXISTS outbox_unsent ON outbox(created_at,id) WHERE sent_at IS NULL;

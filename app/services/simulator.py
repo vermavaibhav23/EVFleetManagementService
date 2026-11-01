@@ -47,11 +47,10 @@ async def emit(connection, simulator):
             history=[h for h in simulator["history"] if h.get("vin") == vin],
         )
         await connection.execute(
-            "INSERT INTO outbox(id,run_id,kind,message_key,payload,checkpoint) "
-            "VALUES($1,$2,'TELEMETRY',$3,$4,$5) ON CONFLICT DO NOTHING",
+            "INSERT INTO outbox(id,run_id,payload,checkpoint) "
+            "VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING",
             event_id,
             simulator["run_id"],
-            vin,
             reading,
             checkpoint,
         )
@@ -137,7 +136,7 @@ class Simulator:
 
     async def step(self, run_id, seconds, manual=False):
         async with self.store.pool.acquire() as connection, connection.transaction():
-            doc = await self.store.read_on(connection, lock=True)
+            doc = await self.store.read_on(connection, lock=True, run_id=run_id)
             if doc["run_id"] != run_id:
                 raise HTTPException(409, "This action belongs to an old simulation run")
             if manual and doc["running"]:
@@ -155,9 +154,9 @@ class Simulator:
             await emit(connection, simulator)
             return {"clock": simulator["clock"], "status": "TELEMETRY_PENDING"}
 
-    async def heartbeat(self):
+    async def heartbeat(self, run_id):
         async with self.store.pool.acquire() as connection, connection.transaction():
-            doc = await self.store.read_on(connection, lock=True)
+            doc = await self.store.read_on(connection, lock=True, run_id=run_id)
             simulator = await connection.fetchval(
                 "SELECT data FROM simulator_state WHERE run_id=$1", doc["run_id"]
             )
