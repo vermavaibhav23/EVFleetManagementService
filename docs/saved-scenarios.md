@@ -13,3 +13,9 @@ Choose a scenario and use **Load / reset** to create or replace its run. Use **O
 - Ruff and `git diff --check` pass.
 
 The real PostgreSQL tests use disposable schemas and can run with `FLEET_TEST_POSTGRES=... python -m pytest tests/test_saved_runs.py -q`. Kafka was not required for these database tests; the live broker path is checked separately after deployment.
+
+## Hosted verification
+
+Commit `feb137c` was deployed to Render. `/health/live` reports schema version 5 and `/health/ready` returns HTTP 200. All three scenarios were loaded and each received real Kafka telemetry. Switching back to the original Everyday Choices run preserved its run ID, simulation clock, plan IDs and reservation count. The original scenario is selected and paused. The database now contains three saved scenario rows.
+
+[Updated Excalidraw schema snapshot](https://excalidraw.com/#json=RIkcnEfYYFPMYf4Z6L0ZY,qy7SwfWoiqSTupc41uhFow) replaces the earlier singleton diagram. This link is a snapshot and does not automatically reflect future canvas edits.
