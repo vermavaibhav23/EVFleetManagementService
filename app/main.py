@@ -29,7 +29,7 @@ async def lifespan(app):
         await close_clients()
 
 
-app = FastAPI(title=settings.app_name, version="4.0", lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="5.0", lifespan=lifespan)
 app.include_router(router, prefix=settings.api_v1_prefix)
 static = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static), name="static")

@@ -44,7 +44,7 @@ async def explain_vehicle(
 
 @router.get("/health/live")
 async def live():
-    return {"status": "ok", "schema_version": 4}
+    return {"status": "ok", "schema_version": 5}
 
 
 @router.get("/health/ready")
@@ -103,6 +103,16 @@ async def state(request: Request, store: Ledger = Depends(ledger)):
         for row in job.get("results", []):
             row["message"] = result_message(doc, row)
     return doc
+
+
+@router.get("/simulator/runs")
+async def saved_runs(store: Ledger = Depends(ledger)):
+    return await store.saved_runs()
+
+
+@router.post("/simulator/scenarios/{scenario}/select")
+async def select_scenario(scenario: str, store: Ledger = Depends(ledger)):
+    return await store.select_scenario(scenario)
 
 
 @router.post("/simulator/load")
@@ -226,7 +236,9 @@ async def cancel_plan(plan_id: str, request: Approval, store: Ledger = Depends(l
 async def receive_telemetry(
     reading: Telemetry, request: Request, store: Ledger = Depends(ledger)
 ):
-    check_reading(await store.read(), reading)
+    async with store.pool.acquire() as connection:
+        doc = await store.read_on(connection, run_id=reading.run_id)
+    check_reading(doc, reading)
     try:
         await request.app.state.pipeline.publish(reading)
     except Exception as exc:

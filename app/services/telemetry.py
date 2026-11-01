@@ -119,12 +119,15 @@ class TelemetryProcessor:
 
     async def process(self, event):
         async with self.store.pool.acquire() as connection, connection.transaction():
-            previous = await self.store.read_on(connection, lock=True)
+            previous = await self.store.read_on(
+                connection, lock=True, run_id=event.run_id
+            )
             check_reading(previous, event)
             body_hash = sha256(event.model_dump_json().encode()).hexdigest()
             receipt = await connection.fetchval(
-                "SELECT body_hash FROM telemetry_receipts WHERE event_id=$1",
+                "SELECT body_hash FROM telemetry_receipts WHERE event_id=$1 AND run_id=$2",
                 event.event_id,
+                event.run_id,
             )
             if receipt and receipt != body_hash:
                 raise HTTPException(

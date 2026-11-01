@@ -406,6 +406,7 @@ if (typeof document !== "undefined") {
   function updateControls() {
     const active = fleet && Object.values(fleet.jobs).find(j => ["RUNNING", "QUEUED"].includes(j.status));
     $("seed-button").disabled = busy;
+    $("open-scenario").disabled = busy;
     $("start-button").disabled = busy || !fleet || fleet.running || Boolean(active?.request?.pause_for_review);
     $("stop-button").disabled = busy || !fleet || !fleet.running;
     $("step").disabled = busy || !fleet || fleet.running || Boolean(active?.request?.pause_for_review);
@@ -770,9 +771,13 @@ if (typeof document !== "undefined") {
           seed: Number($("seed").value),
           start_time: $("start").value + ":00+05:30",
         }),
-      "Scenario loaded with your selected fleet size · paused. Review vehicle roles and incident controls before starting.",
+      "Scenario reset with your selected fleet size · paused. Other saved scenarios are preserved.",
     );
   };
+  $("open-scenario").onclick = () => action(
+    () => api(`/simulator/scenarios/${encodeURIComponent($("scenario").value)}/select`, {}),
+    "Saved scenario opened. Its vehicles, plans and bookings are preserved. Start to resume.",
+  );
   $("scenario").onchange = () => {
     $("vehicle-count").min = 4;
     if (Number($("vehicle-count").value) < 4) $("vehicle-count").value = 4;

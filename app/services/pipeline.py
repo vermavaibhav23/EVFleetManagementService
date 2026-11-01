@@ -109,7 +109,8 @@ class Pipeline:
                         )
                         if response.status_code == 409:
                             current = await connection.fetchval(
-                                "SELECT run_id FROM fleet_run WHERE singleton"
+                                "SELECT run_id FROM fleet_run WHERE run_id=$1",
+                                row["run_id"],
                             )
                             if current != row["run_id"]:
                                 continue
@@ -195,8 +196,8 @@ class Pipeline:
         # The durable SQL job is the queue. Runner leases it before spawning a solver.
         async with self.pool.acquire() as connection:
             row = await connection.fetchrow(
-                "SELECT id,run_id FROM planning_jobs WHERE data->>'status'='QUEUED' "
-                "OR (data->>'status'='RUNNING' AND (data->>'lease_until')::timestamptz < now()) "
+                "SELECT id,run_id FROM planning_jobs WHERE run_id IN (SELECT run_id FROM fleet_run WHERE active) AND (data->>'status'='QUEUED' "
+                "OR (data->>'status'='RUNNING' AND (data->>'lease_until')::timestamptz < now())) "
                 "ORDER BY data->>'created_at',id LIMIT 1"
             )
         if row:

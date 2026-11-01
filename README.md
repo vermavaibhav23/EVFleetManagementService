@@ -18,6 +18,7 @@ Simulator → HTTP telemetry API → Kafka (vehicle ID key)
 FastAPI serves the HTML/CSS/JavaScript dashboard. PostgreSQL owns all data. Kafka has one telemetry topic and one consumer. SQL jobs replace Kafka planning messages; MongoDB is removed. Simulator outbox records keep retries durable. History, state and receipt IDs commit before offsets are acknowledged.
 
 ## Scope
+- One saved run per scenario, linked to vehicles, plans and bookings through `run_id`. Open saved scenario preserves progress; Load / reset replaces only that scenario. One selected scenario runs at a time across this shared demo.
 - 4–10 vehicles, default 4; three focused scenarios.
 - Fixed customer order, nearest four compatible stations, at most one charging stop between deliveries. Several charges across a whole journey remain possible.
 - One hard battery reserve and hard delivery deadlines; no emergency reserve or late-delivery exceptions. A vehicle already at a charger can charge in place below reserve, but cannot drive below reserve.
@@ -67,4 +68,11 @@ ruff check app tests scripts
 Ordinary tests use no external services. Cloud tests require a disposable SQL database and dedicated precreated Kafka topic. See `docs/verification.md` for executed checks.
 
 ## Limits
-Single shared simulation; no physical devices; straight-line map and deterministic road fixtures; bounded search; fixed delivery order; conservative site-power reservations. Reset replaces demo data. The advanced v3 implementation remains in Git history.
+Shared dashboard selection (not separate user accounts); no physical devices; straight-line map and deterministic road fixtures; bounded search; fixed delivery order; conservative site-power reservations. Reset replaces only the selected scenario's data. The advanced v3 implementation remains in Git history.
+
+## Saved scenario schema (v5)
+`fleet_run` has `run_id` as its primary key, a unique `scenario`, `active`, `revision`, and `data`. There is no `singleton` column. The partial unique index on `active` permits many saved rows and at most one selected row. Runs are created on first load; three loaded scenarios produce three rows.
+
+Vehicles, stations, depots, planning jobs, journey plans and reservations use `(run_id, id)` as their primary key. This allows each scenario to contain its own `SIM-001` and `SIM-C1`. Switching pauses the previous run and cancels its unfinished searches; committed plans and bookings remain. Pending telemetry still finishes against its own saved run. Reset assigns a fresh run ID, so delayed messages from the replaced run are rejected.
+
+Schema v5 migrates existing data at startup. Deploy the API and its workers together; older v4 workers are incompatible with this schema. `GET /api/v1/simulator/runs` lists saved scenarios; `POST /api/v1/simulator/scenarios/{scenario}/select` opens one without resetting it.
