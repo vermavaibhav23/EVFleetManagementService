@@ -1,0 +1,131 @@
+import asyncio
+import logging
+import os
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
+from pathlib import Path
+
+import asyncpg
+from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, TopicPartition
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field, ValidationError
+
+from agent import review
+from decision import LOW_FRACTION, assess
+
+ROOT = Path(__file__).parent
+TOPIC = "charger-guide.readings.v1"
+BROKER = os.getenv("GUIDE_BROKER", "localhost:19092")
+DB_URL = os.getenv("GUIDE_DATABASE_URL", "postgresql://guide:guide@localhost:55432/guide")
+logger = logging.getLogger(__name__)
+
+
+class Reading(BaseModel):
+    vehicle_id: str = Field(min_length=1, max_length=80)
+    sequence: int = Field(gt=0, le=2**63-1)
+    battery_kwh: float = Field(ge=0, allow_inf_nan=False)
+    road_km: float = Field(ge=0, allow_inf_nan=False)
+
+
+async def apply_reading(db, event):
+    async with db.acquire() as conn, conn.transaction():
+        van = await conn.fetchrow("SELECT * FROM charger_guide.vehicles WHERE id=$1 FOR UPDATE",
+                                  event.vehicle_id)
+        if not van or event.sequence <= van["last_sequence"] or event.battery_kwh > van["capacity_kwh"]:
+            return
+        van = await conn.fetchrow("""UPDATE charger_guide.vehicles
+            SET battery_kwh=$2, road_km=$3, last_sequence=$4 WHERE id=$1 RETURNING *""",
+            event.vehicle_id, event.battery_kwh, event.road_km, event.sequence)
+        if event.battery_kwh > van["capacity_kwh"] * LOW_FRACTION:
+            await conn.execute("""UPDATE charger_guide.alerts SET resolved_at=now()
+                WHERE vehicle_id=$1 AND resolved_at IS NULL""", event.vehicle_id)
+            return
+        facts = assess(van, await conn.fetch("SELECT * FROM charger_guide.chargers"))
+        await conn.execute("""INSERT INTO charger_guide.alerts(vehicle_id, charger_id, reason)
+            VALUES($1,$2,$3) ON CONFLICT(vehicle_id) WHERE resolved_at IS NULL
+            DO UPDATE SET charger_id=excluded.charger_id, reason=excluded.reason""",
+            event.vehicle_id, facts["charger"], facts["reason"])
+
+
+async def consume(db, consumer):
+    async for message in consumer:
+        try:
+            event = Reading.model_validate_json(message.value)
+        except ValidationError:
+            logger.warning("Skipping invalid reading at %s/%s", message.partition, message.offset)
+        else:
+            if message.key == event.vehicle_id.encode():
+                await apply_reading(db, event)
+        await consumer.commit({TopicPartition(TOPIC, message.partition): message.offset + 1})
+
+
+@asynccontextmanager
+async def lifespan(app):
+    async with AsyncExitStack() as stack:
+        db = await asyncpg.create_pool(DB_URL, min_size=1, max_size=4)
+        stack.push_async_callback(db.close)
+        async with db.acquire() as conn, conn.transaction():
+            await conn.execute((ROOT / "schema.sql").read_text(encoding="utf-8"))
+        producer = AIOKafkaProducer(bootstrap_servers=BROKER, enable_idempotence=True)
+        stack.push_async_callback(producer.stop)
+        await producer.start()
+        consumer = AIOKafkaConsumer(TOPIC, bootstrap_servers=BROKER, group_id="charger-guide.v1",
+                                    enable_auto_commit=False, auto_offset_reset="earliest")
+        stack.push_async_callback(consumer.stop)
+        await consumer.start()
+        worker = asyncio.create_task(consume(db, consumer))
+        app.state.db, app.state.producer, app.state.worker = db, producer, worker
+        try:
+            yield
+        finally:
+            worker.cancel()
+            with suppress(asyncio.CancelledError):
+                await worker
+
+
+app = FastAPI(title="EV Charger Guide", lifespan=lifespan)
+
+
+@app.get("/")
+async def dashboard():
+    return FileResponse(ROOT / "index.html")
+
+
+@app.get("/fleet")
+async def fleet():
+    if app.state.worker.done():
+        raise HTTPException(503, "Telemetry consumer stopped")
+    rows = await app.state.db.fetch("""SELECT v.*, a.reason, a.id AS alert_id FROM charger_guide.vehicles v
+        LEFT JOIN charger_guide.alerts a ON a.vehicle_id=v.id AND a.resolved_at IS NULL ORDER BY v.id""")
+    return [dict(r) for r in rows]
+
+
+@app.post("/demo/{vehicle}/{battery}", status_code=202)
+async def publish(vehicle: str, battery: int):
+    if app.state.worker.done():
+        raise HTTPException(503, "Telemetry consumer stopped")
+    van = await app.state.db.fetchrow("SELECT * FROM charger_guide.vehicles WHERE id=$1", vehicle)
+    if not van:
+        raise HTTPException(404, "Unknown van")
+    if not 0 <= battery <= van["capacity_kwh"]:
+        raise HTTPException(422, "Battery outside vehicle capacity")
+    seq = await app.state.db.fetchval("SELECT nextval('charger_guide.demo_reading')")
+    reading = Reading(vehicle_id=vehicle, sequence=seq, battery_kwh=battery, road_km=van["road_km"])
+    await app.state.producer.send_and_wait(TOPIC, reading.model_dump_json().encode(), key=vehicle.encode())
+    return {"sequence": seq}
+
+
+@app.post("/alerts/{alert_id}/review")
+async def inspect_alert(alert_id: int):
+    db = app.state.db
+    van = await db.fetchrow("""SELECT v.* FROM charger_guide.alerts a JOIN charger_guide.vehicles v
+        ON v.id=a.vehicle_id WHERE a.id=$1 AND a.resolved_at IS NULL""", alert_id)
+    if not van:
+        raise HTTPException(404, "Alert resolved")
+    facts = assess(van, await db.fetch("SELECT * FROM charger_guide.chargers"))
+    result = await review(van, facts)
+    current = await db.fetchval("SELECT last_sequence FROM charger_guide.vehicles WHERE id=$1", van["id"])
+    if current != van["last_sequence"]:
+        raise HTTPException(409, "Battery changed. Review the latest reading.")
+    return {**result, "facts": facts}
+

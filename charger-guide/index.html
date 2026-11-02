@@ -1,0 +1,34 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EV Charger Guide</title><style>
+body{margin:3rem auto;padding:0 1rem;max-width:56rem;font:17px/1.55 system-ui;color:#183632;background:#f4f8f5}h1{font-size:2.5rem;margin-bottom:0}article,aside{background:white;padding:1.4rem;border:1px solid #bfd2c8;border-radius:12px;margin:1rem 0}button{padding:.6rem .8rem;margin:.2rem;color:white;background:#156352;border:0;border-radius:6px;cursor:pointer}h2{margin:0}#status{color:#455b55}button:disabled{opacity:.5}aside{white-space:pre-line}
+</style><main><h1>EV Charger Guide</h1><p>Send a simulated battery reading. At 25% or below, the fleet desk recommends an available charger within range.</p><div id="fleet"></div><p id="status" role="status"></p><aside id="review" hidden></aside></main>
+<script>
+const fleet=document.querySelector('#fleet'), statusLine=document.querySelector('#status'), report=document.querySelector('#review');
+let previous='', reviewing=false;
+async function api(path, method='GET'){
+ const reply=await fetch(path,{method});if(!reply.ok){throw Error((await reply.json()).detail||'Request failed')}return reply.json();
+}
+function button(parent,label,action){
+ const b=document.createElement('button');b.textContent=label;parent.append(b);b.onclick=async()=>{b.disabled=true;try{await action()}catch(e){statusLine.textContent=e.message}finally{b.disabled=false}};
+}
+async function refresh(){
+ const vans=await api('/fleet'), key=JSON.stringify(vans);if(key===previous)return;
+ previous=key;report.hidden=true;fleet.replaceChildren();
+ for(const v of vans){
+  const card=document.createElement('article'), title=document.createElement('h2'), info=document.createElement('p'), alert=document.createElement('p');
+  title.textContent=v.id;info.textContent=v.battery_kwh+' / '+v.capacity_kwh+' kWh · Road marker '+v.road_km+' km';
+  alert.textContent=v.reason||'Battery above alert threshold';card.append(title,info,alert);
+  for(const [label,level] of [['Low battery',8],['Critical battery',2],['Recovered',26]]){
+   button(card,label,async()=>{const r=await api('/demo/'+v.id+'/'+level,'POST');statusLine.textContent='Reading '+r.sequence+' sent to Kafka.'});
+  }
+  if(v.alert_id)button(card,'Investigate alert',async()=>{
+   if(reviewing)return;reviewing=true;try{
+   statusLine.textContent='Checking this alert…';
+   const result=await api('/alerts/'+v.alert_id+'/review','POST');
+   report.textContent=[v.id+' · '+result.mode,result.summary,'Safe range: '+result.facts.safe_km+' km',...result.facts.options.map(c=>c.charger+' · '+c.distance_km+' km · '+c.reason),...(result.trace.length?['Tools used: '+result.trace.join(' → ')]:[])].join('\n');
+   report.hidden=false;statusLine.textContent='Review ready.'}finally{reviewing=false}
+  });fleet.append(card);
+ }
+}
+async function poll(){try{await refresh()}catch(e){statusLine.textContent=e.message}setTimeout(poll,1000)}poll();
+</script></html>

@@ -1,0 +1,47 @@
+name: ev-charger-guide
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: guide
+      POSTGRES_USER: guide
+      POSTGRES_PASSWORD: guide
+    volumes: [guide-db:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "guide"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  broker:
+    image: apache/kafka:3.9.1
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@broker:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_NUM_PARTITIONS: 2
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+    volumes: [guide-kafka:/tmp/kraft-combined-logs]
+    healthcheck:
+      test: ["CMD","/opt/kafka/bin/kafka-topics.sh","--bootstrap-server","broker:9092","--list"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  dashboard:
+    build: .
+    ports: ["127.0.0.1:18080:8080"]
+    environment:
+      GUIDE_DATABASE_URL: postgresql://guide:guide@db/guide
+      GUIDE_BROKER: broker:9092
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    depends_on:
+      db: {condition: service_healthy}
+      broker: {condition: service_healthy}
+volumes:
+  guide-db: {}
+  guide-kafka: {}
+
