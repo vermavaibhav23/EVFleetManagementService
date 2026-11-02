@@ -48,27 +48,30 @@ async def investigate(van, facts, ask):
     raise ValueError("Incomplete investigation")
 
 
+async def generate(contents, declarations):
+    key = os.environ["GEMINI_API_KEY"]
+    now = monotonic()
+    while model_calls and now - model_calls[0] >= 86400:
+        model_calls.popleft()
+    if len(model_calls) >= 60 or sum(now - t < 60 for t in model_calls) >= 9:
+        raise ValueError("Demo model-call limit reached")
+    model_calls.append(now)
+    model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+    async with httpx.AsyncClient(timeout=12) as client:
+        result = await client.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+            headers={"x-goog-api-key": key}, json={"contents": contents,
+            "tools": [{"functionDeclarations": declarations}]})
+        result.raise_for_status()
+        return result.json()["candidates"][0]["content"]
+
+
 async def review(van, facts):
     key = os.getenv("GEMINI_API_KEY")
     if key:
-        model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
-        async with httpx.AsyncClient(timeout=10) as client:
-            async def ask(contents, declarations):
-                now = monotonic()
-                while model_calls and now - model_calls[0] >= 86400:
-                    model_calls.popleft()
-                if len(model_calls) >= 60 or sum(now - t < 60 for t in model_calls) >= 9:
-                    raise ValueError("Demo model-call limit reached")
-                model_calls.append(now)
-                result = await client.post(
-                    f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-                    headers={"x-goog-api-key": key}, json={"contents": contents,
-                    "tools": [{"functionDeclarations": declarations}]})
-                result.raise_for_status()
-                return result.json()["candidates"][0]["content"]
-            try:
-                return await investigate(van, facts, ask)
-            except (httpx.HTTPError, KeyError, IndexError, ValueError, TypeError):
-                pass
+        try:
+            return await investigate(van, facts, generate)
+        except (httpx.HTTPError, KeyError, IndexError, ValueError, TypeError):
+            pass
     return {"mode": "Rule-based summary", "trace": [], "summary": facts["reason"]}
 

@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#132b36"><title>Cabwatch · Harbour City Dispatch</title>
+<link rel="stylesheet" href="/cab-watch/assets/style.css"><script type="module" src="/cab-watch/assets/board.mjs"></script></head>
+<body><header><div class="wrap bar"><div class="brand"><svg viewBox="0 0 32 32" width="32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="#cef279"/><path d="M6 22h7V10h12M7 13l3-3m10 13 5-5" stroke="#18303c" stroke-width="3" fill="none"/></svg> Cabwatch <span> / Dispatch</span></div><span class="signal" id="connection">Connecting</span></div></header>
+<main class="wrap"><div class="intro"><div><p class="eyebrow">HARBOUR CITY &nbsp; / &nbsp; DISPATCH DESK</p><h1>Route monitor</h1><p class="muted">Follow each cab from pickup to destination. Select a cab to inspect its route.</p></div>
+<div class="setup"><label for="size">Fleet size</label><select id="size" aria-label="Number of simulated cabs">
+<option value="1">1 cab</option><option value="2">2 cabs</option><option value="3" selected>3 cabs</option><option value="4">4 cabs</option><option value="5">5 cabs</option><option value="6">6 cabs</option></select>
+<button id="reset">New simulation</button><button id="play" class="primary" disabled>▶ Start</button></div></div>
+<div class="metrics"><div><small>FLEET SIZE</small><strong id="total">—</strong></div><div><small>OPEN ALERTS</small><strong id="open">—</strong></div><div><small>SIMULATED TIME</small><strong id="clock">00:00</strong></div></div>
+<div class="layout"><section class="panel"><div class="panelhead"><div><p class="eyebrow">01 / CITY MAP</p><h2>Harbour City</h2></div><span class="chip" id="mode">Paused</span></div>
+<div class="mapbox"><svg id="map" viewBox="0 0 960 560" aria-label="City map with numbered cab markers and color-matched planned routes" role="img"><g id="geography"></g><g id="routes"></g><g id="trails"></g><g id="pins"></g></svg></div>
+<div class="legend"><span><i class="solid"></i> Planned route</span><span><i class="dashed"></i> Actual trail</span><span>◎ Pickup</span><span>◇ Destination</span><span>1–6 Cab number</span></div></section>
+<aside class="panel"><div class="panelhead"><div><p class="eyebrow">02 / FLEET</p><h2>Cab roster</h2></div></div><div id="roster"></div></aside></div>
+<div class="bottom"><section class="panel"><div class="panelhead"><div><p class="eyebrow">03 / SELECTED TRIP</p><h2 id="selected">Select a cab</h2></div></div>
+<div class="inner"><p id="tripline"></p><p class="muted" id="distance"></p><div class="actions"><button id="wrong" disabled>Take wrong turn</button><button id="return" disabled>Return to route</button></div><p class="hint">A wrong turn follows a side street at the next intersection. After three readings beyond 200 m, an alert opens.</p></div></section>
+<section class="panel"><div class="panelhead"><div><p class="eyebrow">04 / DISPATCH LOG</p><h2>Route alerts</h2></div></div><div class="inner" id="alerts">No alerts.</div><div id="review" class="review" hidden></div></section></div>
+<p id="message" role="status">Preparing your simulation…</p><footer>Harbour City is a fictional map. Trips and GPS readings are simulated.</footer></main></body></html>
+

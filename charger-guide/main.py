@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 
 from agent import review
+from cab_watch.api import CabStream, router as cab_router
 from decision import LOW_FRACTION, ROAD_END, assess, drive_step
 
 ROOT = Path(__file__).parent
@@ -104,6 +105,8 @@ async def lifespan(app):
         await consumer.start()
         worker = asyncio.create_task(consume(db, consumer))
         app.state.db, app.state.producer, app.state.worker = db, producer, worker
+        app.state.cab_stream = CabStream(db, options)
+        stack.push_async_callback(app.state.cab_stream.stop)
         app.state.drive_task = None
         app.state.drive_lock = asyncio.Lock()
         app.state.drive_stop = asyncio.Event()
@@ -118,6 +121,8 @@ async def lifespan(app):
 
 
 app = FastAPI(title="EV Charger Guide", lifespan=lifespan)
+app.include_router(cab_router)
+app.mount("/cab-watch/assets", StaticFiles(directory=ROOT / "cab_watch" / "assets"), name="cab_assets")
 app.mount("/assets", StaticFiles(directory=ROOT / "assets"), name="assets")
 
 
