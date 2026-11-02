@@ -1,16 +1,10 @@
 const same=(a,b)=>a[0]===b[0]&&a[1]===b[1];
 const dist=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1]);
 
-export function makeCab(trip,xs,ys){
-  const nodes=[trip.path[0]];
-  for(let i=1;i<trip.path.length;i++){
-    const a=trip.path[i-1], b=trip.path[i], horizontal=a[1]===b[1], axis=horizontal?0:1;
-    const coords=(horizontal?xs:ys).filter(c=>(c-a[axis])*(c-b[axis])<=0 && c!==a[axis]);
-    coords.sort((l,r)=>(l-r)*Math.sign(b[axis]-a[axis]));
-    nodes.push(...coords.map(c=>horizontal?[c,a[1]]:[a[0],c]));
-  }
-  return {...trip,nodes,index:0,point:[...nodes[0]],mode:'route',sequence:0,
-          streak:0,offset:0,trail:[[...nodes[0]]],xs,ys};
+export function makeCab(trip,network){
+  const point = [...trip.path[0]];
+  return {...trip,nodes:trip.path,index:0,point,mode:'route',sequence:0,
+          streak:0,offset:0,confirmed:0,trail:[point],network};
 }
 function awayFromRoute(cab,p){
   return Math.min(...cab.nodes.slice(1).map((b,i)=>{
@@ -20,14 +14,16 @@ function awayFromRoute(cab,p){
   }));
 }
 function chooseBranch(cab){
-  const p=cab.nodes[cab.index], xi=cab.xs.indexOf(p[0]),yi=cab.ys.indexOf(p[1]);
-  const nearby=[[cab.xs[xi-1],p[1]],[cab.xs[xi+1],p[1]],[p[0],cab.ys[yi-1]],[p[0],cab.ys[yi+1]]];
-  return nearby.filter(n=>n.every(Number.isFinite)).sort((a,b)=>awayFromRoute(cab,b)-awayFromRoute(cab,a))[0];
+  const node = cab.stops[cab.index];
+  const choices = cab.network.roads.filter(edge=>edge.includes(node))
+    .map(edge=>cab.network.nodes[edge.replace(node,'')])
+    .filter(point=>awayFromRoute(cab,point)>0.01);
+  return choices.sort((a,b)=>awayFromRoute(cab,b)-awayFromRoute(cab,a))[0];
 }
 export function divert(cab){
-  if(cab.mode!=='route')return;
-  if(same(cab.point,cab.nodes[cab.index])){cab.branch=chooseBranch(cab);cab.mode='detour';}
-  else cab.mode='turn requested';
+  if(cab.mode!=='route' && cab.mode!=='turn requested')return;
+  cab.branch = same(cab.point,cab.nodes[cab.index]) && chooseBranch(cab);
+  cab.mode = cab.branch?'detour':'turn requested';
 }
 export function rejoin(cab){
   if(cab.mode==='turn requested')cab.mode='route';
@@ -43,8 +39,8 @@ export function advance(cab){
   if(same(cab.point,target)){
     if(drivingRoute){
       cab.index++;
-      if(cab.mode==='turn requested'){cab.branch=chooseBranch(cab);cab.mode='detour';}
-      else if(cab.index===cab.nodes.length-1)cab.mode='arrived';
+      if(cab.index===cab.nodes.length-1)cab.mode='arrived';
+      else if(cab.mode==='turn requested')divert(cab);
     }else if(cab.mode==='returning'){cab.mode=cab.index===cab.nodes.length-1?'arrived':'route';}
   }
   cab.sequence++;

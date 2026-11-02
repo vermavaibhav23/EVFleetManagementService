@@ -1,5 +1,5 @@
 import {makeCab,divert,rejoin,advance} from './motion.mjs';
-import {cityMap,makeLayers,selectMap,showPoint,animate} from './map.mjs';
+import {cityMap,makeLayers,drawSharedRoads,selectMap,showPoint,animate} from './map.mjs';
 
 const $=id=>document.getElementById(id);
 let fleet, selected, running=false, frame, timer, changing=false, reviewGeneration=0;
@@ -20,12 +20,18 @@ function render(){
   if(!fleet)return;
   $('clock').textContent=[Math.floor(fleet.seconds/60),fleet.seconds%60].map(s=>String(s).padStart(2,'0')).join(':');
   $('total').textContent=fleet.cabs.length;$('open').textContent=fleet.alerts.filter(a=>a.closed_sequence===null).length;
-  const arrived=fleet.cabs.every(c=>c.mode==='arrived');
+  const arrived=fleet.cabs.length>0 && fleet.cabs.every(c=>c.mode==='arrived');
   $('mode').textContent=running?'● Running':arrived?'Completed':'Paused';
   $('play').textContent=running?'Ⅱ Pause':arrived?'Completed':'▶ Start';$('play').disabled=changing||arrived;
+  $('create').disabled=changing||fleet.cabs.length>=fleet.capacity||!$('planner').hidden;
+  $('play').disabled ||= fleet.cabs.length===0;
   const c=chosen();
+  if(!c){
+    $('mode').textContent='Ready';$('selected').textContent='Select a cab';
+    $('distance').textContent='';$('tripline').textContent='';$('wrong').disabled=true;$('return').disabled=true;return;
+  }
   $('selected').textContent='Cab '+c.cab+' · '+c.origin+' → '+c.destination;
-  $('tripline').textContent='Driver simulation: '+c.mode+'.';
+  $('tripline').textContent='Shortest route: '+c.stops.join(' → ')+' · '+(c.metres/1000).toFixed(2)+' km · '+c.mode;
   $('distance').textContent=Math.round(c.offset)+' m from planned route · GPS #'+c.confirmed+' · '+Math.min(c.streak,3)+'/3 off-route readings';
   $('wrong').disabled=changing||c.mode!=='route';$('return').disabled=changing||!['detour','turn requested'].includes(c.mode);
   for(const v of fleet.cabs){
@@ -67,6 +73,7 @@ async function readState(f){
   f.alerts=result.alerts;
   for(const trip of result.trips){
     const c=f.cabs.find(c=>c.id===trip.id);
+    if(!c)continue;
     c.streak=trip.off_count;c.offset=trip.distance_m;c.confirmed=trip.last_sequence;
     if(trip.lat!==null)showPoint(c,[(trip.lon-f.origin[1])*f.lon_scale/f.metres,(f.origin[0]-trip.lat)*f.lat_scale/f.metres]);
   }
@@ -85,7 +92,7 @@ async function tick(f){
     }
     if(!f.pending&&running){
       const moving=f.cabs.filter(c=>advance(c));
-      if(!moving.length){running=false;msg('All cabs reached their destinations. Choose New simulation to run again.');return;}
+      if(!moving.length){running=false;msg('All cabs reached their destinations. Create a new trip to keep driving.');return;}
       f.pending=moving.map(c=>gps(f,c));f.seconds+=5;
     }
     if(f.pending){
@@ -109,28 +116,77 @@ async function tick(f){
     }
   }
 }
+let network, draftId;
+function closePlanner(){
+  $('planner').hidden=true;$('map').classList.remove('picking');
+  for(const node of document.querySelectorAll('.junction'))node.setAttribute('tabindex','-1');
+}
+function updatePlanner(){
+  const a=$('pickup').value,b=$('dropoff').value;
+  $('launch').disabled=changing||!a||!b||a===b;
+  $('pickHint').textContent=!a?'Choose a pickup on the map.':!b?'Pickup '+a+' selected. Click a drop-off to start.':
+    a===b?'Choose a different drop-off.':'Ready to start '+a+' → '+b+'.';
+}
+function pick(name){
+  if($('planner').hidden||changing)return;
+  if(!$('pickup').value){$('pickup').value=name;updatePlanner();return;}
+  $('dropoff').value=name;updatePlanner();
+  if(!$('launch').disabled)launch();
+}
+function openPlanner(){
+  draftId=crypto.randomUUID();
+  $('pickup').value='';$('dropoff').value='';$('planner').hidden=false;
+  $('map').classList.add('picking');
+  for(const node of document.querySelectorAll('.junction'))node.setAttribute('tabindex','0');
+  updatePlanner();render();
+}
+async function launch(){
+  if(changing||$('launch').disabled)return;
+  const f=fleet;
+  changing=true;
+  for(const id of ['launch','cancel','reset','pickup','dropoff'])$(id).disabled=true;
+  msg('Finding the shortest route…');
+  try{
+    const trip=await api('sessions/'+f.id+'/trips/'+draftId,'PUT',{pickup:$('pickup').value,dropoff:$('dropoff').value});
+    const c=makeCab(trip,network);
+    if(!f.cabs.length)$('roster').replaceChildren();
+    f.cabs.push(c);makeLayers([c],select);drawSharedRoads(f.cabs,network);
+    c.row=element('button',undefined,'cabrow');c.row.style.setProperty('--cab',c.color);
+    const top=element('span',undefined,'rowtop'),id=element('span',undefined,'cabid');
+    id.append(element('i',undefined,'swatch'),element('strong','Cab '+c.cab));
+    c.badge=element('span','On route','badge');top.append(id,c.badge);
+    c.row.append(top,element('span',c.origin+' → '+c.destination,'desc'));
+    c.row.onclick=()=>select(c.id);$('roster').append(c.row);
+    closePlanner();running=true;f.failed=false;select(c.id);schedule(f,0);
+    msg('Cab '+c.cab+' is driving from '+c.origin+' to '+c.destination+'.');
+  }catch(e){msg(e.message);}
+  finally{
+    changing=false;for(const id of ['cancel','reset','pickup','dropoff'])$(id).disabled=false;
+    updatePlanner();render();
+  }
+}
 async function setup(){
   if(changing)return;
-  changing=true;running=false;clearTimeout(timer);$('reset').disabled=true;$('play').disabled=true;
-  msg('Preparing a private demo fleet…');
+  changing=true;running=false;clearTimeout(timer);cancelAnimationFrame(frame);reviewGeneration++;
+  fleet=null;selected=null;closePlanner();
   try{
-    const result=await api('sessions','POST',{count:Number($('size').value)});
-    clearTimeout(timer);cancelAnimationFrame(frame);reviewGeneration++;
-    fleet={...result,cabs:result.trips.map(t=>makeCab(t,result.xs,result.ys)),seconds:0,alerts:[],working:false};
-    cityMap(result.xs,result.ys);makeLayers(fleet.cabs,select);$('roster').replaceChildren();$('review').hidden=true;
-    for(const c of fleet.cabs){
-      c.confirmed=0;c.sequence=1;c.row=element('button',undefined,'cabrow');c.row.style.setProperty('--cab',c.color);
-      const top=element('span',undefined,'rowtop'),id=element('span',undefined,'cabid');
-      id.append(element('i',undefined,'swatch'),element('strong','Cab '+c.cab));c.badge=element('span','On route','badge');
-      top.append(id,c.badge);c.row.append(top,element('span',c.origin+' → '+c.destination,'desc'));
-      c.row.onclick=()=>select(c.id);$('roster').append(c.row);
+    network=network||await api('network');
+    fleet={...network,id:crypto.randomUUID(),cabs:[],seconds:0,alerts:[],working:false};
+    cityMap(network,pick);closePlanner();
+    for(const id of ['routes','shared','trails','pins'])$(id).replaceChildren();
+    for(const id of ['pickup','dropoff']){
+      $(id).replaceChildren(new Option('Select node',''));
+      for(const n of Object.keys(network.nodes))$(id).add(new Option(n,n));
     }
-    fleet.pending=fleet.cabs.map(c=>gps(fleet,c));select(fleet.cabs[0].id);$('connection').textContent='● Connected';
-    msg('Ready. Start the simulation, then choose a cab and take a wrong turn.');schedule(fleet,0);
-  }catch(e){msg(e.message+' Select New simulation to retry.');$('connection').textContent='Offline';}
-  finally{changing=false;$('reset').disabled=false;if(fleet)render();}
+    $('roster').replaceChildren(element('p','Create your first trip to add a cab.','inner muted'));
+    $('alerts').textContent='No route alerts in this simulation.';$('review').hidden=true;
+    $('connection').textContent='● Ready';msg('Choose Create trip to add a cab.');
+  }catch(e){msg(e.message+' Select New fleet to retry.');$('connection').textContent='Offline';}
+  finally{changing=false;render();}
 }
-$('reset').onclick=setup;
+$('pickup').onchange=$('dropoff').onchange=updatePlanner;
+$('launch').onclick=launch;$('cancel').onclick=()=>{closePlanner();render();};
+$('create').onclick=openPlanner;$('reset').onclick=setup;
 $('play').onclick=()=>{if(!fleet)return;running=!running;fleet.failed=false;render();
   msg(running?'Simulation running · each update advances five simulated seconds.':'Simulation paused.');schedule(fleet,0);};
 $('wrong').onclick=()=>{divert(chosen());render();msg(running?'Wrong turn requested. Watch the GPS readings.':'Wrong turn queued. Press Start to drive.');};

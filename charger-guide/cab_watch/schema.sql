@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS cab_watch.trips (
     created_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE(session_id, route_index)
 );
+ALTER TABLE cab_watch.trips ADD COLUMN IF NOT EXISTS planned_nodes text[];
 CREATE TABLE IF NOT EXISTS cab_watch.gps_readings (
     trip_id uuid NOT NULL REFERENCES cab_watch.trips ON DELETE CASCADE,
     sequence integer NOT NULL,

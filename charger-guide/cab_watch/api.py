@@ -22,6 +22,11 @@ class Setup(BaseModel):
     count: int = Field(ge=1, le=len(city.ROUTES))
 
 
+class TripRequest(BaseModel):
+    pickup: str = Field(pattern="^[A-Z]$")
+    dropoff: str = Field(pattern="^[A-Z]$")
+
+
 class Point(BaseModel):
     trip_id: UUID
     sequence: int = Field(ge=1, le=2000)
@@ -30,7 +35,7 @@ class Point(BaseModel):
 
 
 class Batch(BaseModel):
-    readings: list[Point] = Field(min_length=1, max_length=len(city.ROUTES))
+    readings: list[Point] = Field(min_length=1, max_length=len(city.COLORS))
 
 
 async def record(db, reading):
@@ -38,7 +43,9 @@ async def record(db, reading):
         trip = await conn.fetchrow("SELECT * FROM cab_watch.trips WHERE id=$1 FOR UPDATE", reading.trip_id)
         if not trip or reading.sequence <= trip["last_sequence"]:
             return
-        distance = city.offset_metres(trip["route_index"], reading.lat, reading.lon)
+        line = ([city.NODES[n] for n in trip["planned_nodes"]] if trip["planned_nodes"]
+                else city.ROUTES[trip["route_index"]][3])
+        distance = city.distance_from_path(line, reading.lat, reading.lon)
         count = city.next_streak(distance, trip["off_count"], reading.sequence == trip["last_sequence"] + 1)
         await conn.execute("""INSERT INTO cab_watch.gps_readings(trip_id,sequence,lat,lon,distance_m)
             VALUES($1,$2,$3,$4,$5)""", reading.trip_id, reading.sequence, reading.lat, reading.lon, distance)
@@ -114,6 +121,39 @@ class CabStream:
 @router.get("/")
 async def page():
     return FileResponse(ROOT / "index.html")
+
+
+@router.get("/network")
+async def network():
+    return dict(nodes=city.NODES, roads=city.ROADS, capacity=len(city.COLORS),
+                metres=city.METRES, origin=city.ORIGIN,
+                lat_scale=city.LAT_SCALE, lon_scale=city.LON_SCALE)
+
+
+@router.put("/sessions/{session}/trips/{trip_id}")
+async def add_trip(session: UUID, trip_id: UUID, setup: TripRequest, request: Request):
+    if setup.pickup == setup.dropoff:
+        raise HTTPException(422, "Choose two different intersections")
+    nodes, metres = city.shortest_route(setup.pickup, setup.dropoff)
+    app = request.app.state
+    await app.cab_stream.start()
+    async with app.db.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", str(session))
+        previous = await conn.fetchrow("SELECT * FROM cab_watch.trips WHERE id=$1", trip_id)
+        if previous:
+            if previous["session_id"] != session or previous["planned_nodes"] != nodes:
+                raise HTTPException(409, "Trip ID already in use")
+            index = previous["route_index"]
+        else:
+            index = await conn.fetchval("SELECT coalesce(max(route_index)+1,0) FROM cab_watch.trips WHERE session_id=$1", session)
+            if index >= len(city.COLORS):
+                raise HTTPException(409, "This fleet already has 20 trips")
+            if index == 0:
+                await conn.execute("DELETE FROM cab_watch.trips WHERE created_at < now()-interval '1 day'")
+            await conn.execute("""INSERT INTO cab_watch.trips(id,session_id,route_index,planned_nodes)
+                VALUES ($1,$2,$3,$4)""", trip_id, session, index, nodes)
+    return dict(id=trip_id, cab=index+1, origin=setup.pickup, destination=setup.dropoff,
+                color=city.COLORS[index], stops=nodes, path=[city.NODES[n] for n in nodes], metres=metres)
 
 
 @router.post("/sessions", status_code=201)

@@ -1,5 +1,5 @@
 import unittest
-from cab_watch.city import ROUTES, gps, next_streak, offset_metres
+from cab_watch.city import GRAPH, NODES, shortest_route, ROUTES, gps, next_streak, offset_metres
 
 
 class CabGeometryTests(unittest.TestCase):
@@ -19,3 +19,20 @@ class CabGeometryTests(unittest.TestCase):
         self.assertEqual(next_streak(201,2,True),3)
         self.assertEqual(next_streak(201,2,False),1)
 
+
+class RoutingTests(unittest.TestCase):
+    def test_every_pair_has_a_shortest_path_along_actual_roads(self):
+        self.assertEqual(set(NODES), set("ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
+        # Independent all-pairs reference for the weighted graph.
+        cost = {(a,b): (0 if a == b else GRAPH[a].get(b, float("inf")))
+                for a in NODES for b in NODES}
+        for k in NODES:
+            for a in NODES:
+                for b in NODES:
+                    cost[a,b] = min(cost[a,b], cost[a,k] + cost[k,b])
+        for a in NODES:
+            for b in NODES:
+                path, metres = shortest_route(a,b)
+                self.assertEqual((path[0],path[-1]), (a,b))
+                self.assertEqual(sum(GRAPH[u][v] for u,v in zip(path,path[1:])), metres)
+                self.assertEqual(metres, cost[a,b])

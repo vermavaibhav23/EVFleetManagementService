@@ -1,8 +1,12 @@
-# Cabwatch · Harbour City
+# CabWatch
 
-Choose 1–6 cabs and click **New simulation**, then **Start**. Each cab has a different pickup, destination, number and color. A solid line shows its planned route. A dashed trail shows where the cab has actually reported. Select a cab from the map or roster. **Take wrong turn** diverts it at an intersection. **Return to route** brings it back via the same street.
+CabWatch helps a dispatcher spot when a simulated cab leaves its planned route. [Try the live demo](https://ev-charger-guide.onrender.com/cab-watch/).
 
-The browser simulates the GPS device using a fictional city grid. Every tick advances five simulation seconds. GPS uses latitude and longitude projected from a local map with six metres per map unit. Trips stop at their destination. The simulator pauses when you pause it or close the page. Each new simulation has a private random ID and independent trips. Old runs are eligible for cleanup after a day.
+Start with an empty city map. Choose **Create trip**, click a pickup and a different drop-off (A–Z), and the cab starts automatically. The dropdowns also support keyboard selection. Add up to 20 trips per fleet, including multiple cabs on the same route. Select a cab from the roster to bring its route and marker to the front. Thin grey lines are roads, thick coloured lines are planned routes, and dashed trails show reported positions.
+
+Intersections and road lengths form a weighted adjacency list. FastAPI runs Dijkstra when the trip is created and saves the ordered node IDs in PostgreSQL. The consumer measures each GPS reading against that saved route. **Take wrong turn** diverts the selected cab onto a connected side road. **Return to route** sends it back to the junction where it left.
+
+The browser simulates the GPS device on a fictional road network. Every tick advances five simulation seconds. GPS uses latitude and longitude projected from a local map with six metres per map unit. Trips stop at their destination. The simulator pauses when you pause it or close the page. Each new simulation has a private random ID and independent trips. Old runs are eligible for cleanup after a day.
 
 ## What happens to one reading
 
@@ -12,11 +16,20 @@ The browser simulates the GPS device using a fictional city grid. Every tick adv
 4. The map displays the consumed position. The rule uses coordinates alone, independently of the simulation controls. GPS shows route deviation; the dispatcher checks the circumstances.
 5. **Explain alert** lets Gemini request the stored evidence. If the model or its quota is unavailable, the UI labels the rule-based explanation.
 
-PostgreSQL has three tables under `cab_watch`: `trips` holds the run ID, route reference and detector state, `gps_readings` stores ordered coordinates and offsets, and `alerts` records opening and closing readings. A unique index permits one open alert per trip.
+PostgreSQL has three tables under `cab_watch`: `trips` holds the run ID, planned route and detector state, `gps_readings` stores ordered coordinates and offsets, and `alerts` records opening and closing readings. A unique index permits one open alert per trip.
 
-## Run
+## Run locally
 
-From the parent `charger-guide` directory run `docker compose up --build`. Open http://localhost:18080/cab-watch/. Cabwatch shares the existing FastAPI host, Kafka connection, PostgreSQL pool and optional Gemini configuration. It uses its own URL, topic, consumer group and schema. To enable Gemini locally, export `GEMINI_API_KEY` before starting Compose.
+Install Docker with Docker Compose. From the parent charger-guide directory, run:
 
-[Hosted demo](https://ev-charger-guide.onrender.com/cab-watch/)
+```sh
+docker compose up --build
+```
 
+Open [the dashboard](http://localhost:18080/cab-watch/). Compose starts the API, PostgreSQL and Kafka. Optionally set `GEMINI_API_KEY` before starting Compose to enable model-generated explanations.
+
+## Test the detector
+
+```sh
+python -m unittest -v test_cab_watch
+```
