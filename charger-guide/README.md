@@ -33,3 +33,9 @@ The Python eligibility rule determines the recommendation saved in PostgreSQL. T
 
 Run `python -m unittest -v` here with requirements installed. The recommendation algorithm is in decision.py, the Gemini loop in agent.py, and the Kafka-to-PostgreSQL flow in main.py.
 
+
+## Hosted demo
+
+[Open the Render dashboard](https://ev-charger-guide.onrender.com/). Render runs the web process and consumer. Aiven hosts PostgreSQL and Kafka. The first visit can take longer while the web service wakes up. Both vans, their battery readings and station availability are simulated.
+
+To repeat the end-to-end check on your own running demo, run `python smoke_demo.py http://localhost:18080` from this directory. It sends readings for Van-A, checks that one alert changes from a charger recommendation to assistance, requests an agent review, closes the alert and restores the initial battery level. Each run creates alert history. The response identifies whether Gemini or the rule-based fallback answered.
