@@ -51,8 +51,9 @@ async function explain(a){
   try{
     const r=await api('sessions/'+f.id+'/alerts/'+a.id+'/explain','POST');
     if(f!==fleet || generation!==reviewGeneration)return;
-    pane.replaceChildren(element('strong',r.source+' · Cab '+a.cab),element('p',r.summary),
+    pane.replaceChildren(element('strong',r.source+' · Cab '+a.cab+' · '+r.facts.status+' at review'),element('p',r.summary),
       element('p','Opening readings: '+r.facts.opening_samples.map(x=>'#'+x.sequence+' = '+x.metres+' m').join(' · ')));
+    if(r.notice)pane.append(element('small',r.notice));
   }catch(e){if(f===fleet&&generation===reviewGeneration)pane.textContent=e.message;}
 }
 function draw(now){if(fleet&&animate(fleet.cabs,now))frame=requestAnimationFrame(draw);}

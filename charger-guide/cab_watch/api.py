@@ -1,5 +1,4 @@
 import asyncio
-import json
 from contextlib import suppress
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -183,7 +182,7 @@ async def explain(session: UUID, alert_id: int, request: Request):
     contents = [{"role":"user","parts":[{"text":"Call read_alert_evidence then explain the result to a dispatcher "
                 "in two short sentences. Use the evidence only. Never infer danger or a reason for the detour."}]}]
     try:
-        turn = await generate(contents, declarations)
+        turn = await generate(contents, declarations, "ANY")
         calls = [p["functionCall"] for p in turn["parts"] if "functionCall" in p]
         if len(calls)!=1 or calls[0]["name"]!="read_alert_evidence" or calls[0].get("args"):
             raise ValueError("Invalid tool call")
@@ -191,11 +190,16 @@ async def explain(session: UUID, alert_id: int, request: Request):
         if calls[0].get("id"):
             reply["id"] = calls[0]["id"]
         contents.extend([turn, {"role":"user","parts":[{"functionResponse":reply}]}])
-        final = await generate(contents, declarations)
+        final = await generate(contents, declarations, "NONE")
         summary = " ".join(p["text"] for p in final["parts"] if p.get("text") and not p.get("thought")).strip()
         if summary:
             return dict(source="Gemini · read_alert_evidence",summary=summary[:800],facts=facts)
-    except (httpx.HTTPError, KeyError, ValueError, IndexError, TypeError):
-        pass
-    return dict(source="Rule-based explanation",summary=baseline,facts=facts)
+        reason = "Gemini returned an empty summary."
+    except httpx.HTTPStatusError as exc:
+        reason = f"Gemini returned HTTP {exc.response.status_code}."
+    except httpx.RequestError:
+        reason = "The model service could not be reached in time."
+    except (KeyError, ValueError, IndexError, TypeError):
+        reason = "The model or its evidence tool was unavailable."
+    return dict(source="Rule-based explanation",summary=baseline,facts=facts,notice=reason)
 

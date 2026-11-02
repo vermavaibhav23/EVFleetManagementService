@@ -48,7 +48,7 @@ async def investigate(van, facts, ask):
     raise ValueError("Incomplete investigation")
 
 
-async def generate(contents, declarations):
+async def generate(contents, declarations, mode="AUTO"):
     key = os.environ["GEMINI_API_KEY"]
     now = monotonic()
     while model_calls and now - model_calls[0] >= 86400:
@@ -61,7 +61,8 @@ async def generate(contents, declarations):
         result = await client.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
             headers={"x-goog-api-key": key}, json={"contents": contents,
-            "tools": [{"functionDeclarations": declarations}]})
+            "tools": [{"functionDeclarations": declarations}],
+            "toolConfig": {"functionCallingConfig": {"mode": mode}}})
         result.raise_for_status()
         return result.json()["candidates"][0]["content"]
 
