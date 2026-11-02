@@ -1,5 +1,5 @@
-import {makeCab,divert,rejoin,advance} from './motion.mjs';
-import {cityMap,makeLayers,drawSharedRoads,selectMap,showPoint,animate} from './map.mjs';
+import {makeCab,divert,rejoin,advance} from './motion.mjs?v=az1';
+import {cityMap,makeLayers,drawSharedRoads,selectMap,showPoint,animate} from './map.mjs?v=az1';
 
 const $=id=>document.getElementById(id);
 let fleet, selected, running=false, frame, timer, changing=false, reviewGeneration=0;
