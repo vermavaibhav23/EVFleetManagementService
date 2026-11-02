@@ -1,10 +1,11 @@
 services:
   - type: web
-    name: ev-fleet-interview
+    name: ev-charger-guide
     runtime: docker
     plan: free
-    branch: codex/interview-render-aiven
-    healthCheckPath: /api/v1/health/ready
+    branch: codex/charger-guide
+    rootDir: charger-guide
+    healthCheckPath: /fleet
     envVars:
       - key: DATABASE_URL
         sync: false
@@ -22,19 +23,8 @@ services:
         sync: false
       - key: DATABASE_SSL_CA_PEM
         sync: false
-      - key: KAFKA_TELEMETRY_TOPIC
-        value: vehicle.telemetry.v4
-      - key: KAFKA_GROUP_PREFIX
-        value: fleet-interview-v4
-      - key: KAFKA_AUTO_CREATE_TOPICS
-        value: "false"
-      - key: OPENBLAS_NUM_THREADS
-        value: "1"
-      - key: OMP_NUM_THREADS
-        value: "1"
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODEL
         value: gemini-3.1-flash-lite
-      - key: AI_REQUESTS_PER_DAY
-        value: "20"
+

@@ -1,11 +1,14 @@
 import asyncio
 import logging
 import os
+import ssl
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from pathlib import Path
 
 import asyncpg
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, TopicPartition
+from aiokafka.admin import AIOKafkaAdminClient, NewTopic
+from aiokafka.errors import TopicAlreadyExistsError
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ValidationError
@@ -15,9 +18,20 @@ from decision import LOW_FRACTION, assess
 
 ROOT = Path(__file__).parent
 TOPIC = "charger-guide.readings.v1"
-BROKER = os.getenv("GUIDE_BROKER", "localhost:19092")
-DB_URL = os.getenv("GUIDE_DATABASE_URL", "postgresql://guide:guide@localhost:55432/guide")
+BROKER = os.getenv("GUIDE_BROKER") or os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:19092")
+DB_URL = os.getenv("GUIDE_DATABASE_URL") or os.getenv("DATABASE_URL", "postgresql://guide:guide@localhost:55432/guide")
 logger = logging.getLogger(__name__)
+
+
+def kafka_options():
+    options = dict(bootstrap_servers=BROKER)
+    if os.getenv("KAFKA_SECURITY_PROTOCOL") == "SASL_SSL":
+        options.update(security_protocol="SASL_SSL",
+                       ssl_context=ssl.create_default_context(cadata=os.getenv("KAFKA_SSL_CA_PEM")),
+                       sasl_mechanism=os.environ["KAFKA_SASL_MECHANISM"],
+                       sasl_plain_username=os.environ["KAFKA_USERNAME"],
+                       sasl_plain_password=os.environ["KAFKA_PASSWORD"])
+    return options
 
 
 class Reading(BaseModel):
@@ -62,14 +76,28 @@ async def consume(db, consumer):
 @asynccontextmanager
 async def lifespan(app):
     async with AsyncExitStack() as stack:
-        db = await asyncpg.create_pool(DB_URL, min_size=1, max_size=4)
+        pg_ca = os.getenv("DATABASE_SSL_CA_PEM")
+        pg_options = {"ssl": ssl.create_default_context(cadata=pg_ca)} if pg_ca else {}
+        db = await asyncpg.create_pool(DB_URL, min_size=1, max_size=4, **pg_options)
         stack.push_async_callback(db.close)
         async with db.acquire() as conn, conn.transaction():
+            await conn.execute("SELECT pg_advisory_xact_lock(73949202)")
             await conn.execute((ROOT / "schema.sql").read_text(encoding="utf-8"))
-        producer = AIOKafkaProducer(bootstrap_servers=BROKER, enable_idempotence=True)
+        options = kafka_options()
+        admin = AIOKafkaAdminClient(**options)
+        try:
+            await admin.start()
+            if TOPIC not in await admin.list_topics():
+                try:
+                    await admin.create_topics([NewTopic(TOPIC, 2, 1)])
+                except TopicAlreadyExistsError:
+                    pass
+        finally:
+            await admin.close()
+        producer = AIOKafkaProducer(**options, enable_idempotence=True)
         stack.push_async_callback(producer.stop)
         await producer.start()
-        consumer = AIOKafkaConsumer(TOPIC, bootstrap_servers=BROKER, group_id="charger-guide.v1",
+        consumer = AIOKafkaConsumer(TOPIC, **options, group_id="charger-guide.v1",
                                     enable_auto_commit=False, auto_offset_reset="earliest")
         stack.push_async_callback(consumer.stop)
         await consumer.start()
