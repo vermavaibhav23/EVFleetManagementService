@@ -1,49 +1,105 @@
-const same=(a,b)=>a[0]===b[0]&&a[1]===b[1];
-const dist=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1]);
+const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
-export function makeCab(trip,network){
+export function makeCab(trip, network) {
   const point = [...trip.path[0]];
-  return {...trip,nodes:trip.path,index:0,point,mode:'route',sequence:0,
-          streak:0,offset:0,confirmed:0,trail:[point],network};
+  return {...trip, nodes: trip.path, index: 0, point, mode: 'route', sequence: 0,
+    streak: 0, offset: 0, confirmed: 0, trail: [point], network};
 }
-function awayFromRoute(cab,p){
-  return Math.min(...cab.nodes.slice(1).map((b,i)=>{
-    const a=cab.nodes[i], dx=b[0]-a[0],dy=b[1]-a[1];
-    const t=Math.max(0,Math.min(1,((p[0]-a[0])*dx+(p[1]-a[1])*dy)/(dx*dx+dy*dy)));
-    return dist(p,[a[0]+t*dx,a[1]+t*dy]);
-  }));
+
+function neighbours(network, node) {
+  return network.roads.filter(road => road.includes(node)).map(road => road.replace(node, ''));
 }
-function chooseBranch(cab){
+
+function pick(choices) {
+  return choices[Math.floor(Math.random() * choices.length)];
+}
+
+function resumeAt(cab, node) {
+  cab.index = cab.stops.indexOf(node);
+  cab.mode = cab.index === cab.stops.length - 1 ? 'arrived' : 'route';
+}
+
+export function divert(cab) {
+  if (!['route', 'turn requested'].includes(cab.mode)) return;
+  cab.mode = 'turn requested';
+  if (distance(cab.point, cab.nodes[cab.index]) > 0) return;
   const node = cab.stops[cab.index];
-  const choices = cab.network.roads.filter(edge=>edge.includes(node))
-    .map(edge=>cab.network.nodes[edge.replace(node,'')])
-    .filter(point=>awayFromRoute(cab,point)>0.01);
-  return choices.sort((a,b)=>awayFromRoute(cab,b)-awayFromRoute(cab,a))[0];
+  const choices = neighbours(cab.network, node).filter(n =>
+    n !== cab.stops[cab.index - 1] && n !== cab.stops[cab.index + 1]);
+  if (!choices.length) return;
+  cab.from = node;
+  cab.to = pick(choices);
+  cab.mode = 'detour';
 }
-export function divert(cab){
-  if(cab.mode!=='route' && cab.mode!=='turn requested')return;
-  cab.branch = same(cab.point,cab.nodes[cab.index]) && chooseBranch(cab);
-  cab.mode = cab.branch?'detour':'turn requested';
+
+// Start Dijkstra at the cab's position between two intersections. The cost
+// of reaching either endpoint includes only the remaining part of that road.
+function recoveryPath(cab) {
+  const {nodes} = cab.network;
+  const eligible = new Set(cab.stops.slice(cab.index));
+  const costs = new Map();
+  const parent = new Map();
+  const open = new Set([cab.from, cab.to]);
+  for (const end of open) costs.set(end, distance(cab.point, nodes[end]));
+  while (open.size) {
+    let node;
+    for (const candidate of open) {
+      if (node === undefined || costs.get(candidate) < costs.get(node)) node = candidate;
+    }
+    if (eligible.has(node)) {
+      const path = [node];
+      while (parent.has(node)) {
+        node = parent.get(node);
+        path.unshift(node);
+      }
+      return path;
+    }
+    open.delete(node);
+    for (const next of neighbours(cab.network, node)) {
+      const cost = costs.get(node) + distance(nodes[node], nodes[next]);
+      if (cost >= (costs.get(next) ?? Infinity)) continue;
+      costs.set(next, cost);
+      parent.set(next, node);
+      open.add(next);
+    }
+  }
+  throw new Error('No road leads back to the planned route.');
 }
-export function rejoin(cab){
-  if(cab.mode==='turn requested')cab.mode='route';
-  else if(cab.mode==='detour')cab.mode='returning';
+
+export function rejoin(cab) {
+  if (cab.mode === 'turn requested') {
+    cab.mode = 'route';
+  } else if (cab.mode === 'detour') {
+    cab.recovery = recoveryPath(cab);
+    cab.mode = 'returning';
+  }
 }
-export function advance(cab){
-  if(cab.mode==='arrived')return false;
-  if(cab.mode==='route' && cab.index===cab.nodes.length-1){cab.mode='arrived';return false;}
-  const drivingRoute=cab.mode==='route'||cab.mode==='turn requested';
-  const target=drivingRoute?cab.nodes[cab.index+1]:cab.mode==='returning'?cab.nodes[cab.index]:cab.branch;
-  const delta=dist(cab.point,target);
-  cab.point=delta<=14?[...target]:cab.point.map((v,i)=>v+(target[i]-v)*14/delta);
-  if(same(cab.point,target)){
-    if(drivingRoute){
-      cab.index++;
-      if(cab.index===cab.nodes.length-1)cab.mode='arrived';
-      else if(cab.mode==='turn requested')divert(cab);
-    }else if(cab.mode==='returning'){cab.mode=cab.index===cab.nodes.length-1?'arrived':'route';}
+
+export function advance(cab) {
+  if (cab.mode === 'arrived') return false;
+  const onRoute = cab.mode === 'route' || cab.mode === 'turn requested';
+  const next = onRoute ? cab.stops[cab.index + 1] :
+    cab.mode === 'returning' ? cab.recovery[0] : cab.to;
+  const target = cab.network.nodes[next];
+  const remaining = distance(cab.point, target);
+  if (remaining > 14) {
+    cab.point = cab.point.map((v, i) => v + (target[i] - v) * 14 / remaining);
+  } else {
+    cab.point = [...target];
+    if (onRoute) {
+      const queued = cab.mode === 'turn requested';
+      resumeAt(cab, next);
+      if (queued && cab.mode !== 'arrived') divert(cab);
+    } else if (cab.stops.indexOf(next) >= cab.index) {
+      resumeAt(cab, next);
+    } else if (cab.mode === 'returning') {
+      cab.recovery.shift();
+    } else {
+      const exits = neighbours(cab.network, next).filter(n => n !== cab.from);
+      cab.to = exits.length ? pick(exits) : cab.from;
+      cab.from = next;
+    }
   }
   cab.sequence++;
   return true;
 }
-

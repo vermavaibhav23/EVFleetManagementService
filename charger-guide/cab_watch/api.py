@@ -29,7 +29,7 @@ class TripRequest(BaseModel):
 
 class Point(BaseModel):
     trip_id: UUID
-    sequence: int = Field(ge=1, le=2000)
+    sequence: int = Field(ge=1, le=2**31-1)
     lat: float = Field(ge=-90, le=90, allow_inf_nan=False)
     lon: float = Field(ge=-180, le=180, allow_inf_nan=False)
 
