@@ -2,7 +2,7 @@ import asyncio
 import unittest
 
 from agent import investigate
-from decision import assess
+from decision import assess, drive_step
 
 
 class GuideTests(unittest.TestCase):
@@ -24,6 +24,18 @@ class GuideTests(unittest.TestCase):
         self.assertEqual(len([c for c in facts["options"] if c["reason"] == "eligible"]), 1)
         self.van["battery_kwh"] = 2
         self.assertIsNone(assess(self.van, self.stations)["charger"])
+
+    def test_drive_arrival_assistance_and_turnaround(self):
+        van = dict(self.van, capacity_kwh=40, road_km=23.5)
+        station = [self.stations[3]]
+        position, battery, direction = drive_step(van, station, 1)
+        self.assertEqual((position, battery), (24, 7.875))
+        van.update(road_km=position, battery_kwh=battery)
+        self.assertEqual(drive_step(van, station, direction)[:2], (24, battery))
+        van.update(road_km=0, battery_kwh=2)
+        self.assertEqual(drive_step(van, station, 1)[:2], (0, 2))
+        van.update(road_km=32, battery_kwh=26)
+        self.assertEqual(drive_step(van, station, 1), (31, 25.75, -1))
 
     def test_agent_executes_selected_tools_and_returns_evidence(self):
         steps = iter(["compare_chargers", "read_battery", None])

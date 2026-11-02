@@ -14,6 +14,8 @@ Open http://localhost:18080. To enable the Gemini agent, set GEMINI_API_KEY in t
 
 ## Try the interview demo
 
+Choose **Start drive** to move both vans along the simulated road. Each step publishes a new kilometre marker and battery reading through Kafka. Click a van to highlight its recommended route. A low-battery van stops when it reaches its recommended station or when it needs assistance. **Pause drive** holds both vans in place. The drive also stops after three minutes. **Reset demo** restores the starting locations and batteries before the example below. Battery preset buttons pause the drive.
+
 1. Under Van-A choose **Low battery**. The simulator publishes 8 kWh for a 40 kWh battery. After the 2 kWh reserve, 6 kWh is available for travel. At 0.25 kWh/km that gives 24 km of range.
 2. West is closer but occupied. North has the wrong plug. Central is 10 km away and qualifies. East is 30 km away. The dashboard raises one alert for Central.
 3. Click **Investigate alert**. Gemini can request battery facts and charger comparisons, inspect their results, then explain the choice. The dashboard shows the tools called and the calculated evidence. Each investigation allows up to three model turns. Tool errors, missing credentials and incomplete investigations return a labeled rule-based summary.

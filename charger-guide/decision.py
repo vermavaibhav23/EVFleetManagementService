@@ -1,5 +1,6 @@
 RESERVE_KWH = 2
 LOW_FRACTION = 0.25
+ROAD_END = 32
 
 
 def assess(van, chargers):
@@ -26,4 +27,20 @@ def assess(van, chargers):
               if choice else "No available compatible charger is within safe range. Request assistance.")
     return dict(safe_km=round(safe_km, 2), options=options,
                 charger=choice["charger"] if choice else None, reason=reason)
+
+
+def drive_step(van, stations, direction):
+    """Advance one simulated kilometre, or stop early at the selected station."""
+    start, battery = van["road_km"], van["battery_kwh"]
+    if battery <= van["capacity_kwh"] * LOW_FRACTION:
+        selected = assess(van, stations)["charger"]
+        target = next((s["road_km"] for s in stations if s["id"] == selected), start)
+    else:
+        if start >= ROAD_END:
+            direction = -1
+        elif start <= 0:
+            direction = 1
+        target = ROAD_END if direction == 1 else 0
+    distance = max(-1, min(1, target - start))
+    return start + distance, battery - abs(distance) * van["kwh_per_km"], direction
 

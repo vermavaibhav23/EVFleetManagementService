@@ -11,10 +11,11 @@ from aiokafka.admin import AIOKafkaAdminClient, NewTopic
 from aiokafka.errors import TopicAlreadyExistsError
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 
 from agent import review
-from decision import LOW_FRACTION, assess
+from decision import LOW_FRACTION, ROAD_END, assess, drive_step
 
 ROOT = Path(__file__).parent
 TOPIC = "charger-guide.readings.v1"
@@ -103,15 +104,21 @@ async def lifespan(app):
         await consumer.start()
         worker = asyncio.create_task(consume(db, consumer))
         app.state.db, app.state.producer, app.state.worker = db, producer, worker
+        app.state.drive_task = None
+        app.state.drive_lock = asyncio.Lock()
+        app.state.drive_stop = asyncio.Event()
+        app.state.drive_note = "Paused"
         try:
             yield
         finally:
+            await pause_drive()
             worker.cancel()
             with suppress(asyncio.CancelledError):
                 await worker
 
 
 app = FastAPI(title="EV Charger Guide", lifespan=lifespan)
+app.mount("/assets", StaticFiles(directory=ROOT / "assets"), name="assets")
 
 
 @app.get("/")
@@ -123,9 +130,83 @@ async def dashboard():
 async def fleet():
     if app.state.worker.done():
         raise HTTPException(503, "Telemetry consumer stopped")
-    rows = await app.state.db.fetch("""SELECT v.*, a.reason, a.id AS alert_id FROM charger_guide.vehicles v
+    rows = await app.state.db.fetch("""SELECT v.*, a.reason, a.charger_id, a.id AS alert_id FROM charger_guide.vehicles v
         LEFT JOIN charger_guide.alerts a ON a.vehicle_id=v.id AND a.resolved_at IS NULL ORDER BY v.id""")
     return [dict(r) for r in rows]
+
+
+@app.get("/overview")
+async def overview():
+    vans = await fleet()
+    stations = await app.state.db.fetch("SELECT * FROM charger_guide.chargers ORDER BY road_km")
+    task = app.state.drive_task
+    return dict(vehicles=vans, chargers=[dict(r) for r in stations], road_end=ROAD_END,
+                running=bool(task and not task.done()), drive_note=app.state.drive_note)
+
+
+async def send_reading(vehicle, battery, road_km):
+    seq = await app.state.db.fetchval("SELECT nextval('charger_guide.demo_reading')")
+    reading = Reading(vehicle_id=vehicle, sequence=seq, battery_kwh=battery, road_km=road_km)
+    await app.state.producer.send_and_wait(TOPIC, reading.model_dump_json().encode(), key=vehicle.encode())
+    return seq
+
+
+async def drive():
+    directions = {}
+    pending = {}
+    try:
+        for _ in range(120):
+            if app.state.drive_stop.is_set():
+                return
+            vans = await fleet()
+            stations = await app.state.db.fetch("SELECT * FROM charger_guide.chargers")
+            moving = False
+            for van in vans:
+                key = van["id"]
+                if van["last_sequence"] < pending.get(key, 0):
+                    moving = True
+                    continue
+                position, battery, directions[key] = drive_step(van, stations, directions.get(key, 1))
+                if position != van["road_km"]:
+                    pending[key] = await send_reading(key, battery, position)
+                    moving = True
+            if not moving:
+                app.state.drive_note = "Vans stopped · check alerts or send a recovered reading"
+                return
+            try:
+                await asyncio.wait_for(app.state.drive_stop.wait(), timeout=1.5)
+            except TimeoutError:
+                pass
+        app.state.drive_note = "Demo complete"
+    except Exception:
+        logger.exception("Drive paused")
+        app.state.drive_note = "Drive interrupted · try again"
+
+
+async def pause_drive():
+    task = app.state.drive_task
+    if task and not task.done():
+        app.state.drive_stop.set()
+        await task
+    app.state.drive_note = "Paused"
+
+
+@app.post("/drive/{action}")
+async def control_drive(action: str):
+    async with app.state.drive_lock:
+        if action == "start":
+            if not app.state.drive_task or app.state.drive_task.done():
+                app.state.drive_stop.clear()
+                app.state.drive_note = "Driving"
+                app.state.drive_task = asyncio.create_task(drive())
+        elif action in ("pause", "reset"):
+            await pause_drive()
+            if action == "reset":
+                await send_reading("Van-A", 26, 0)
+                await send_reading("Van-B", 24, 12)
+        else:
+            raise HTTPException(404, "Unknown drive control")
+    return {"status": app.state.drive_note}
 
 
 @app.post("/demo/{vehicle}/{battery}", status_code=202)
@@ -137,9 +218,10 @@ async def publish(vehicle: str, battery: int):
         raise HTTPException(404, "Unknown van")
     if not 0 <= battery <= van["capacity_kwh"]:
         raise HTTPException(422, "Battery outside vehicle capacity")
-    seq = await app.state.db.fetchval("SELECT nextval('charger_guide.demo_reading')")
-    reading = Reading(vehicle_id=vehicle, sequence=seq, battery_kwh=battery, road_km=van["road_km"])
-    await app.state.producer.send_and_wait(TOPIC, reading.model_dump_json().encode(), key=vehicle.encode())
+    async with app.state.drive_lock:
+        await pause_drive()
+        position = await app.state.db.fetchval("SELECT road_km FROM charger_guide.vehicles WHERE id=$1", vehicle)
+        seq = await send_reading(vehicle, battery, position)
     return {"sequence": seq}
 
 

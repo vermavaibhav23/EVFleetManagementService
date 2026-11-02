@@ -1,34 +1,33 @@
-<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>EV Charger Guide</title><style>
-body{margin:3rem auto;padding:0 1rem;max-width:56rem;font:17px/1.55 system-ui;color:#183632;background:#f4f8f5}h1{font-size:2.5rem;margin-bottom:0}article,aside{background:white;padding:1.4rem;border:1px solid #bfd2c8;border-radius:12px;margin:1rem 0}button{padding:.6rem .8rem;margin:.2rem;color:white;background:#156352;border:0;border-radius:6px;cursor:pointer}h2{margin:0}#status{color:#455b55}button:disabled{opacity:.5}aside{white-space:pre-line}
-</style><main><h1>EV Charger Guide</h1><p>Send a simulated battery reading. At 25% or below, the fleet desk recommends an available charger within range.</p><div id="fleet"></div><p id="status" role="status"></p><aside id="review" hidden></aside></main>
-<script>
-const fleet=document.querySelector('#fleet'), statusLine=document.querySelector('#status'), report=document.querySelector('#review');
-let previous='', reviewing=false;
-async function api(path, method='GET'){
- const reply=await fetch(path,{method});if(!reply.ok){throw Error((await reply.json()).detail||'Request failed')}return reply.json();
-}
-function button(parent,label,action){
- const b=document.createElement('button');b.textContent=label;parent.append(b);b.onclick=async()=>{b.disabled=true;try{await action()}catch(e){statusLine.textContent=e.message}finally{b.disabled=false}};
-}
-async function refresh(){
- const vans=await api('/fleet'), key=JSON.stringify(vans);if(key===previous)return;
- previous=key;report.hidden=true;fleet.replaceChildren();
- for(const v of vans){
-  const card=document.createElement('article'), title=document.createElement('h2'), info=document.createElement('p'), alert=document.createElement('p');
-  title.textContent=v.id;info.textContent=v.battery_kwh+' / '+v.capacity_kwh+' kWh · Road marker '+v.road_km+' km';
-  alert.textContent=v.reason||'Battery above alert threshold';card.append(title,info,alert);
-  for(const [label,level] of [['Low battery',8],['Critical battery',2],['Recovered',26]]){
-   button(card,label,async()=>{const r=await api('/demo/'+v.id+'/'+level,'POST');statusLine.textContent='Reading '+r.sequence+' sent to Kafka.'});
-  }
-  if(v.alert_id)button(card,'Investigate alert',async()=>{
-   if(reviewing)return;reviewing=true;try{
-   statusLine.textContent='Checking this alert…';
-   const result=await api('/alerts/'+v.alert_id+'/review','POST');
-   report.textContent=[v.id+' · '+result.mode,result.summary,'Safe range: '+result.facts.safe_km+' km',...result.facts.options.map(c=>c.charger+' · '+c.distance_km+' km · '+c.reason),...(result.trace.length?['Tools used: '+result.trace.join(' → ')]:[])].join('\n');
-   report.hidden=false;statusLine.textContent='Review ready.'}finally{reviewing=false}
-  });fleet.append(card);
- }
-}
-async function poll(){try{await refresh()}catch(e){statusLine.textContent=e.message}setTimeout(poll,1000)}poll();
-</script></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#112f30"><title>EV Fleet · Charger Guide</title>
+<link rel="stylesheet" href="/assets/dashboard.css"><script defer src="/assets/dashboard.js"></script>
+</head>
+<body>
+<header><div class="brand"><b class="logo">ϟ</b> EV Fleet <span>/</span> <small>Charger Guide</small></div><span id="connection" class="tag">Connecting…</span></header>
+<main>
+<div class="intro"><div><p class="kicker">FLEET OPERATIONS</p><h1>Fleet overview</h1><p>Track the vans and find a reachable charger when a battery runs low.</p></div>
+<div class="actions"><button id="drive" class="primary" disabled>▶ Start drive</button><button id="reset" disabled>Reset demo</button></div></div>
+<section class="stats" aria-label="Fleet summary">
+<div><span>Fleet vehicles</span><strong id="count">—</strong></div>
+<div><span>Available stations</span><strong id="available">—</strong></div>
+<div><span>Open alerts</span><strong id="alerts">—</strong></div>
+</section>
+<section class="panel"><div class="section-head"><div><p class="kicker">01 / TELEMETRY</p><h2>Live route map</h2></div><span class="tag" id="drive-note">Paused</span></div>
+<div class="map-scroll"><svg id="map" viewBox="0 0 880 286" role="img" aria-labelledby="maptitle"><title id="maptitle">Simulated road with vehicle positions and charging stations</title>
+<defs><pattern id="grid" width="26" height="26" patternUnits="userSpaceOnUse"><path d="M26 0H0V26" fill="none" stroke="#b6cbc5" stroke-width=".7"/></pattern></defs>
+<rect width="880" height="286" fill="#e9f1ed"/><rect width="880" height="286" fill="url(#grid)"/>
+<g fill="#d7e8da"><path d="M0 28L170 0 236 24 188 65 52 91 0 71Z"/><path d="M426 0h172l-39 71-66 8-44-35Z"/><path d="M664 286l35-61 76-10 53 71Z"/></g>
+<path d="M620 -30 Q545 54 606 134 T592 310" fill="none" stroke="#c2dedf" stroke-width="32"/>
+<g stroke="#f8faf5" stroke-width="8" fill="none"><path d="M-10 244L352 105 411 -10M275 290L382 122 878 61M45 -20L208 145 466 308M630 -10L780 296"/></g>
+<path id="road" d="M46 188 C135 188 168 121 259 121 S410 191 495 155 S625 87 707 117 S786 148 836 148" fill="none" stroke="#879c94" stroke-width="13" stroke-linecap="round"/>
+<use href="#road" style="stroke:#fff9de;stroke-width:8"/><path id="route" fill="none" stroke="#168a69" stroke-width="5" stroke-linecap="round"/>
+<g id="stations"></g><g id="vans"></g><text x="22" y="269" class="axis">SIMULATED ROAD   /   0–32 KM</text></svg></div>
+<div class="legend"><span><i class="dot van"></i>Vehicle</span><span><i class="dot free"></i>Available station</span><span><i class="dot busy"></i>Busy or offline</span><span><i class="line"></i>Selected van’s recommendation</span></div></section>
+<div class="lower"><section class="panel"><div class="section-head"><div><p class="kicker">02 / VEHICLES</p><h2>Fleet vehicles</h2></div></div><div id="fleet"></div></section>
+<section class="panel"><div class="section-head"><div><p class="kicker">03 / INFRASTRUCTURE</p><h2>Charging stations</h2></div></div><div id="depots"></div></section></div>
+<section id="review" class="panel review" hidden><p class="kicker">ALERT INVESTIGATION</p><h2 id="review-title"></h2><p id="explanation"></p><ul id="evidence"></ul><p id="tools"></p></section>
+<p id="status" role="status">Start the drive to move the vans. Select a van to follow its recommendation.</p>
+</main></body></html>
