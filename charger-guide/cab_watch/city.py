@@ -10,7 +10,7 @@ ORIGIN = (13.10, 80.20)
 LAT_SCALE = 111320
 LON_SCALE = LAT_SCALE * cos(radians(ORIGIN[0]))
 LIMIT = 200
-REQUIRED = 3
+REQUIRED = 1
 TOPIC = "cab.location"
 DEPOTS = [
     {"id": "northwest", "name": "Northwest Depot", "node": "A"},
@@ -126,7 +126,7 @@ def distance_from_path(line, lat, lon):
 
 
 def next_streak(distance, previous, consecutive):
-    if distance <= LIMIT:
+    if distance < LIMIT:
         return 0
     return (previous if consecutive else 0) + 1
 

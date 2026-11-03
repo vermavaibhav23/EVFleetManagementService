@@ -68,11 +68,7 @@ async def record(db, reading):
         await conn.execute("""UPDATE cab_watch.trips SET last_sequence=$2,off_count=$3,distance_m=$4,phase=$5
             WHERE id=$1""", reading.trip_id, reading.sequence, count, distance, reading.leg)
         if count >= city.REQUIRED:
-            earlier = await conn.fetch("""SELECT sequence,distance_m FROM cab_watch.gps_readings
-                WHERE trip_id=$1 AND sequence BETWEEN $2 AND $3 ORDER BY sequence""",
-                reading.trip_id, reading.sequence-2, reading.sequence-1)
-            evidence = [dict(sequence=r["sequence"], metres=round(r["distance_m"])) for r in earlier]
-            evidence.append(dict(sequence=reading.sequence, metres=round(distance)))
+            evidence = [dict(sequence=reading.sequence, metres=round(distance))]
             await conn.execute("""INSERT INTO cab_watch.alerts
                 (trip_id,opened_sequence,peak_metres,opening_samples)
                 VALUES($1,$2,$3,$4::jsonb) ON CONFLICT(trip_id) WHERE closed_sequence IS NULL
@@ -294,7 +290,7 @@ async def explain(session: UUID, alert_id: int, request: Request):
     facts = dict(cab=alert["vehicle_index"]+1, threshold_m=city.LIMIT,
                  opening_samples=samples,
                  status="resolved" if alert["closed_sequence"] else "open", peak_m=round(alert["peak_metres"]))
-    baseline = (f"Cab {facts['cab']} crossed the {city.LIMIT} m limit for three consecutive readings "
+    baseline = (f"Cab {facts['cab']} triggered the {city.LIMIT} m off-route alert "
                 f"({', '.join(str(r['metres'])+' m' for r in facts['opening_samples'])}). "
                 + ("It returned to the route." if facts["status"]=="resolved" else "Check the trip with the driver."))
     declarations = [tool("read_alert_evidence", "Read the measured offsets and status for this simulated alert.")]

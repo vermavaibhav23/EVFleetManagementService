@@ -37,16 +37,16 @@ function resumeAt(cab, node) {
 
 export function divert(cab) {
   if (cab.mode !== 'route' || (cab.legs.length > 1 && cab.leg !== 1)) return;
-  const node = cab.stops[cab.index], ahead = cab.stops[cab.index+1];
-  if (distance(cab.point, cab.network.nodes[node]) > 0) {
-    cab.from = ahead;
-    cab.to = node;
-  } else {
-    const exits = neighbours(cab.network, node);
-    const sides = exits.filter(n => n !== ahead);
-    cab.from = node;
-    cab.to = pick(sides.length ? sides : exits);
-  }
+  if (cab.index + 1 < cab.stops.length - 1) cab.mode = 'turn requested';
+}
+
+function takeQueuedTurn(cab) {
+  const node = cab.stops[cab.index];
+  const exits = neighbours(cab.network,node).filter(n =>
+    n !== cab.stops[cab.index-1] && n !== cab.stops[cab.index+1]);
+  if (!exits.length) { divert(cab); return; }
+  cab.from = node;
+  cab.to = pick(exits);
   cab.mode = 'detour';
 }
 
@@ -106,8 +106,9 @@ export function advance(cab) {
     cab.point = [...target];
     if (onRoute) {
       const queued = cab.mode === 'turn requested';
+      const leg = cab.leg;
       resumeAt(cab, next);
-      if (queued && cab.mode !== 'arrived') divert(cab);
+      if (queued && cab.leg === leg && cab.mode === 'route') takeQueuedTurn(cab);
     } else if (cab.mode === 'returning' && cab.stops.includes(next)) {
       resumeAt(cab, next);
     } else if (cab.mode === 'returning') {

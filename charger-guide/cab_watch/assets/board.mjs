@@ -1,4 +1,4 @@
-import {makeCab,divert,rejoin,advance} from './motion.mjs?v=dispatch3';
+import {makeCab,divert,rejoin,advance} from './motion.mjs?v=junction5';
 import {cityMap,drawDepots,makeLayers,drawSharedRoads,selectMap,showPoint,animate} from './map.mjs?v=passenger4';
 
 const $=id=>document.getElementById(id);
@@ -40,8 +40,8 @@ function render(){
     const trip=fleet.cabs.find(c=>c.id===v.currentTrip);
     v.row.setAttribute('aria-pressed',String(v.latestTrip===selected));
     const detouring=trip?.mode==='detour', alarm=trip && alertFor(trip);
-    v.row.classList.toggle('alarm',Boolean(detouring || alarm));
-    v.badge.textContent=alarm?'Off-route alert':detouring?'Route changed':trip?.streak?'Checking':
+    v.row.classList.toggle('alarm',Boolean(alarm));
+    v.badge.textContent=alarm?'Off-route alert':trip?.mode==='turn requested'?'Turn queued':detouring?'Route changed':trip?.streak?'Checking':
       v.status==='available'?'Available':STAGES[trip?.leg]||'Driving';
     v.badge.className='badge'+(trip?.streak?' warn':'');
     v.desc.textContent=v.status==='available'?depotFor(v).name+' · ready':
@@ -57,8 +57,8 @@ function render(){
       ' → '+c.arrival_depot+' · '+(c.total_metres/1000).toFixed(2)+' km · '+
       (c.mode==='arrived'?'Completed':STAGES[c.leg]+' / '+c.mode);
     $('distance').textContent=Math.round(c.offset)+' m from current leg · GPS #'+c.confirmed+
-      ' · '+Math.min(c.streak,3)+'/3 off-route readings';
-    $('wrong').disabled=changing||c.leg!==1||c.mode!=='route';
+      ' · Alert at '+fleet.limit+' m';
+    $('wrong').disabled=changing||c.leg!==1||c.mode!=='route'||c.index+1>=c.stops.length-1;
     $('return').disabled=changing||!['detour','turn requested'].includes(c.mode);
   }
   const logKey=JSON.stringify(fleet.alerts.map(a=>[a.id,a.closed_sequence,Math.round(a.peak_metres)]));
@@ -239,7 +239,7 @@ $('create').onclick=openPlanner;$('reset').onclick=setup;
 $('play').onclick=()=>{if(!fleet)return;running=!running;fleet.failed=false;render();
   msg(running?'Simulation running · each update advances five simulated seconds.':'Simulation paused.');schedule(fleet,0);};
 $('wrong').onclick=()=>{divert(chosen());render();
-  msg(running?'Wrong turn requested. Watch the GPS readings.':'Wrong turn queued. Press Start to drive.');};
+  msg(running?'Turn queued for the next junction.':'Turn queued for the next junction. Press Start to drive.');};
 $('return').onclick=()=>{rejoin(chosen());render();
   msg(running?'Cab is rejoining its current planned leg.':'Return requested. Press Start to drive.');};
 msg('Enter the number of cars and select Set fleet.');
