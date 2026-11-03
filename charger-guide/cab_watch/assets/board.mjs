@@ -1,5 +1,5 @@
 import {makeCab,divert,rejoin,advance} from './motion.mjs?v=junction5';
-import {cityMap,drawDepots,makeLayers,drawSharedRoads,selectMap,showPoint,animate} from './map.mjs?v=parking1';
+import {cityMap,drawDepots,makeLayers,drawSharedRoads,selectMap,showPoint,animate} from './map.mjs?v=plate1';
 
 const $=id=>document.getElementById(id);
 const STAGES=['To pickup','With customer','Returning to depot'];
@@ -56,7 +56,7 @@ function render(){
     $('selected').textContent='Select a cab';$('tripline').textContent='Add a trip to dispatch the closest available car.';
     $('distance').textContent='';$('wrong').disabled=true;$('return').disabled=true;
   }else{
-    $('selected').textContent='Cab '+c.cab+' · '+c.origin+' → '+c.destination;
+    $('selected').textContent=c.vehicle_id+' · '+c.origin+' → '+c.destination;
     $('tripline').textContent=c.depot+' → pickup '+c.origin+' → drop-off '+c.destination+
       ' → '+c.arrival_depot+' · '+(c.total_metres/1000).toFixed(2)+' km · '+
       (c.mode==='arrived'?'Completed':STAGES[c.leg]+' / '+c.mode);
@@ -71,7 +71,7 @@ function render(){
     if(!fleet.alerts.length)log.append(element('p','No route alerts in this simulation.','muted'));
     for(const a of fleet.alerts){
       const row=element('div',undefined,'logrow'),info=element('div');
-      info.append(element('strong','Cab '+a.cab+' · '+(a.closed_sequence?'Resolved':'Check trip')),
+      info.append(element('strong',a.vehicle_id+' · '+(a.closed_sequence?'Resolved':'Check trip')),
         element('small','Opened at GPS #'+a.opened_sequence+' · peak '+Math.round(a.peak_metres)+' m'));
       const b=element('button','Explain alert');b.onclick=()=>explain(a);row.append(info,b);log.append(row);
     }
@@ -83,7 +83,7 @@ async function explain(a){
   try{
     const r=await api('me/alerts/'+a.id+'/explain','POST');
     if(f!==fleet||generation!==reviewGeneration)return;
-    pane.replaceChildren(element('strong',r.source+' · Cab '+a.cab+' · '+r.facts.status+' at review'),
+    pane.replaceChildren(element('strong',r.source+' · '+a.vehicle_id+' · '+r.facts.status+' at review'),
       element('p',r.summary),
       element('p','Opening readings: '+r.facts.opening_samples.map(x=>'#'+x.sequence+' = '+x.metres+' m').join(' · ')));
     if(r.notice)pane.append(element('small',r.notice));
@@ -181,7 +181,7 @@ function showCabInRoster(v){
   v.row=element('button',undefined,'cabrow');
   v.row.style.setProperty('--cab',cityColor(v.cab));
   const top=element('span',undefined,'rowtop'),id=element('span',undefined,'cabid');
-  id.append(element('i',undefined,'swatch'),element('strong','Cab '+v.cab));
+  id.append(element('i',undefined,'swatch'),element('strong','#'+v.cab+' · '+v.id));
   v.badge=element('span','Available','badge');top.append(id,v.badge);
   v.desc=element('span',undefined,'desc');v.row.append(top,v.desc);
   v.row.onclick=()=>{if(v.latestTrip)select(v.latestTrip);};
@@ -203,7 +203,7 @@ async function launch(){
     showCabInRoster(v);
     drawDepots(network,f.vehicles);
     closePlanner();running=true;f.failed=false;select(c.id);schedule(f,0);
-    msg('Cab '+c.cab+' left '+c.depot+' for pickup '+c.origin+'.');
+    msg(c.vehicle_id+' left '+c.depot+' for pickup '+c.origin+'.');
   }catch(e){msg(e.message);}
   finally{
     changing=false;for(const id of ['cancel','reset','pickup','dropoff','fleetSize'])$(id).disabled=false;

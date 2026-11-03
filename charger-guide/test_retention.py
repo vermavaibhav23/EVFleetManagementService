@@ -83,7 +83,7 @@ class RetentionEvidenceTests(unittest.TestCase):
 
         class SnapshotDb:
             async def fetchrow(self, *_):
-                return {"trip_id": trip_id, "cab_number": 1,
+                return {"trip_id": trip_id, "vehicle_id":"KA01AB1234", "cab_number": 1,
                         "opened_sequence": 15, "closed_sequence": 30,
                         "peak_metres": 797, "opening_samples": json.dumps(samples)}
 

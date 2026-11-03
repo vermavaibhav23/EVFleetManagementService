@@ -184,7 +184,7 @@ async def ingest(batch: Batch, request: Request, user: UUID=Depends(owner)):
 @router.post("/me/alerts/{alert_id}/explain")
 async def explain(alert_id: int, request: Request,user: UUID=Depends(owner)):
     db = request.app.state.db
-    alert = await db.fetchrow("""SELECT a.*,v.cab_number FROM cab_watch_accounts.alerts a
+    alert = await db.fetchrow("""SELECT a.*,v.id AS vehicle_id,v.cab_number FROM cab_watch_accounts.alerts a
         JOIN cab_watch_accounts.trips t ON t.id=a.trip_id JOIN cab_watch_accounts.vehicles v ON v.id=t.vehicle_id
         WHERE v.user_id=$1 AND a.id=$2""",user,alert_id)
     if not alert:
@@ -197,10 +197,10 @@ async def explain(alert_id: int, request: Request,user: UUID=Depends(owner)):
             FROM cab_watch_accounts.gps_readings WHERE trip_id=$1 AND sequence BETWEEN $2 AND $3 ORDER BY sequence""",
             alert["trip_id"], alert["opened_sequence"]-2, alert["opened_sequence"])
         samples = [dict(sequence=r["sequence"], metres=int(r["metres"])) for r in rows]
-    facts = dict(cab=alert["cab_number"], threshold_m=city.LIMIT,
+    facts = dict(vehicle_id=alert["vehicle_id"], cab=alert["cab_number"], threshold_m=city.LIMIT,
                  opening_samples=samples,
                  status="resolved" if alert["closed_sequence"] else "open", peak_m=round(alert["peak_metres"]))
-    baseline = (f"Cab {facts['cab']} triggered the {city.LIMIT} m off-route alert "
+    baseline = (f"{facts['vehicle_id']} triggered the {city.LIMIT} m off-route alert "
                 f"({', '.join(str(r['metres'])+' m' for r in facts['opening_samples'])}). "
                 + ("It returned to the route." if facts["status"]=="resolved" else "Check the trip with the driver."))
     declarations = [tool("read_alert_evidence", "Read the measured offsets and status for this simulated alert.")]

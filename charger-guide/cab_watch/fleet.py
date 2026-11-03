@@ -2,7 +2,7 @@
 
 import json
 from collections import Counter
-from uuid import UUID, uuid4
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from . import city
@@ -98,7 +98,7 @@ async def snapshot(conn, user, plans=False):
             )
         trips.append(trip)
     alerts = await conn.fetch(
-        """SELECT a.*,v.cab_number AS cab FROM cab_watch_accounts.alerts a
+        """SELECT a.*,v.id AS vehicle_id,v.cab_number AS cab FROM cab_watch_accounts.alerts a
         JOIN cab_watch_accounts.trips t ON t.id=a.trip_id JOIN cab_watch_accounts.vehicles v ON v.id=t.vehicle_id
         WHERE v.user_id=$1 ORDER BY (a.closed_sequence IS NULL) DESC,a.id DESC LIMIT 1000""",
         user,
@@ -140,7 +140,7 @@ async def resize(setup: Setup, request: Request, user: UUID = Depends(owner)):
             if len(idle) < -difference:
                 raise HTTPException(409, "The fleet size must include every busy cab.")
             await conn.execute(
-                "UPDATE cab_watch_accounts.vehicles SET retired_at=now() WHERE id=ANY($1::uuid[])",
+                "UPDATE cab_watch_accounts.vehicles SET retired_at=now() WHERE id=ANY($1::text[])",
                 idle[:-difference],
             )
         elif difference > 0:
@@ -153,9 +153,9 @@ async def resize(setup: Setup, request: Request, user: UUID = Depends(owner)):
             for number in range(maximum + 1, maximum + difference + 1):
                 depot = min(DEPOTS, key=lambda d: counts[d])
                 counts[depot] += 1
-                additions.append((uuid4(), user, number, depot))
+                additions.append((user, number, depot))
             await conn.executemany(
-                "INSERT INTO cab_watch_accounts.vehicles(id,user_id,cab_number,parked_depot_id) VALUES($1,$2,$3,$4)",
+                "INSERT INTO cab_watch_accounts.vehicles(user_id,cab_number,parked_depot_id) VALUES($1,$2,$3)",
                 additions,
             )
         return await snapshot(conn, user, plans=True)

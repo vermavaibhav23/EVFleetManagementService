@@ -51,12 +51,12 @@ export function makeLayers(cabs,choose){
     svg(g,'rect',{x:destination[0]-6,y:destination[1]-6,width:12,height:12,fill:'white',stroke:c.color,'stroke-width':3,
       transform:'rotate(45 '+destination[0]+' '+destination[1]+')'});
 
-    const pin=svg(pins,'g',{class:'cabpin',role:'button',tabindex:0,'aria-label':'Select Cab '+c.cab});
+    const pin=svg(pins,'g',{class:'cabpin',role:'button',tabindex:0,'aria-label':'Select '+c.vehicle_id});
     pin.onclick=()=>choose(c.id);pin.onkeydown=e=>{if(['Enter',' '].includes(e.key)){e.preventDefault();choose(c.id);}};
     const halo=svg(pin,'circle',{r:17,fill:'white',stroke:c.color,'stroke-width':2});
     svg(pin,'rect',{x:-12,y:-10,width:24,height:20,rx:7,fill:c.color,stroke:'white','stroke-width':1.5});
     svg(pin,'text',{x:0,y:4,'text-anchor':'middle',class:'pinlabel'},c.cab);
-    svg(pin,'title',{},'Cab '+c.cab+' · '+c.origin+' to '+c.destination);
+    svg(pin,'title',{},c.vehicle_id+' · '+c.origin+' to '+c.destination);
     pin.setAttribute('transform','translate('+ox+' '+oy+')');
     c.map={g,pin,halo,display:[ox,oy],target:[ox,oy],from:[ox,oy],at:0};
   });

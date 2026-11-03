@@ -39,11 +39,17 @@ class AccountFlow(unittest.TestCase):
             resp.raise_for_status()
             cars = resp.json()["vehicles"]
             self.assertEqual(len(cars), 50)
+            self.assertRegex(cars[0]["id"], r"^KA[0-9]{2}[A-Z]{2}[0-9]{4}$")
+            plates = {c["id"] for c in cars}
+            self.assertEqual(len(plates),50)
             depot_counts = [
                 sum(c["parked_depot_id"] == d["id"] for c in cars) for d in city.DEPOTS
             ]
             self.assertEqual(sorted(depot_counts), [12, 12, 13, 13])
             self.assertEqual(client.get("me/fleet", headers=b).json()["vehicles"], [])
+            other=client.put("me/fleet",headers=b,json={"count":2}).json()["vehicles"]
+            self.assertTrue(plates.isdisjoint(v["id"] for v in other))
+            client.put("me/fleet",headers=b,json={"count":1}).raise_for_status()
             tid = str(uuid4())
             path = "me/trips/" + tid
             route = dict(pickup="G", dropoff="K")
@@ -56,6 +62,7 @@ class AccountFlow(unittest.TestCase):
             )
             self.assertEqual(repeated["trips"][0]["id"], tid)
             busy = next(c for c in repeated["vehicles"] if c["status"] == "busy")
+            self.assertEqual(busy["id"],trip.json()["vehicle_id"])
             self.assertIsNone(busy["parked_depot_id"])
             self.assertIsNone(busy["current_node"])
             lat, lon = city.gps(city.NODES["Z"])

@@ -4,7 +4,7 @@ CabWatch is a simulated fleet dispatch and route-monitoring dashboard built with
 
 ## Dispatch a fleet
 
-Register or sign in with your email and password. Each account owns one persistent fleet. Enter 1–1000 cars and press **Set fleet**. Repeating the size preserves the vehicle IDs and existing trips. Increasing it adds cars to the least populated depots. Decreasing it retires available cars while keeping their history.
+Register or sign in with your email and password. Each account owns one persistent fleet. Vehicle IDs are globally unique simulated registration plates such as KA01AB1234. Trips reference the plate directly. The small numbered map marker is a local display label. Enter 1–1000 cars and press **Set fleet**. Repeating the size preserves the vehicle IDs and existing trips. Increasing it adds cars to the least populated depots. Decreasing it retires available cars while keeping their history.
 
 Use **Add trip** to pick two intersections. The closest available cab in your fleet travels to pickup, then drop-off, then the closest depot to drop-off. Only the passenger route is colored. **Change route** queues a side turn at the next eligible junction. **Return to route** finds the closest planned junction by road. After signing in again, choose **Start** to resume a paused trip from its latest recorded GPS update.
 
