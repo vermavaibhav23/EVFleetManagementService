@@ -107,6 +107,7 @@ async def lifespan(app):
         app.state.db, app.state.producer, app.state.worker = db, producer, worker
         app.state.cab_stream = CabStream(db, options)
         stack.push_async_callback(app.state.cab_stream.stop)
+        await app.state.cab_stream.start()
         app.state.drive_task = None
         app.state.drive_lock = asyncio.Lock()
         app.state.drive_stop = asyncio.Event()

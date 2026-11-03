@@ -1,9 +1,13 @@
 const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
 export function makeCab(trip, network) {
-  const point = [...trip.path[0]];
-  return {...trip, nodes: trip.path, index: 0, point, mode: 'route', sequence: 0,
-    streak: 0, offset: 0, confirmed: 0, trail: [point], network};
+  const legs = trip.legs || [{stops:trip.stops, path:trip.path}];
+  const point = [...legs[0].path[0]];
+  const cab = {...trip, legs, fullStops:trip.stops, stops:legs[0].stops,
+    nodes:legs[0].path, leg:0, index:0, point, mode:'route', sequence:0,
+    streak:0, offset:0, confirmed:0, trail:[point], network};
+  while (cab.stops.length === 1 && cab.leg < legs.length - 1) nextLeg(cab);
+  return cab;
 }
 
 function neighbours(network, node) {
@@ -14,9 +18,21 @@ function pick(choices) {
   return choices[Math.floor(Math.random() * choices.length)];
 }
 
+function nextLeg(cab) {
+  cab.leg++;
+  cab.stops = cab.legs[cab.leg].stops;
+  cab.nodes = cab.legs[cab.leg].path;
+  cab.index = 0;
+  cab.mode = 'route';
+}
+
 function resumeAt(cab, node) {
   cab.index = cab.stops.indexOf(node);
-  cab.mode = cab.index === cab.stops.length - 1 ? 'arrived' : 'route';
+  cab.mode = 'route';
+  while (cab.index === cab.stops.length - 1 && cab.leg < cab.legs.length - 1) {
+    nextLeg(cab);
+  }
+  if (cab.index === cab.stops.length - 1) cab.mode = 'arrived';
 }
 
 export function divert(cab) {
@@ -103,3 +119,4 @@ export function advance(cab) {
   cab.sequence++;
   return true;
 }
+

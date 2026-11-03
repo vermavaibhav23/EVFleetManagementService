@@ -26,15 +26,30 @@ export function cityMap(network,pick){
     g.onkeydown=e=>{if(['Enter',' '].includes(e.key)){e.preventDefault();pick(name);}};
   }
 }
+export function drawDepots(network,vehicles){
+  const layer=document.querySelector('#depots');
+  layer.replaceChildren();
+  for(const depot of network.depots){
+    const [x,y]=network.nodes[depot.node];
+    const parked=vehicles.filter(v=>v.depot_id===depot.id&&v.status==='available').length;
+    const right=x>network.nodes.N[0];
+    svg(layer,'rect',{x:x-11,y:y-11,width:22,height:22,rx:5,fill:'#173f4a',stroke:'white','stroke-width':2});
+    svg(layer,'text',{x,y:y+5,'text-anchor':'middle',class:'depot-mark'},parked);
+    svg(layer,'text',{x:x+(right?-19:19),y:y+31,'text-anchor':right?'end':'start',class:'depot-label'},depot.name);
+  }
+}
 export function makeLayers(cabs,choose){
   const routes=document.querySelector('#routes'), trails=document.querySelector('#trails'),pins=document.querySelector('#pins');
   cabs.forEach(c=>{
     const g=svg(routes,'g',{}), points=c.path.map(p=>p.join(',')).join(' ');
     svg(g,'polyline',{points,fill:'none',stroke:'white','stroke-width':8,'stroke-linejoin':'round'});
     svg(g,'polyline',{points,fill:'none',stroke:c.color,'stroke-width':4,'stroke-linejoin':'round'});
-    const [ox,oy]=c.nodes[0],[dx,dy]=c.nodes.at(-1);
-    svg(g,'circle',{cx:ox,cy:oy,r:7,fill:'white',stroke:c.color,'stroke-width':3});
-    svg(g,'rect',{x:dx-6,y:dy-6,width:12,height:12,fill:'white',stroke:c.color,'stroke-width':3,transform:'rotate(45 '+dx+' '+dy+')'});
+    const [ox,oy]=c.path[0];
+    const pickup=c.legs.length>1?c.legs[1].path[0]:c.path[0];
+    const destination=c.legs.length>1?c.legs[1].path.at(-1):c.path.at(-1);
+    svg(g,'circle',{cx:pickup[0],cy:pickup[1],r:7,fill:'white',stroke:c.color,'stroke-width':3});
+    svg(g,'rect',{x:destination[0]-6,y:destination[1]-6,width:12,height:12,fill:'white',stroke:c.color,'stroke-width':3,
+      transform:'rotate(45 '+destination[0]+' '+destination[1]+')'});
     const trail=svg(trails,'polyline',{points:'',fill:'none',stroke:c.color,'stroke-width':3,'stroke-dasharray':'4 5','stroke-linecap':'round'});
     const pin=svg(pins,'g',{class:'cabpin',role:'button',tabindex:0,'aria-label':'Select Cab '+c.cab});
     pin.onclick=()=>choose(c.id);pin.onkeydown=e=>{if(['Enter',' '].includes(e.key)){e.preventDefault();choose(c.id);}};
@@ -52,8 +67,11 @@ export function drawSharedRoads(cabs,network){
   layer.replaceChildren();
   const owners=new Map();
   for(const cab of cabs){
-    for(let i=1;i<cab.stops.length;i++){
-      const edge=[cab.stops[i-1],cab.stops[i]].sort().join('');
+    const seen=new Set();
+    for(let i=1;i<cab.fullStops.length;i++){
+      const edge=[cab.fullStops[i-1],cab.fullStops[i]].sort().join('');
+      if(seen.has(edge))continue;
+      seen.add(edge);
       if(!owners.has(edge))owners.set(edge,[]);
       owners.get(edge).push(cab);
     }
@@ -95,4 +113,5 @@ export function animate(cabs,now){
   }
   return active;
 }
+
 

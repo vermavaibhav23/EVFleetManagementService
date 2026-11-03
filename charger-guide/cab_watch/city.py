@@ -12,6 +12,12 @@ LON_SCALE = LAT_SCALE * cos(radians(ORIGIN[0]))
 LIMIT = 200
 REQUIRED = 3
 TOPIC = "cab.location"
+DEPOTS = [
+    {"id": "northwest", "name": "Northwest Depot", "node": "A"},
+    {"id": "northeast", "name": "Northeast Depot", "node": "E"},
+    {"id": "southwest", "name": "Southwest Depot", "node": "V"},
+    {"id": "southeast", "name": "Southeast Depot", "node": "Z"},
+]
 ROUTES = [
     ("Medical College", "Central Station", "#2663da", [(80,80),(625,80),(625,320)]),
     ("Harbour Market", "City Library", "#a13e96", [(850,160),(405,160),(405,400)]),
@@ -76,6 +82,22 @@ def shortest_route(start, end):
     raise ValueError("No road connects these intersections")
 
 
+def depot_allocation(count):
+    """Distribute vehicles as evenly as possible, in a stable depot order."""
+    each, extra = divmod(count, len(DEPOTS))
+    return [each + (index < extra) for index in range(len(DEPOTS))]
+
+
+def nearest_available(vehicles, pickup):
+    """Choose by road distance, then by stable vehicle number."""
+    ranked = []
+    for vehicle in vehicles:
+        if vehicle["status"] == "available":
+            _, metres = shortest_route(vehicle["current_node"], pickup)
+            ranked.append((metres, vehicle["vehicle_index"], vehicle))
+    return min(ranked, default=(None, None, None))[-1]
+
+
 def map_point(lat, lon):
     return ((lon - ORIGIN[1]) * LON_SCALE / METRES,
             (ORIGIN[0] - lat) * LAT_SCALE / METRES)
@@ -92,6 +114,8 @@ def offset_metres(route_index, lat, lon):
 
 def distance_from_path(line, lat, lon):
     x, y = map_point(lat, lon)
+    if len(line) == 1:
+        return hypot(x - line[0][0], y - line[0][1]) * METRES
     distances = []
     for (ax, ay), (bx, by) in zip(line, line[1:]):
         dx, dy = bx - ax, by - ay
@@ -104,4 +128,5 @@ def next_streak(distance, previous, consecutive):
     if distance <= LIMIT:
         return 0
     return (previous if consecutive else 0) + 1
+
 
