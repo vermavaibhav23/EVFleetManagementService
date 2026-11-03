@@ -85,7 +85,8 @@ async def record(db, reading):
             depot = city.NODES[legs[2][-1]]
             if city.distance_from_path([depot], reading.lat, reading.lon) < 1:
                 await conn.execute("UPDATE cab_watch.trips SET phase=3,completed_at=now() WHERE id=$1", reading.trip_id)
-                await conn.execute("""UPDATE cab_watch.vehicles SET status='available',current_node=$2
+                await conn.execute("""UPDATE cab_watch.vehicles SET status='available',current_node=$2,
+                    depot_id=(SELECT id FROM cab_watch.depots WHERE node=$2)
                     WHERE id=$1""", trip["vehicle_id"], legs[2][-1])
 
 
@@ -192,7 +193,7 @@ async def add_trip(session: UUID, trip_id: UUID, setup: TripRequest, request: Re
                 exists = await conn.fetchval("SELECT 1 FROM cab_watch.vehicles WHERE session_id=$1 LIMIT 1", session)
                 raise HTTPException(409 if exists else 404,
                                     "All cars are busy" if exists else "Unknown fleet. Create a new fleet.")
-            depot = next(d for d in city.DEPOTS if d["id"] == vehicle["depot_id"])
+            depot = min(city.DEPOTS, key=lambda d: city.shortest_route(setup.dropoff, d["node"])[1])
             legs = [city.shortest_route(a, b)[0] for a, b in
                     [(vehicle["current_node"], setup.pickup),
                      (setup.pickup, setup.dropoff), (setup.dropoff, depot["node"])]]
@@ -203,13 +204,14 @@ async def add_trip(session: UUID, trip_id: UUID, setup: TripRequest, request: Re
                 VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb)""",
                 trip_id, session, index, vehicle["id"], setup.pickup, setup.dropoff, full, json.dumps(legs))
             await conn.execute("UPDATE cab_watch.vehicles SET status='busy' WHERE id=$1", vehicle["id"])
-    depot = next(d for d in city.DEPOTS if d["id"] == vehicle["depot_id"])
+    depot = next(d for d in city.DEPOTS if d["node"] == legs[0][0])
+    arrival = next(d for d in city.DEPOTS if d["node"] == legs[2][-1])
     full = legs[0] + legs[1][1:] + legs[2][1:]
     leg_data = [dict(stops=part, path=[city.NODES[n] for n in part],
                      metres=sum(city.GRAPH[a][b] for a, b in zip(part, part[1:]))) for part in legs]
     return dict(id=trip_id, vehicle_id=vehicle["id"], cab=vehicle["vehicle_index"]+1,
                 depot_id=depot["id"], depot=depot["name"], depot_node=depot["node"],
-                origin=setup.pickup, destination=setup.dropoff,
+                arrival_depot=arrival["name"], origin=setup.pickup, destination=setup.dropoff,
                 color=city.COLORS[vehicle["vehicle_index"] % len(city.COLORS)], legs=leg_data,
                 stops=full, path=[city.NODES[n] for n in full], metres=metres,
                 total_metres=sum(leg["metres"] for leg in leg_data))

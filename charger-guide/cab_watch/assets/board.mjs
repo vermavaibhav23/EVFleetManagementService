@@ -1,5 +1,5 @@
 import {makeCab,divert,rejoin,advance} from './motion.mjs?v=dispatch3';
-import {cityMap,drawDepots,makeLayers,drawSharedRoads,selectMap,showPoint,animate} from './map.mjs?v=depots1';
+import {cityMap,drawDepots,makeLayers,drawSharedRoads,selectMap,showPoint,animate} from './map.mjs?v=passenger4';
 
 const $=id=>document.getElementById(id);
 const STAGES=['To pickup','With customer','Returning to depot'];
@@ -54,7 +54,7 @@ function render(){
   }else{
     $('selected').textContent='Cab '+c.cab+' · '+c.origin+' → '+c.destination;
     $('tripline').textContent=c.depot+' → pickup '+c.origin+' → drop-off '+c.destination+
-      ' → '+c.depot+' · '+(c.total_metres/1000).toFixed(2)+' km · '+
+      ' → '+c.arrival_depot+' · '+(c.total_metres/1000).toFixed(2)+' km · '+
       (c.mode==='arrived'?'Completed':STAGES[c.leg]+' / '+c.mode);
     $('distance').textContent=Math.round(c.offset)+' m from current leg · GPS #'+c.confirmed+
       ' · '+Math.min(c.streak,3)+'/3 off-route readings';
@@ -98,7 +98,7 @@ async function readState(f){
   for(const saved of result.vehicles){
     const v=f.vehicles.find(v=>v.id===saved.id);
     if(!v)continue;
-    v.status=saved.status;v.current_node=saved.current_node;
+    v.status=saved.status;v.current_node=saved.current_node;v.depot_id=saved.depot_id;
     if(v.status==='available')v.currentTrip=null;
   }
   for(const trip of result.trips){

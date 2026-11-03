@@ -39,9 +39,9 @@ export function drawDepots(network,vehicles){
   }
 }
 export function makeLayers(cabs,choose){
-  const routes=document.querySelector('#routes'), trails=document.querySelector('#trails'),pins=document.querySelector('#pins');
+  const routes=document.querySelector('#routes'),pins=document.querySelector('#pins');
   cabs.forEach(c=>{
-    const g=svg(routes,'g',{}), points=c.path.map(p=>p.join(',')).join(' ');
+    const g=svg(routes,'g',{}), points=c.legs[1].path.map(p=>p.join(',')).join(' ');
     svg(g,'polyline',{points,fill:'none',stroke:'white','stroke-width':8,'stroke-linejoin':'round'});
     svg(g,'polyline',{points,fill:'none',stroke:c.color,'stroke-width':4,'stroke-linejoin':'round'});
     const [ox,oy]=c.path[0];
@@ -50,7 +50,7 @@ export function makeLayers(cabs,choose){
     svg(g,'circle',{cx:pickup[0],cy:pickup[1],r:7,fill:'white',stroke:c.color,'stroke-width':3});
     svg(g,'rect',{x:destination[0]-6,y:destination[1]-6,width:12,height:12,fill:'white',stroke:c.color,'stroke-width':3,
       transform:'rotate(45 '+destination[0]+' '+destination[1]+')'});
-    const trail=svg(trails,'polyline',{points:'',fill:'none',stroke:c.color,'stroke-width':3,'stroke-dasharray':'4 5','stroke-linecap':'round'});
+
     const pin=svg(pins,'g',{class:'cabpin',role:'button',tabindex:0,'aria-label':'Select Cab '+c.cab});
     pin.onclick=()=>choose(c.id);pin.onkeydown=e=>{if(['Enter',' '].includes(e.key)){e.preventDefault();choose(c.id);}};
     const halo=svg(pin,'circle',{r:17,fill:'white',stroke:c.color,'stroke-width':2});
@@ -58,7 +58,7 @@ export function makeLayers(cabs,choose){
     svg(pin,'text',{x:0,y:4,'text-anchor':'middle',class:'pinlabel'},c.cab);
     svg(pin,'title',{},'Cab '+c.cab+' · '+c.origin+' to '+c.destination);
     pin.setAttribute('transform','translate('+ox+' '+oy+')');
-    c.map={g,trail,pin,halo,display:[ox,oy],target:[ox,oy],from:[ox,oy],at:0};
+    c.map={g,pin,halo,display:[ox,oy],target:[ox,oy],from:[ox,oy],at:0};
   });
 }
 // Give every cab a visible stripe on roads used by more than one trip.
@@ -67,9 +67,9 @@ export function drawSharedRoads(cabs,network){
   layer.replaceChildren();
   const owners=new Map();
   for(const cab of cabs){
-    const seen=new Set();
-    for(let i=1;i<cab.fullStops.length;i++){
-      const edge=[cab.fullStops[i-1],cab.fullStops[i]].sort().join('');
+    const seen=new Set(), passenger=cab.legs[1].stops;
+    for(let i=1;i<passenger.length;i++){
+      const edge=[passenger[i-1],passenger[i]].sort().join('');
       if(seen.has(edge))continue;
       seen.add(edge);
       if(!owners.has(edge))owners.set(edge,[]);
@@ -101,7 +101,7 @@ export function showPoint(c,point){
   const m=c.map;
   if(Math.hypot(point[0]-m.target[0],point[1]-m.target[1])<.01)return;
   m.from=[...m.display];m.target=point;m.at=performance.now();
-  c.trail.push(point);m.trail.setAttribute('points',c.trail.map(p=>p.join(',')).join(' '));
+
 }
 export function animate(cabs,now){
   let active=false;
