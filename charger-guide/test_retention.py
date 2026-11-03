@@ -60,7 +60,7 @@ def run_immediate(coroutine):
 
 
 class RetentionEvidenceTests(unittest.TestCase):
-    def test_alert_snapshots_opening_readings(self):
+    def test_alert_records_opening_sequence_and_peak(self):
         trip_id = uuid4()
         trip = {
             "last_sequence": 2, "off_count": 2, "phase": 0,
@@ -71,21 +71,17 @@ class RetentionEvidenceTests(unittest.TestCase):
         lat, lon = city.gps(city.NODES["Z"])
         run_immediate(record(RecordingPool(conn), Point(trip_id=trip_id, sequence=3, leg=0, lat=lat, lon=lon)))
         alert_write = next(args for sql, args in conn.writes if "INSERT INTO cab_watch_accounts.alerts" in sql)
-        samples = json.loads(alert_write[3])
-        self.assertEqual([sample["sequence"] for sample in samples], [3])
-        self.assertGreater(samples[-1]["metres"], 200)
+        self.assertEqual(alert_write[:2], (trip_id, 3))
+        self.assertGreater(alert_write[2], 200)
 
-    def test_explanation_uses_alert_snapshot_without_gps_rows(self):
+    def test_explanation_uses_alert_fields_without_gps_rows(self):
         trip_id = uuid4()
-        samples = [{"sequence": 13, "metres": 256},
-                   {"sequence": 14, "metres": 320},
-                   {"sequence": 15, "metres": 385}]
 
         class SnapshotDb:
             async def fetchrow(self, *_):
                 return {"trip_id": trip_id, "vehicle_id":"KA01AB1234", "cab_number": 1,
                         "opened_sequence": 15, "closed_sequence": 30,
-                        "peak_metres": 797, "opening_samples": json.dumps(samples)}
+                        "peak_metres": 797}
 
             async def fetch(self, *_):
                 raise AssertionError("Old GPS rows should not be required")
@@ -96,7 +92,9 @@ class RetentionEvidenceTests(unittest.TestCase):
         with patch("cab_watch.api.generate", new=unavailable):
             result = run_immediate(explain(1, request, uuid4()))
         self.assertEqual(result["source"], "Rule-based explanation")
-        self.assertEqual(result["facts"]["opening_samples"], samples)
+        self.assertEqual(result["facts"]["opened_sequence"], 15)
+        self.assertEqual(result["facts"]["peak_m"], 797)
+        self.assertEqual(result["facts"]["closed_sequence"], 30)
         self.assertEqual(result["facts"]["status"], "resolved")
 
     def test_status_reads_vehicle_and_gps_from_one_snapshot(self):

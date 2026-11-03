@@ -137,8 +137,9 @@ CREATE TABLE IF NOT EXISTS cab_watch_accounts.alerts (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     trip_id uuid NOT NULL REFERENCES cab_watch_accounts.trips ON DELETE CASCADE,
     opened_sequence integer NOT NULL, closed_sequence integer, peak_metres real NOT NULL,
-    opened_at timestamptz NOT NULL DEFAULT now(), resolved_at timestamptz, opening_samples jsonb NOT NULL
+    opened_at timestamptz NOT NULL DEFAULT now(), resolved_at timestamptz
 );
+ALTER TABLE cab_watch_accounts.alerts DROP COLUMN IF EXISTS opening_samples;
 CREATE UNIQUE INDEX IF NOT EXISTS one_open_alert ON cab_watch_accounts.alerts(trip_id) WHERE closed_sequence IS NULL;
 CREATE INDEX IF NOT EXISTS gps_received_at ON cab_watch_accounts.gps_readings(received_at);
 

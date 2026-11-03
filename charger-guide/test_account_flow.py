@@ -85,7 +85,14 @@ class AccountFlow(unittest.TestCase):
                     break
                 time.sleep(0.4)
             self.assertTrue(state["alerts"])
-            alert = state["alerts"][0]["id"]
+            incident = state["alerts"][0]
+            self.assertNotIn("opening_samples",incident)
+            alert = incident["id"]
+            explanation = client.post(f"me/alerts/{alert}/explain",headers=a)
+            explanation.raise_for_status()
+            facts = explanation.json()["facts"]
+            self.assertEqual(facts["opened_sequence"],incident["opened_sequence"])
+            self.assertEqual(facts["peak_m"],round(incident["peak_metres"]))
             self.assertEqual(
                 client.post(f"me/alerts/{alert}/explain", headers=b).status_code, 404
             )

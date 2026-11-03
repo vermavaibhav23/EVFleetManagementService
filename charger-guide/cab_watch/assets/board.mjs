@@ -85,7 +85,7 @@ async function explain(a){
     if(f!==fleet||generation!==reviewGeneration)return;
     pane.replaceChildren(element('strong',r.source+' · '+a.vehicle_id+' · '+r.facts.status+' at review'),
       element('p',r.summary),
-      element('p','Opening readings: '+r.facts.opening_samples.map(x=>'#'+x.sequence+' = '+x.metres+' m').join(' · ')));
+      element('p','Opened at GPS #'+r.facts.opened_sequence+' · peak '+r.facts.peak_m+' m'));
     if(r.notice)pane.append(element('small',r.notice));
   }catch(e){if(f===fleet&&generation===reviewGeneration)pane.textContent=e.message;}
 }

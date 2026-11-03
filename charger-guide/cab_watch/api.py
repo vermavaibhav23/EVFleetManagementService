@@ -71,12 +71,11 @@ async def record(db, reading):
         await conn.execute("""UPDATE cab_watch_accounts.trips SET last_sequence=$2,motion=$3::jsonb,distance_m=$4,phase=$5
             WHERE id=$1""", reading.trip_id, reading.sequence, reading.motion.model_dump_json() if reading.motion else None, distance, reading.leg)
         if distance >= city.LIMIT:
-            evidence = [dict(sequence=reading.sequence, metres=round(distance))]
             await conn.execute("""INSERT INTO cab_watch_accounts.alerts
-                (trip_id,opened_sequence,peak_metres,opening_samples)
-                VALUES($1,$2,$3,$4::jsonb) ON CONFLICT(trip_id) WHERE closed_sequence IS NULL
+                (trip_id,opened_sequence,peak_metres)
+                VALUES($1,$2,$3) ON CONFLICT(trip_id) WHERE closed_sequence IS NULL
                 DO UPDATE SET peak_metres=greatest(cab_watch_accounts.alerts.peak_metres,excluded.peak_metres)""",
-                reading.trip_id, reading.sequence, distance, json.dumps(evidence))
+                reading.trip_id, reading.sequence, distance)
         else:
             await conn.execute("""UPDATE cab_watch_accounts.alerts SET closed_sequence=$2,resolved_at=now()
                 WHERE trip_id=$1 AND closed_sequence IS NULL""", reading.trip_id, reading.sequence)
@@ -189,23 +188,17 @@ async def explain(alert_id: int, request: Request,user: UUID=Depends(owner)):
         WHERE v.user_id=$1 AND a.id=$2""",user,alert_id)
     if not alert:
         raise HTTPException(404, "Unknown alert for this simulation")
-    if alert["opening_samples"]:
-        samples = (json.loads(alert["opening_samples"]) if isinstance(alert["opening_samples"], str)
-                   else alert["opening_samples"])
-    else:
-        rows = await db.fetch("""SELECT sequence,round(distance_m::numeric) AS metres
-            FROM cab_watch_accounts.gps_readings WHERE trip_id=$1 AND sequence BETWEEN $2 AND $3 ORDER BY sequence""",
-            alert["trip_id"], alert["opened_sequence"]-2, alert["opened_sequence"])
-        samples = [dict(sequence=r["sequence"], metres=int(r["metres"])) for r in rows]
     facts = dict(vehicle_id=alert["vehicle_id"], cab=alert["cab_number"], threshold_m=city.LIMIT,
-                 opening_samples=samples,
-                 status="resolved" if alert["closed_sequence"] else "open", peak_m=round(alert["peak_metres"]))
-    baseline = (f"{facts['vehicle_id']} triggered the {city.LIMIT} m off-route alert "
-                f"({', '.join(str(r['metres'])+' m' for r in facts['opening_samples'])}). "
-                + ("It returned to the route." if facts["status"]=="resolved" else "Check the trip with the driver."))
+                 opened_sequence=alert["opened_sequence"], closed_sequence=alert["closed_sequence"],
+                 status="resolved" if alert["closed_sequence"] is not None else "open",
+                 peak_m=round(alert["peak_metres"]))
+    baseline = (f"{facts['vehicle_id']} triggered the {city.LIMIT} m off-route alert at GPS "
+                f"#{facts['opened_sequence']}. The maximum recorded offset was {facts['peak_m']} m.")
+    if facts["closed_sequence"] is not None:
+        baseline += f" The alert cleared at GPS #{facts['closed_sequence']}."
     declarations = [tool("read_alert_evidence", "Read the measured offsets and status for this simulated alert.")]
     contents = [{"role":"user","parts":[{"text":"Call read_alert_evidence then explain the result to a dispatcher "
-                "in two short sentences. Use the evidence only. Never infer danger or a reason for the detour."}]}]
+                "in two short sentences. The peak is the maximum during the incident. Do not infer the opening distance. Never infer danger or a reason for the detour."}]}]
     try:
         turn = await generate(contents, declarations, "ANY")
         calls = [p["functionCall"] for p in turn["parts"] if "functionCall" in p]
