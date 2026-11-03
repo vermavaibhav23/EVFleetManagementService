@@ -1,4 +1,4 @@
-import {makeCab,divert,rejoin,advance} from './motion.mjs?v=depots1';
+import {makeCab,divert,rejoin,advance} from './motion.mjs?v=dispatch3';
 import {cityMap,drawDepots,makeLayers,drawSharedRoads,selectMap,showPoint,animate} from './map.mjs?v=depots1';
 
 const $=id=>document.getElementById(id);
@@ -39,7 +39,9 @@ function render(){
     if(!v.row)continue;
     const trip=fleet.cabs.find(c=>c.id===v.currentTrip);
     v.row.setAttribute('aria-pressed',String(v.latestTrip===selected));
-    v.badge.textContent=trip&&alertFor(trip)?'Check trip':trip?.streak?'Checking':
+    const detouring=trip?.mode==='detour', alarm=trip && alertFor(trip);
+    v.row.classList.toggle('alarm',Boolean(detouring || alarm));
+    v.badge.textContent=alarm?'Off-route alert':detouring?'Route changed':trip?.streak?'Checking':
       v.status==='available'?'Available':STAGES[trip?.leg]||'Driving';
     v.badge.className='badge'+(trip?.streak?' warn':'');
     v.desc.textContent=v.status==='available'?depotFor(v).name+' · ready':
@@ -56,7 +58,7 @@ function render(){
       (c.mode==='arrived'?'Completed':STAGES[c.leg]+' / '+c.mode);
     $('distance').textContent=Math.round(c.offset)+' m from current leg · GPS #'+c.confirmed+
       ' · '+Math.min(c.streak,3)+'/3 off-route readings';
-    $('wrong').disabled=changing||c.mode!=='route';
+    $('wrong').disabled=changing||c.leg!==1||c.mode!=='route';
     $('return').disabled=changing||!['detour','turn requested'].includes(c.mode);
   }
   const logKey=JSON.stringify(fleet.alerts.map(a=>[a.id,a.closed_sequence,Math.round(a.peak_metres)]));
@@ -204,7 +206,7 @@ async function launch(){
   }
 }
 async function setup(){
-  if(changing)return;
+  if(changing||!$('fleetSize').reportValidity())return;
   changing=true;running=false;clearTimeout(timer);cancelAnimationFrame(frame);reviewGeneration++;
   fleet=null;selected=null;closePlanner();
   $('reset').disabled=true;$('fleetSize').disabled=true;
@@ -228,10 +230,9 @@ async function setup(){
 }
 function cityColor(cab){return ['#2164cb','#a53685','#00796b','#be5422','#664bac','#a62844',
   '#11759c','#637521','#ab400f','#594ba6','#08805a','#ad365e','#38578c','#885a0b',
-  '#426d57','#804991','#2d7782','#8c5436','#536aaf','#923b32'][cab-1];}
+  '#426d57','#804991','#2d7782','#8c5436','#536aaf','#923b32'][(cab-1)%20];}
 
-for(let n=1;n<=20;n++)$('fleetSize').add(new Option(String(n),String(n)));
-$('fleetSize').value='8';
+$('fleetSize').onkeydown=e=>{if(e.key==='Enter')setup();};
 $('pickup').onchange=$('dropoff').onchange=updatePlanner;
 $('launch').onclick=launch;$('cancel').onclick=()=>{closePlanner();render();};
 $('create').onclick=openPlanner;$('reset').onclick=setup;
@@ -241,5 +242,5 @@ $('wrong').onclick=()=>{divert(chosen());render();
   msg(running?'Wrong turn requested. Watch the GPS readings.':'Wrong turn queued. Press Start to drive.');};
 $('return').onclick=()=>{rejoin(chosen());render();
   msg(running?'Cab is rejoining its current planned leg.':'Return requested. Press Start to drive.');};
-setup();
+msg('Enter the number of cars and select Set fleet.');
 

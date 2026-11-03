@@ -21,7 +21,7 @@ router = APIRouter(prefix="/cab-watch")
 
 
 class Setup(BaseModel):
-    count: int = Field(ge=1, le=len(city.COLORS))
+    count: int = Field(ge=1, le=city.MAX_FLEET)
 
 
 class TripRequest(BaseModel):
@@ -38,7 +38,7 @@ class Point(BaseModel):
 
 
 class Batch(BaseModel):
-    readings: list[Point] = Field(min_length=1, max_length=len(city.COLORS))
+    readings: list[Point] = Field(min_length=1, max_length=city.MAX_FLEET)
 
 
 async def record(db, reading):
@@ -161,7 +161,7 @@ async def page():
 
 @router.get("/network")
 async def network():
-    return dict(nodes=city.NODES, roads=city.ROADS, capacity=len(city.COLORS),
+    return dict(nodes=city.NODES, roads=city.ROADS, capacity=city.MAX_FLEET,
                 depots=city.DEPOTS,
                 metres=city.METRES, origin=city.ORIGIN,
                 lat_scale=city.LAT_SCALE, lon_scale=city.LON_SCALE)
@@ -210,7 +210,7 @@ async def add_trip(session: UUID, trip_id: UUID, setup: TripRequest, request: Re
     return dict(id=trip_id, vehicle_id=vehicle["id"], cab=vehicle["vehicle_index"]+1,
                 depot_id=depot["id"], depot=depot["name"], depot_node=depot["node"],
                 origin=setup.pickup, destination=setup.dropoff,
-                color=city.COLORS[vehicle["vehicle_index"]], legs=leg_data,
+                color=city.COLORS[vehicle["vehicle_index"] % len(city.COLORS)], legs=leg_data,
                 stops=full, path=[city.NODES[n] for n in full], metres=metres,
                 total_metres=sum(leg["metres"] for leg in leg_data))
 
@@ -226,15 +226,14 @@ async def create_session(setup: Setup, request: Request):
         for depot, count in zip(city.DEPOTS, city.depot_allocation(setup.count)):
             for _ in range(count):
                 vehicle_id = uuid4()
-                await conn.execute("""INSERT INTO cab_watch.vehicles
-                    (id,session_id,vehicle_index,depot_id,current_node)
-                    VALUES($1,$2,$3,$4,$5)""",
-                    vehicle_id, session, index, depot["id"], depot["node"])
                 vehicles.append(dict(id=vehicle_id, cab=index+1, depot_id=depot["id"],
                                      current_node=depot["node"], status="available"))
                 index += 1
+        await conn.executemany("""INSERT INTO cab_watch.vehicles
+            (id,session_id,vehicle_index,depot_id,current_node) VALUES($1,$2,$3,$4,$5)""",
+            [(v["id"],session,v["cab"]-1,v["depot_id"],v["current_node"]) for v in vehicles])
     return dict(id=session, vehicles=vehicles, depots=city.DEPOTS,
-                capacity=len(city.COLORS), xs=city.XS, ys=city.YS, metres=city.METRES,
+                capacity=city.MAX_FLEET, xs=city.XS, ys=city.YS, metres=city.METRES,
                 origin=city.ORIGIN, lat_scale=city.LAT_SCALE, lon_scale=city.LON_SCALE,
                 limit=city.LIMIT, required=city.REQUIRED)
 

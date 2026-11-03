@@ -50,6 +50,7 @@ for start, end in ROADS:
     metres = round(hypot(x2 - x1, y2 - y1) * METRES)
     GRAPH[start][end] = GRAPH[end][start] = metres
 
+MAX_FLEET = 1000
 COLORS = [
     "#2164cb", "#a53685", "#00796b", "#be5422", "#664bac", "#a62844",
     "#11759c", "#637521", "#ab400f", "#594ba6", "#08805a", "#ad365e",

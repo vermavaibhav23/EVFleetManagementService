@@ -36,15 +36,17 @@ function resumeAt(cab, node) {
 }
 
 export function divert(cab) {
-  if (!['route', 'turn requested'].includes(cab.mode)) return;
-  cab.mode = 'turn requested';
-  if (distance(cab.point, cab.nodes[cab.index]) > 0) return;
-  const node = cab.stops[cab.index];
-  const choices = neighbours(cab.network, node).filter(n =>
-    n !== cab.stops[cab.index - 1] && n !== cab.stops[cab.index + 1]);
-  if (!choices.length) return;
-  cab.from = node;
-  cab.to = pick(choices);
+  if (cab.mode !== 'route' || (cab.legs.length > 1 && cab.leg !== 1)) return;
+  const node = cab.stops[cab.index], ahead = cab.stops[cab.index+1];
+  if (distance(cab.point, cab.network.nodes[node]) > 0) {
+    cab.from = ahead;
+    cab.to = node;
+  } else {
+    const exits = neighbours(cab.network, node);
+    const sides = exits.filter(n => n !== ahead);
+    cab.from = node;
+    cab.to = pick(sides.length ? sides : exits);
+  }
   cab.mode = 'detour';
 }
 
@@ -52,7 +54,7 @@ export function divert(cab) {
 // of reaching either endpoint includes only the remaining part of that road.
 function recoveryPath(cab) {
   const {nodes} = cab.network;
-  const eligible = new Set(cab.stops.slice(cab.index));
+  const eligible = new Set(cab.stops);
   const costs = new Map();
   const parent = new Map();
   const open = new Set([cab.from, cab.to]);
@@ -106,13 +108,15 @@ export function advance(cab) {
       const queued = cab.mode === 'turn requested';
       resumeAt(cab, next);
       if (queued && cab.mode !== 'arrived') divert(cab);
-    } else if (cab.stops.indexOf(next) >= cab.index) {
+    } else if (cab.mode === 'returning' && cab.stops.includes(next)) {
       resumeAt(cab, next);
     } else if (cab.mode === 'returning') {
       cab.recovery.shift();
     } else {
       const exits = neighbours(cab.network, next).filter(n => n !== cab.from);
-      cab.to = exits.length ? pick(exits) : cab.from;
+      const sideRoads = exits.filter(n => !cab.stops.some((v,i) => i>0 &&
+        ((v===n && cab.stops[i-1]===next) || (v===next && cab.stops[i-1]===n))));
+      cab.to = sideRoads.length ? pick(sideRoads) : exits.length ? pick(exits) : cab.from;
       cab.from = next;
     }
   }
