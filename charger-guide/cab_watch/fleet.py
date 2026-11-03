@@ -29,8 +29,8 @@ async def lock_fleet(conn, user):
 
 async def vehicles(conn, user):
     return await conn.fetch(
-        """SELECT v.id,v.cab_number AS cab,v.depot_id,d.node AS current_node,v.status
-        FROM cab_watch_accounts.vehicles v JOIN cab_watch_accounts.depots d ON d.id=v.depot_id
+        """SELECT v.id,v.cab_number AS cab,v.parked_depot_id,v.parked_depot_id AS depot_id,d.node AS current_node,v.status
+        FROM cab_watch_accounts.vehicles v LEFT JOIN cab_watch_accounts.depots d ON d.id=v.parked_depot_id
         WHERE v.user_id=$1 AND v.retired_at IS NULL ORDER BY v.cab_number""",
         user,
     )
@@ -148,14 +148,14 @@ async def resize(setup: Setup, request: Request, user: UUID = Depends(owner)):
                 "SELECT coalesce(max(cab_number),0) FROM cab_watch_accounts.vehicles WHERE user_id=$1",
                 user,
             )
-            counts = Counter(v["depot_id"] for v in cars)
+            counts = Counter(v["parked_depot_id"] for v in cars if v["parked_depot_id"] is not None)
             additions = []
             for number in range(maximum + 1, maximum + difference + 1):
                 depot = min(DEPOTS, key=lambda d: counts[d])
                 counts[depot] += 1
                 additions.append((uuid4(), user, number, depot))
             await conn.executemany(
-                "INSERT INTO cab_watch_accounts.vehicles(id,user_id,cab_number,depot_id) VALUES($1,$2,$3,$4)",
+                "INSERT INTO cab_watch_accounts.vehicles(id,user_id,cab_number,parked_depot_id) VALUES($1,$2,$3,$4)",
                 additions,
             )
         return await snapshot(conn, user, plans=True)
@@ -208,14 +208,14 @@ async def dispatch(
             VALUES($1,$2,$3,$4,$5,$6,$7::jsonb) RETURNING *""",
             trip_id,
             car["id"],
-            car["depot_id"],
+            car["parked_depot_id"],
             arrival["id"],
             setup.pickup,
             setup.dropoff,
             json.dumps(legs),
         )
         await conn.execute(
-            "UPDATE cab_watch_accounts.vehicles SET status='busy' WHERE id=$1",
+            "UPDATE cab_watch_accounts.vehicles SET status='busy',parked_depot_id=NULL WHERE id=$1",
             car["id"],
         )
         return trip_payload(dict(row, cab_number=car["cab"]))

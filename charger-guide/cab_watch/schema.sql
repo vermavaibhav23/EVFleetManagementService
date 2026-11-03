@@ -19,12 +19,27 @@ CREATE TABLE IF NOT EXISTS cab_watch_accounts.vehicles (
     id uuid PRIMARY KEY,
     user_id uuid NOT NULL REFERENCES cab_watch_accounts.users,
     cab_number integer NOT NULL CHECK(cab_number>0),
-    depot_id text NOT NULL REFERENCES cab_watch_accounts.depots,
+    parked_depot_id text REFERENCES cab_watch_accounts.depots,
     status text NOT NULL DEFAULT 'available' CHECK(status IN ('available','busy')),
     created_at timestamptz NOT NULL DEFAULT now(),
     retired_at timestamptz,
     UNIQUE(user_id,cab_number)
 );
+-- Upgrade previous account fleets without changing vehicle IDs or trip history.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+               WHERE table_schema='cab_watch_accounts' AND table_name='vehicles' AND column_name='depot_id') THEN
+        ALTER TABLE cab_watch_accounts.vehicles RENAME COLUMN depot_id TO parked_depot_id;
+        ALTER TABLE cab_watch_accounts.vehicles ALTER COLUMN parked_depot_id DROP NOT NULL;
+        UPDATE cab_watch_accounts.vehicles SET parked_depot_id=NULL WHERE status='busy';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='cab_watch_accounts.vehicles'::regclass
+                   AND conname='vehicle_parking_matches_status') THEN
+        ALTER TABLE cab_watch_accounts.vehicles ADD CONSTRAINT vehicle_parking_matches_status
+            CHECK ((status='available') = (parked_depot_id IS NOT NULL));
+    END IF;
+END $$;
 CREATE TABLE IF NOT EXISTS cab_watch_accounts.trips (
     id uuid PRIMARY KEY,
     vehicle_id uuid NOT NULL REFERENCES cab_watch_accounts.vehicles,

@@ -1,5 +1,5 @@
 import {makeCab,divert,rejoin,advance} from './motion.mjs?v=junction5';
-import {cityMap,drawDepots,makeLayers,drawSharedRoads,selectMap,showPoint,animate} from './map.mjs?v=passenger4';
+import {cityMap,drawDepots,makeLayers,drawSharedRoads,selectMap,showPoint,animate} from './map.mjs?v=parking1';
 
 const $=id=>document.getElementById(id);
 const STAGES=['To pickup','With customer','Returning to depot'];
@@ -23,7 +23,7 @@ async function api(path,method='GET',body){
 function chosen(){return fleet?.cabs.find(c=>c.id===selected);}
 function select(id){selected=id;selectMap(fleet.cabs,id);render();}
 function alertFor(c){return fleet.alerts.find(a=>a.trip_id===c.id&&a.closed_sequence===null);}
-function depotFor(v){return fleet.depots.find(d=>d.id===v.depot_id);}
+function depotFor(v){return fleet.depots.find(d=>d.id===v.parked_depot_id);}
 
 function render(){
   if(!fleet){
@@ -103,7 +103,7 @@ async function readState(f){
   for(const saved of result.vehicles){
     const v=f.vehicles.find(v=>v.id===saved.id);
     if(!v)continue;
-    v.status=saved.status;v.current_node=saved.current_node;v.depot_id=saved.depot_id;
+    v.status=saved.status;v.current_node=saved.current_node;v.parked_depot_id=saved.parked_depot_id;
     if(v.status==='available')v.currentTrip=null;
   }
   for(const trip of result.trips){
@@ -199,7 +199,7 @@ async function launch(){
     const c=makeCab(trip,network);
     f.cabs.push(c);makeLayers([c],select);drawSharedRoads(f.cabs,network);
     const v=f.vehicles.find(v=>v.id===trip.vehicle_id);
-    v.status='busy';v.currentTrip=c.id;v.latestTrip=c.id;
+    v.status='busy';v.parked_depot_id=null;v.currentTrip=c.id;v.latestTrip=c.id;
     showCabInRoster(v);
     drawDepots(network,f.vehicles);
     closePlanner();running=true;f.failed=false;select(c.id);schedule(f,0);

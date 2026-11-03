@@ -31,7 +31,7 @@ export function drawDepots(network,vehicles){
   layer.replaceChildren();
   for(const depot of network.depots){
     const [x,y]=network.nodes[depot.node];
-    const parked=vehicles.filter(v=>v.depot_id===depot.id&&v.status==='available').length;
+    const parked=vehicles.filter(v=>v.parked_depot_id===depot.id).length;
     const right=x>network.nodes.N[0];
     svg(layer,'rect',{x:x-11,y:y-11,width:22,height:22,rx:5,fill:'#173f4a',stroke:'white','stroke-width':2});
     svg(layer,'text',{x,y:y+5,'text-anchor':'middle',class:'depot-mark'},parked);

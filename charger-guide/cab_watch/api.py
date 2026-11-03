@@ -84,7 +84,7 @@ async def record(db, reading):
             depot = city.NODES[legs[2][-1]]
             if city.distance_from_path([depot], reading.lat, reading.lon) < 1:
                 await conn.execute("UPDATE cab_watch_accounts.trips SET phase=3,completed_at=now() WHERE id=$1", reading.trip_id)
-                await conn.execute("""UPDATE cab_watch_accounts.vehicles SET status='available',depot_id=$2
+                await conn.execute("""UPDATE cab_watch_accounts.vehicles SET status='available',parked_depot_id=$2
                     WHERE id=$1""", trip["vehicle_id"], trip["arrival_depot_id"])
 
 

@@ -40,7 +40,7 @@ class AccountFlow(unittest.TestCase):
             cars = resp.json()["vehicles"]
             self.assertEqual(len(cars), 50)
             depot_counts = [
-                sum(c["depot_id"] == d["id"] for c in cars) for d in city.DEPOTS
+                sum(c["parked_depot_id"] == d["id"] for c in cars) for d in city.DEPOTS
             ]
             self.assertEqual(sorted(depot_counts), [12, 12, 13, 13])
             self.assertEqual(client.get("me/fleet", headers=b).json()["vehicles"], [])
@@ -55,7 +55,9 @@ class AccountFlow(unittest.TestCase):
                 [c["id"] for c in cars], [c["id"] for c in repeated["vehicles"]]
             )
             self.assertEqual(repeated["trips"][0]["id"], tid)
-            self.assertTrue(any(c["status"] == "busy" for c in repeated["vehicles"]))
+            busy = next(c for c in repeated["vehicles"] if c["status"] == "busy")
+            self.assertIsNone(busy["parked_depot_id"])
+            self.assertIsNone(busy["current_node"])
             lat, lon = city.gps(city.NODES["Z"])
             gps = {"readings": [dict(trip_id=tid, sequence=1, leg=0, lat=lat, lon=lon)]}
             self.assertEqual(
@@ -86,3 +88,17 @@ class AccountFlow(unittest.TestCase):
             restored = client.get("me/fleet", headers=new_headers).json()
             self.assertEqual(restored["vehicles"], repeated["vehicles"])
             self.assertEqual(restored["trips"][0]["last_sequence"], 1)
+            # Cross the two leg boundaries, then park at E after the G-to-K trip.
+            for sequence,leg,node in [(2,1,"G"),(3,2,"K"),(4,2,"E")]:
+                lat,lon=city.gps(city.NODES[node])
+                reading=dict(trip_id=tid, sequence=sequence, leg=leg, lat=lat, lon=lon)
+                reply=client.post("me/gps",headers=a,json={"readings":[reading]})
+                self.assertEqual(reply.status_code,202)
+            for _ in range(60):
+                final=client.get("me/fleet",headers=a).json()
+                if final["trips"][0]["completed"]:break
+                time.sleep(.4)
+            self.assertTrue(final["trips"][0]["completed"])
+            parked=next(v for v in final["vehicles"] if v["id"]==busy["id"])
+            self.assertEqual((parked["status"],parked["parked_depot_id"]),("available","northeast"))
+            self.assertEqual(final["trips"][0]["depot"],"Northwest Depot")
