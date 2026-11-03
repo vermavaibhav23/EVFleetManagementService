@@ -36,6 +36,7 @@ function render(){
   $('play').disabled=changing||!moving;
   $('create').disabled=changing||!fleet.vehicles.some(v=>v.status==='available')||!$('planner').hidden;
   for(const v of fleet.vehicles){
+    if(!v.row)continue;
     const trip=fleet.cabs.find(c=>c.id===v.currentTrip);
     v.row.setAttribute('aria-pressed',String(v.latestTrip===selected));
     v.badge.textContent=trip&&alertFor(trip)?'Check trip':trip?.streak?'Checking':
@@ -46,7 +47,7 @@ function render(){
   }
   const c=chosen();
   if(!c){
-    $('selected').textContent='Select a cab';$('tripline').textContent='Create a trip to dispatch the closest available car.';
+    $('selected').textContent='Select a cab';$('tripline').textContent='Add a trip to dispatch the closest available car.';
     $('distance').textContent='';$('wrong').disabled=true;$('return').disabled=true;
   }else{
     $('selected').textContent='Cab '+c.cab+' · '+c.origin+' → '+c.destination;
@@ -167,6 +168,18 @@ function openPlanner(){
   for(const node of document.querySelectorAll('.junction'))node.setAttribute('tabindex','0');
   updatePlanner();render();
 }
+function showCabInRoster(v){
+  if(v.row)return;
+  if(!$('roster').querySelector('.cabrow'))$('roster').replaceChildren();
+  v.row=element('button',undefined,'cabrow');
+  v.row.style.setProperty('--cab',cityColor(v.cab));
+  const top=element('span',undefined,'rowtop'),id=element('span',undefined,'cabid');
+  id.append(element('i',undefined,'swatch'),element('strong','Cab '+v.cab));
+  v.badge=element('span','Available','badge');top.append(id,v.badge);
+  v.desc=element('span',undefined,'desc');v.row.append(top,v.desc);
+  v.row.onclick=()=>{if(v.latestTrip)select(v.latestTrip);};
+  $('roster').append(v.row);
+}
 async function launch(){
   if(changing||$('launch').disabled)return;
   const f=fleet;changing=true;
@@ -180,6 +193,7 @@ async function launch(){
     f.cabs.push(c);makeLayers([c],select);drawSharedRoads(f.cabs,network);
     const v=f.vehicles.find(v=>v.id===trip.vehicle_id);
     v.status='busy';v.currentTrip=c.id;v.latestTrip=c.id;
+    showCabInRoster(v);
     drawDepots(network,f.vehicles);
     closePlanner();running=true;f.failed=false;select(c.id);schedule(f,0);
     msg('Cab '+c.cab+' left '+c.depot+' for pickup '+c.origin+'.');
@@ -205,20 +219,10 @@ async function setup(){
       $(id).replaceChildren(new Option('Select node',''));
       for(const n of Object.keys(network.nodes))$(id).add(new Option(n,n));
     }
-    $('roster').replaceChildren();
-    for(const v of fleet.vehicles){
-      v.row=element('button',undefined,'cabrow');
-      v.row.style.setProperty('--cab',cityColor(v.cab));
-      const top=element('span',undefined,'rowtop'),id=element('span',undefined,'cabid');
-      id.append(element('i',undefined,'swatch'),element('strong','Cab '+v.cab));
-      v.badge=element('span','Available','badge');top.append(id,v.badge);
-      v.desc=element('span',undefined,'desc');v.row.append(top,v.desc);
-      v.row.onclick=()=>{if(v.latestTrip)select(v.latestTrip);};
-      $('roster').append(v.row);
-    }
+    $('roster').replaceChildren(element('p','Add a trip to see its cab.','inner muted'));
     $('alerts').textContent='No route alerts in this simulation.';$('review').hidden=true;
     $('connection').textContent='● Ready';
-    msg(fleet.vehicles.length+' cars placed across '+fleet.depots.length+' depots as evenly as possible. Create a trip.');
+    msg(fleet.vehicles.length+' cars placed across '+fleet.depots.length+' depots as evenly as possible. Add a trip.');
   }catch(e){msg(e.message+' Select New fleet to retry.');$('connection').textContent='Offline';}
   finally{changing=false;$('reset').disabled=false;$('fleetSize').disabled=false;render();}
 }

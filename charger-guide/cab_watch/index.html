@@ -1,11 +1,11 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#132b36"><title>Cabwatch · Harbour City Dispatch</title>
-<link rel="stylesheet" href="/cab-watch/assets/style.css?v=depots1"><script type="module" src="/cab-watch/assets/board.mjs?v=depots1"></script></head>
+<link rel="stylesheet" href="/cab-watch/assets/style.css?v=depots1"><script type="module" src="/cab-watch/assets/board.mjs?v=addtrip2"></script></head>
 <body><header><div class="wrap bar"><div class="brand"><svg viewBox="0 0 32 32" width="32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="#cef279"/><path d="M6 22h7V10h12M7 13l3-3m10 13 5-5" stroke="#18303c" stroke-width="3" fill="none"/></svg> Cabwatch <span> / Dispatch</span></div><span class="signal" id="connection">Connecting</span></div></header>
 <main class="wrap"><div class="intro"><div><p class="eyebrow">HARBOUR CITY &nbsp; / &nbsp; DISPATCH DESK</p><h1>Route monitor</h1><p class="muted">Choose a fleet size, then dispatch the closest available car from a depot to a pickup and drop-off.</p></div>
 <div class="setup"><label>Cars in fleet <select id="fleetSize"></select></label>
-<button id="reset">New fleet</button><button id="create" class="primary" disabled>Create trip</button>
+<button id="reset">New fleet</button><button id="create" class="primary" disabled>Add trip</button>
 <button id="play" disabled>Start</button></div></div>
 <div id="planner" hidden><strong id="pickHint">Choose a pickup on the map.</strong>
 <label>Pickup <select id="pickup"></select></label><label>Drop-off <select id="dropoff"></select></label>
@@ -14,7 +14,7 @@
 <div class="layout"><section class="panel"><div class="panelhead"><div><p class="eyebrow">01 / CITY MAP</p><h2>Harbour City</h2></div><span class="chip" id="mode">Paused</span></div>
 <div class="mapbox"><svg id="map" viewBox="0 0 960 560" aria-label="City map with depots, numbered cab markers and color-matched planned routes" role="group"><g id="geography"></g><g id="routes"></g><g id="shared"></g><g id="trails"></g><g id="intersections"></g><g id="depots"></g><g id="pins"></g></svg></div>
 <div class="legend"><span><i class="solid"></i> Planned journey</span><span><i class="dashed"></i> Actual trail</span><span>▣ Depot + available cars</span><span>◎ Pickup</span><span>◇ Drop-off</span><span>Grey · Road</span><span>Striped · Shared route</span></div></section>
-<aside class="panel"><div class="panelhead"><div><p class="eyebrow">02 / FLEET</p><h2>Cab roster</h2></div></div><div id="roster"><p class="inner muted">Create your first trip to add a cab.</p></div></aside></div>
+<aside class="panel"><div class="panelhead"><div><p class="eyebrow">02 / FLEET</p><h2>Cab roster</h2></div></div><div id="roster"><p class="inner muted">Add a trip to see its cab.</p></div></aside></div>
 <div class="bottom"><section class="panel"><div class="panelhead"><div><p class="eyebrow">03 / SELECTED TRIP</p><h2 id="selected">Select a cab</h2></div></div>
 <div class="inner"><p id="tripline"></p><p class="muted" id="distance"></p><div class="actions"><button id="wrong" disabled>Take wrong turn</button><button id="return" disabled>Return to route</button></div><p class="hint">The assigned car drives from its depot to pickup, drop-off, then back home. Alerts compare GPS with the current leg only. After a wrong turn, Return to route finds the nearest remaining junction by road.</p></div></section>
 <section class="panel"><div class="panelhead"><div><p class="eyebrow">04 / DISPATCH LOG</p><h2>Route alerts</h2></div></div><div class="inner" id="alerts">No alerts.</div><div id="review" class="review" hidden></div></section></div>
