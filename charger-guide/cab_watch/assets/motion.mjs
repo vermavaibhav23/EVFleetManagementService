@@ -1,7 +1,10 @@
 const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
 export function makeCab(trip, network) {
-  const legs = trip.legs || [{stops:trip.stops, path:trip.path}];
+  const legs = trip.planned_legs ? ["to_pickup","customer_ride","to_depot"].map(name => {
+    const stops = trip.planned_legs[name];
+    return {stops, path:stops.map(node => network.nodes[node])};
+  }) : trip.legs || [{stops:trip.stops, path:trip.path}];
   const point = [...legs[0].path[0]];
   const cab = {...trip, legs, fullStops:trip.stops, stops:legs[0].stops,
     nodes:legs[0].path, leg:0, index:0, point, mode:'route', sequence:0,

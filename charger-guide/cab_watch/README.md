@@ -38,3 +38,5 @@ Open [the dashboard](http://localhost:18080/cab-watch/). Compose starts FastAPI,
 python -m unittest -v test_cab_watch test_retention
 node --test test_motion.mjs
 ```
+
+Trips store a single JSONB route with three named node arrays: `to_pickup`, `customer_ride`, and `to_depot`. Pickup, drop-off, and both depot locations are derived from their endpoints.

@@ -59,11 +59,11 @@ async def record(db, reading):
         if reading.leg < trip["phase"] or reading.leg > trip["phase"] + 1:
             return
         if reading.leg == trip["phase"] + 1:
-            empty_start = trip["phase"] == 0 and trip["last_sequence"] == 0 and len(legs[0]) == 1
-            previous_end = city.NODES[legs[trip["phase"]][-1]]
+            empty_start = trip["phase"] == 0 and trip["last_sequence"] == 0 and len(legs["to_pickup"]) == 1
+            previous_end = city.NODES[legs[city.LEG_NAMES[trip["phase"]]][-1]]
             if not empty_start and city.distance_from_path([previous_end], reading.lat, reading.lon) >= 1:
                 return
-        line = [city.NODES[n] for n in legs[reading.leg]]
+        line = [city.NODES[n] for n in legs[city.LEG_NAMES[reading.leg]]]
         distance = city.distance_from_path(line, reading.lat, reading.lon)
         await conn.execute("""INSERT INTO cab_watch_accounts.gps_readings(trip_id,sequence,lat,lon,distance_m,leg)
             VALUES($1,$2,$3,$4,$5,$6)""", reading.trip_id, reading.sequence, reading.lat,
@@ -81,11 +81,11 @@ async def record(db, reading):
             await conn.execute("""UPDATE cab_watch_accounts.alerts SET closed_sequence=$2,resolved_at=now()
                 WHERE trip_id=$1 AND closed_sequence IS NULL""", reading.trip_id, reading.sequence)
         if trip["vehicle_id"] and reading.leg == 2:
-            depot = city.NODES[legs[2][-1]]
+            depot = city.NODES[legs["to_depot"][-1]]
             if city.distance_from_path([depot], reading.lat, reading.lon) < 1:
                 await conn.execute("UPDATE cab_watch_accounts.trips SET phase=3,completed_at=now() WHERE id=$1", reading.trip_id)
                 await conn.execute("""UPDATE cab_watch_accounts.vehicles SET status='available',parked_depot_id=$2
-                    WHERE id=$1""", trip["vehicle_id"], trip["arrival_depot_id"])
+                    WHERE id=$1""", trip["vehicle_id"], city.DEPOT_BY_NODE[legs["to_depot"][-1]]["id"])
 
 
 class CabStream:

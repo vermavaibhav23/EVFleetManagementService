@@ -55,6 +55,12 @@ class AccountFlow(unittest.TestCase):
             route = dict(pickup="G", dropoff="K")
             trip = client.put(path, json=route, headers=a)
             trip.raise_for_status()
+            plan = trip.json()["planned_legs"]
+            self.assertEqual(set(plan), {"to_pickup", "customer_ride", "to_depot"})
+            self.assertEqual(plan["customer_ride"], ["G","H","I","J","K"])
+            self.assertEqual(plan["to_pickup"], ["A","G"])
+            self.assertEqual(plan["to_depot"], ["K","E"])
+            self.assertEqual(client.put(path,json=route,headers=a).json()["planned_legs"],plan)
             self.assertEqual(client.put(path, json=route, headers=b).status_code, 409)
             repeated = client.put("me/fleet", headers=a, json={"count": 50}).json()
             self.assertEqual(

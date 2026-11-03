@@ -18,6 +18,9 @@ DEPOTS = [
     {"id": "southwest", "name": "Southwest Depot", "node": "V"},
     {"id": "southeast", "name": "Southeast Depot", "node": "Z"},
 ]
+LEG_NAMES = ("to_pickup", "customer_ride", "to_depot")
+DEPOT_BY_NODE = {depot["node"]: depot for depot in DEPOTS}
+
 ROUTES = [
     ("Medical College", "Central Station", "#2663da", [(80,80),(625,80),(625,320)]),
     ("Harbour Market", "City Library", "#a13e96", [(850,160),(405,160),(405,400)]),

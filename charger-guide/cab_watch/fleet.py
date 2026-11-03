@@ -46,17 +46,18 @@ def trip_payload(row):
             path=[city.NODES[n] for n in nodes],
             metres=sum(city.GRAPH[a][b] for a, b in zip(nodes, nodes[1:])),
         )
-        for nodes in parts
+        for nodes in (parts[name] for name in city.LEG_NAMES)
     ]
-    stops = parts[0] + parts[1][1:] + parts[2][1:]
+    stops = parts["to_pickup"] + parts["customer_ride"][1:] + parts["to_depot"][1:]
     return dict(
         id=row["id"],
         vehicle_id=row["vehicle_id"],
         cab=row["cab_number"],
-        depot=DEPOTS[row["departure_depot_id"]]["name"],
-        arrival_depot=DEPOTS[row["arrival_depot_id"]]["name"],
-        origin=row["pickup_node"],
-        destination=row["dropoff_node"],
+        depot=city.DEPOT_BY_NODE[parts["to_pickup"][0]]["name"],
+        arrival_depot=city.DEPOT_BY_NODE[parts["to_depot"][-1]]["name"],
+        origin=parts["customer_ride"][0],
+        destination=parts["customer_ride"][-1],
+        planned_legs=parts,
         legs=legs,
         stops=stops,
         path=[city.NODES[n] for n in stops],
@@ -180,12 +181,12 @@ async def dispatch(
             trip_id,
         )
         if existing:
-            if existing["user_id"] != user or (
-                existing["pickup_node"],
-                existing["dropoff_node"],
-            ) != (setup.pickup, setup.dropoff):
+            if existing["user_id"] != user:
                 raise HTTPException(409, "Trip ID unavailable.")
-            return trip_payload(existing)
+            payload = trip_payload(existing)
+            if (payload["origin"], payload["destination"]) != (setup.pickup, setup.dropoff):
+                raise HTTPException(409, "Trip ID unavailable.")
+            return payload
         cars = await vehicles(conn, user)
         idle = [v for v in cars if v["status"] == "available"]
         if not idle:
@@ -200,18 +201,16 @@ async def dispatch(
         arrival = min(
             city.DEPOTS, key=lambda d: city.shortest_route(setup.dropoff, d["node"])[1]
         )
-        nodes = [car["current_node"], setup.pickup, setup.dropoff, arrival["node"]]
-        legs = [city.shortest_route(a, b)[0] for a, b in zip(nodes, nodes[1:])]
+        legs = {
+            "to_pickup": city.shortest_route(car["current_node"], setup.pickup)[0],
+            "customer_ride": city.shortest_route(setup.pickup, setup.dropoff)[0],
+            "to_depot": city.shortest_route(setup.dropoff, arrival["node"])[0],
+        }
         row = await conn.fetchrow(
-            """INSERT INTO cab_watch_accounts.trips
-            (id,vehicle_id,departure_depot_id,arrival_depot_id,pickup_node,dropoff_node,planned_legs)
-            VALUES($1,$2,$3,$4,$5,$6,$7::jsonb) RETURNING *""",
+            """INSERT INTO cab_watch_accounts.trips (id,vehicle_id,planned_legs)
+            VALUES($1,$2,$3::jsonb) RETURNING *""",
             trip_id,
             car["id"],
-            car["parked_depot_id"],
-            arrival["id"],
-            setup.pickup,
-            setup.dropoff,
             json.dumps(legs),
         )
         await conn.execute(

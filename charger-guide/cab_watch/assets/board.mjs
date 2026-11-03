@@ -1,4 +1,4 @@
-import {makeCab,divert,rejoin,advance} from './motion.mjs?v=junction5';
+import {makeCab,divert,rejoin,advance} from './motion.mjs?v=named1';
 import {cityMap,drawDepots,makeLayers,drawSharedRoads,selectMap,showPoint,animate} from './map.mjs?v=plate1';
 
 const $=id=>document.getElementById(id);

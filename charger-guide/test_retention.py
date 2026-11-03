@@ -64,7 +64,7 @@ class RetentionEvidenceTests(unittest.TestCase):
         trip_id = uuid4()
         trip = {
             "last_sequence": 2, "off_count": 2, "phase": 0,
-            "planned_legs": json.dumps([["A", "B"], ["B", "C"], ["C", "A"]]),
+            "planned_legs": json.dumps({"to_pickup":["A","B"], "customer_ride":["B","C"], "to_depot":["C","A"]}),
             "vehicle_id": None,
         }
         conn = RecordingConnection(trip)
