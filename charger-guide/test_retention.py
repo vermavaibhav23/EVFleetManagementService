@@ -5,7 +5,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from cab_watch import city
-from cab_watch.api import Point, explain, record
+from cab_watch.api import Point, explain, record, status
 
 
 class Context:
@@ -97,6 +97,36 @@ class RetentionEvidenceTests(unittest.TestCase):
         self.assertEqual(result["source"], "Rule-based explanation")
         self.assertEqual(result["facts"]["opening_samples"], samples)
         self.assertEqual(result["facts"]["status"], "resolved")
+
+    def test_status_reads_vehicle_and_gps_from_one_snapshot(self):
+        trip_id = uuid4()
+
+        class SnapshotConnection:
+            def transaction(self, **options):
+                self_options = options
+                assert self_options == {"isolation": "repeatable_read", "readonly": True}
+                return Context(self)
+
+            async def fetch(self, sql, *_):
+                if "FROM cab_watch.vehicles" in sql:
+                    return [{"id": uuid4(), "cab": 1, "depot_id": "northeast",
+                             "current_node": "E", "status": "busy"}]
+                if "FROM cab_watch.trips" in sql:
+                    return [{"id": trip_id, "last_sequence": 19, "off_count": 0,
+                             "distance_m": 0, "lat": None, "lon": None}]
+                return []
+
+        class Pool:
+            def acquire(self):
+                return Context(SnapshotConnection())
+
+            async def fetch(self, *_):
+                raise AssertionError("Separate pool queries could mix transaction states")
+
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(db=Pool())))
+        snapshot = run_immediate(status(uuid4(), request))
+        self.assertEqual(snapshot["vehicles"][0]["status"], "busy")
+        self.assertEqual(snapshot["trips"][0]["last_sequence"], 19)
 
 
 if __name__ == "__main__":

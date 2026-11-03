@@ -257,16 +257,19 @@ async def ingest(session: UUID, batch: Batch, request: Request):
 @router.get("/sessions/{session}")
 async def status(session: UUID, request: Request):
     db = request.app.state.db
-    vehicles = await db.fetch("""SELECT id,vehicle_index+1 AS cab,depot_id,current_node,status
-        FROM cab_watch.vehicles WHERE session_id=$1 ORDER BY vehicle_index""", session)
-    if not vehicles:
-        raise HTTPException(404, "Simulation expired. Create a new fleet.")
-    rows = await db.fetch("""SELECT t.id,t.last_sequence,t.off_count,t.distance_m,g.lat,g.lon
-        FROM cab_watch.trips t LEFT JOIN cab_watch.gps_readings g
-        ON (g.trip_id,g.sequence)=(t.id,t.last_sequence) WHERE t.session_id=$1 ORDER BY t.route_index""", session)
-    alerts = await db.fetch("""SELECT a.*,v.vehicle_index+1 AS cab FROM cab_watch.alerts a
-        JOIN cab_watch.trips t ON t.id=a.trip_id JOIN cab_watch.vehicles v ON v.id=t.vehicle_id
-        WHERE t.session_id=$1 ORDER BY a.id DESC LIMIT 50""",session)
+    # A GPS commit can occur between these reads. Keep the vehicle and its
+    # confirmed sequence in one snapshot so the UI never stops on mixed state.
+    async with db.acquire() as conn, conn.transaction(isolation="repeatable_read", readonly=True):
+        vehicles = await conn.fetch("""SELECT id,vehicle_index+1 AS cab,depot_id,current_node,status
+            FROM cab_watch.vehicles WHERE session_id=$1 ORDER BY vehicle_index""", session)
+        if not vehicles:
+            raise HTTPException(404, "Simulation expired. Create a new fleet.")
+        rows = await conn.fetch("""SELECT t.id,t.last_sequence,t.off_count,t.distance_m,g.lat,g.lon
+            FROM cab_watch.trips t LEFT JOIN cab_watch.gps_readings g
+            ON (g.trip_id,g.sequence)=(t.id,t.last_sequence) WHERE t.session_id=$1 ORDER BY t.route_index""", session)
+        alerts = await conn.fetch("""SELECT a.*,v.vehicle_index+1 AS cab FROM cab_watch.alerts a
+            JOIN cab_watch.trips t ON t.id=a.trip_id JOIN cab_watch.vehicles v ON v.id=t.vehicle_id
+            WHERE t.session_id=$1 ORDER BY a.id DESC LIMIT 50""",session)
     return dict(vehicles=[dict(v) for v in vehicles], trips=[dict(r) for r in rows],
                 alerts=[dict(a) for a in alerts])
 
