@@ -11,7 +11,7 @@ LAT_SCALE = 111320
 LON_SCALE = LAT_SCALE * cos(radians(ORIGIN[0]))
 LIMIT = 200
 REQUIRED = 1
-TOPIC = "cab.location"
+TOPIC = "cab.location.accounts"
 DEPOTS = [
     {"id": "northwest", "name": "Northwest Depot", "node": "A"},
     {"id": "northeast", "name": "Northeast Depot", "node": "E"},

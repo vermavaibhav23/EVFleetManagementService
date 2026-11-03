@@ -8,11 +8,15 @@ const msg=text=>{$('message').textContent=text;};
 const element=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
 
 async function api(path,method='GET',body){
-  const response=await fetch('/cab-watch/'+path,{method,cache:'no-store',headers:{'Content-Type':'application/json'},
+  const token=sessionStorage.getItem('cabwatch.token');
+  const headers={'Content-Type':'application/json'};
+  if(token && !path.startsWith('auth/'))headers.Authorization='Bearer '+token;
+  const response=await fetch('/cab-watch/'+path,{method,cache:'no-store',headers,
     body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(35000)});
   if(!response.ok){
+    if(response.status===401 && !path.startsWith('auth/'))signOut('Please sign in again.');
     const detail=await response.json().catch(()=>({}));
-    throw Error(typeof detail.detail==='string'?detail.detail:'Request failed ('+response.status+'). Try again.');
+    throw Error(typeof detail.detail==='string'?detail.detail:Array.isArray(detail.detail)?detail.detail[0].msg:'Request failed ('+response.status+'). Try again.');
   }
   return response.json();
 }
@@ -77,7 +81,7 @@ async function explain(a){
   const f=fleet,generation=++reviewGeneration,pane=$('review');
   pane.hidden=false;pane.textContent='Checking the recorded GPS evidence…';
   try{
-    const r=await api('sessions/'+f.id+'/alerts/'+a.id+'/explain','POST');
+    const r=await api('me/alerts/'+a.id+'/explain','POST');
     if(f!==fleet||generation!==reviewGeneration)return;
     pane.replaceChildren(element('strong',r.source+' · Cab '+a.cab+' · '+r.facts.status+' at review'),
       element('p',r.summary),
@@ -88,11 +92,12 @@ async function explain(a){
 function draw(now){if(fleet&&animate(fleet.cabs,now))frame=requestAnimationFrame(draw);}
 function gps(f,c){
   return {trip_id:c.id,sequence:c.sequence,leg:c.leg,
+    motion:{mode:c.mode,index:c.index,source:c.from,target:c.to,recovery:c.recovery||[]},
     lat:f.origin[0]-c.point[1]*f.metres/f.lat_scale,
     lon:f.origin[1]+c.point[0]*f.metres/f.lon_scale};
 }
 async function readState(f){
-  const result=await api('sessions/'+f.id);
+  const result=await api('me/state');
   if(fleet!==f)return;
   f.alerts=result.alerts;
   for(const saved of result.vehicles){
@@ -104,7 +109,7 @@ async function readState(f){
   for(const trip of result.trips){
     const c=f.cabs.find(c=>c.id===trip.id);
     if(!c)continue;
-    c.streak=trip.off_count;c.offset=trip.distance_m;c.confirmed=trip.last_sequence;
+    c.streak=0;c.offset=trip.distance_m;c.confirmed=trip.last_sequence;
     if(trip.lat!==null)showPoint(c,[(trip.lon-f.origin[1])*f.lon_scale/f.metres,
       (f.origin[0]-trip.lat)*f.lat_scale/f.metres]);
     if(c.mode==='arrived')c.map.pin.setAttribute('visibility','hidden');
@@ -129,7 +134,7 @@ async function tick(f){
       f.pending=moving.map(c=>gps(f,c));f.seconds+=5;
     }
     if(f.pending){
-      await api('sessions/'+f.id+'/gps','POST',{readings:f.pending});
+      await api('me/gps','POST',{readings:f.pending});
       if(f!==fleet)return;
       f.pending=null;f.waiting=true;
       await readState(f);
@@ -188,7 +193,7 @@ async function launch(){
   for(const id of ['launch','cancel','reset','pickup','dropoff','fleetSize'])$(id).disabled=true;
   msg('Finding the closest available car by road…');
   try{
-    const trip=await api('sessions/'+f.id+'/trips/'+draftId,'PUT',
+    const trip=await api('me/trips/'+draftId,'PUT',
       {pickup:$('pickup').value,dropoff:$('dropoff').value});
     if(f!==fleet)return;
     const c=makeCab(trip,network);
@@ -205,15 +210,43 @@ async function launch(){
     updatePlanner();render();
   }
 }
-async function setup(){
-  if(changing||!$('fleetSize').reportValidity())return;
-  changing=true;running=false;clearTimeout(timer);cancelAnimationFrame(frame);reviewGeneration++;
-  fleet=null;selected=null;closePlanner();
+function restoreTrip(trip){
+  const c=makeCab(trip,network);
+  const v=fleet.vehicles.find(v=>v.id===trip.vehicle_id);
+  if(!v)return;
+  c.leg=Math.min(trip.phase,2);
+  c.stops=c.legs[c.leg].stops;c.nodes=c.legs[c.leg].path;
+  if(trip.last_sequence===0 && c.stops.length===1){
+    c.leg=1;c.stops=c.legs[1].stops;c.nodes=c.legs[1].path;
+  }
+  c.confirmed=c.sequence=trip.last_sequence;c.offset=trip.distance_m;
+  if(trip.lat!==null)c.point=[(trip.lon-fleet.origin[1])*fleet.lon_scale/fleet.metres,
+    (fleet.origin[0]-trip.lat)*fleet.lat_scale/fleet.metres];
+  if(trip.motion){
+    c.mode=trip.motion.mode;c.index=trip.motion.index;
+    c.from=trip.motion.source;c.to=trip.motion.target;c.recovery=trip.motion.recovery;
+  }
+  if(trip.completed)c.mode='arrived';
+  fleet.cabs.push(c);makeLayers([c],select);showPoint(c,c.point);
+  if(trip.completed)c.map.pin.setAttribute('visibility','hidden');
+  v.currentTrip=trip.completed?null:c.id;v.latestTrip=c.id;showCabInRoster(v);
+}
+async function setup(loadOnly=false){
+  if(changing || (!loadOnly && !$('fleetSize').reportValidity()))return;
+  if(!loadOnly && fleet && Number($('fleetSize').value)===fleet.vehicles.length){
+    msg('Your fleet already has this size.');return;
+  }
+  if(!loadOnly && fleet && (running||fleet.pending||fleet.waiting||fleet.working)){
+    msg('Pause the simulation and let the latest GPS update finish before resizing.');return;
+  }
+  changing=true;
   $('reset').disabled=true;$('fleetSize').disabled=true;
   try{
     network=network||await api('network');
-    const created=await api('sessions','POST',{count:Number($('fleetSize').value)});
-    fleet={...network,...created,cabs:[],seconds:0,alerts:[],working:false};
+    const created=loadOnly?await api('me/fleet'):await api('me/fleet','PUT',{count:Number($('fleetSize').value)});
+    running=false;clearTimeout(timer);cancelAnimationFrame(frame);reviewGeneration++;selected=null;closePlanner();
+    fleet={...network,...created,cabs:[],seconds:0,working:false};
+    $('fleetSize').value=created.vehicles.length||'';
     cityMap(network,pick);closePlanner();
     for(const id of ['routes','shared','trails','pins'])$(id).replaceChildren();
     drawDepots(network,fleet.vehicles);
@@ -222,10 +255,14 @@ async function setup(){
       for(const n of Object.keys(network.nodes))$(id).add(new Option(n,n));
     }
     $('roster').replaceChildren(element('p','Add a trip to see its cab.','inner muted'));
+    for(const trip of created.trips)restoreTrip(trip);
+    drawSharedRoads(fleet.cabs,network);
+    selected=(fleet.cabs.find(c=>c.mode!=='arrived')||fleet.cabs.at(-1))?.id;
+    if(selected){selectMap(fleet.cabs,selected);draw(performance.now());}
     $('alerts').textContent='No route alerts in this simulation.';$('review').hidden=true;
     $('connection').textContent='● Ready';
-    msg(fleet.vehicles.length+' cars placed across '+fleet.depots.length+' depots as evenly as possible. Add a trip.');
-  }catch(e){msg(e.message+' Select New fleet to retry.');$('connection').textContent='Offline';}
+    msg(fleet.vehicles.length?'Fleet ready. Add a trip or press Start to resume.':'Enter the number of cars and select Set fleet.');
+  }catch(e){msg(e.message+' Try again.');$('connection').textContent='Offline';}
   finally{changing=false;$('reset').disabled=false;$('fleetSize').disabled=false;render();}
 }
 function cityColor(cab){return ['#2164cb','#a53685','#00796b','#be5422','#664bac','#a62844',
@@ -235,12 +272,45 @@ function cityColor(cab){return ['#2164cb','#a53685','#00796b','#be5422','#664bac
 $('fleetSize').onkeydown=e=>{if(e.key==='Enter')setup();};
 $('pickup').onchange=$('dropoff').onchange=updatePlanner;
 $('launch').onclick=launch;$('cancel').onclick=()=>{closePlanner();render();};
-$('create').onclick=openPlanner;$('reset').onclick=setup;
+$('create').onclick=openPlanner;$('reset').onclick=()=>setup();
 $('play').onclick=()=>{if(!fleet)return;running=!running;fleet.failed=false;render();
   msg(running?'Simulation running · each update advances five simulated seconds.':'Simulation paused.');schedule(fleet,0);};
 $('wrong').onclick=()=>{divert(chosen());render();
   msg(running?'Turn queued for the next junction.':'Turn queued for the next junction. Press Start to drive.');};
 $('return').onclick=()=>{rejoin(chosen());render();
   msg(running?'Cab is rejoining its current planned leg.':'Return requested. Press Start to drive.');};
-msg('Enter the number of cars and select Set fleet.');
+let registering=false;
+function signOut(message=''){
+  sessionStorage.removeItem('cabwatch.token');sessionStorage.removeItem('cabwatch.name');
+  fleet=null;running=false;selected=null;clearTimeout(timer);cancelAnimationFrame(frame);
+  $('dashboard').hidden=true;$('account').hidden=false;$('authMessage').textContent=message;
+  $('connection').textContent='Signed out';$('password').value='';
+}
+async function openDashboard(){
+  $('signedName').textContent=sessionStorage.getItem('cabwatch.name')||'My fleet';
+  $('account').hidden=true;$('dashboard').hidden=false;await setup(true);
+}
+$('switchAuth').onclick=()=>{
+  registering=!registering;
+  $('authTitle').textContent=$('authSubmit').textContent=registering?'Create account':'Sign in';
+  $('switchAuth').textContent=registering?'Use an existing account':'Create an account';
+  $('nameLabel').hidden=!registering;$('accountName').required=registering;
+  $('password').autocomplete=registering?'new-password':'current-password';
+  $('authMessage').textContent='';
+};
+$('authForm').onsubmit=async event=>{
+  event.preventDefault();$('authSubmit').disabled=true;
+  try{
+    const body={email:$('email').value,password:$('password').value};
+    if(registering)body.name=$('accountName').value;
+    const account=await api(registering?'auth/register':'auth/login','POST',body);
+    sessionStorage.setItem('cabwatch.token',account.access_token);
+    sessionStorage.setItem('cabwatch.name',account.name);$('password').value='';
+    await openDashboard();
+  }catch(e){$('authMessage').textContent=e.message;}
+  finally{$('authSubmit').disabled=false;}
+};
+$('logout').onclick=()=>{signOut();location.reload();};
+if(sessionStorage.getItem('cabwatch.token'))openDashboard();
+else signOut();
 

@@ -17,3 +17,8 @@
 #fleetSize{width:7em;padding:9px;border:1px solid #bfcdcd;border-radius:7px;font:inherit}
 .cabrow.alarm,.cabrow.alarm[aria-pressed=true]{background:#fff1f1;border-left-color:#bf1728;box-shadow:inset 0 0 10px #e9354488}
 .cabrow.alarm .badge{background:#a91123;color:white;border-radius:5px;padding:4px 7px;box-shadow:0 0 10px #ef394c}
+
+.account{max-width:430px;margin:48px auto;padding:28px}.account form{display:grid;gap:14px;margin:20px 0}
+.account label{display:grid;gap:4px}.account input{font:inherit;padding:9px;border-radius:7px;border:1px solid #bfcdcd}
+.accountbar{display:flex;justify-content:flex-end;align-items:center;gap:12px;padding-top:12px}
+[hidden]{display:none!important}

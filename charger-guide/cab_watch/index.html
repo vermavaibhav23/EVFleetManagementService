@@ -1,9 +1,17 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#132b36"><title>Cabwatch · Harbour City Dispatch</title>
-<link rel="stylesheet" href="/cab-watch/assets/style.css?v=dispatch3"><script type="module" src="/cab-watch/assets/board.mjs?v=junction5"></script></head>
+<link rel="stylesheet" href="/cab-watch/assets/style.css?v=dispatch3"><script type="module" src="/cab-watch/assets/board.mjs?v=accounts1"></script></head>
 <body><header><div class="wrap bar"><div class="brand"><svg viewBox="0 0 32 32" width="32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="#cef279"/><path d="M6 22h7V10h12M7 13l3-3m10 13 5-5" stroke="#18303c" stroke-width="3" fill="none"/></svg> Cabwatch <span> / Dispatch</span></div><span class="signal" id="connection">Set up fleet</span></div></header>
-<main class="wrap"><div class="intro"><div><p class="eyebrow">HARBOUR CITY &nbsp; / &nbsp; DISPATCH DESK</p><h1>Route monitor</h1><p class="muted">Choose a fleet size, then dispatch the closest available car from a depot to a pickup and drop-off.</p></div>
+<section id="account" class="wrap panel account">
+<p class="eyebrow">CABWATCH / DISPATCH</p><h1 id="authTitle">Sign in</h1>
+<p class="muted">Open your fleet and manage its trips.</p>
+<form id="authForm"><label id="nameLabel" hidden>Name <input id="accountName" maxlength="80" autocomplete="name"></label>
+<label>Email <input id="email" type="email" required maxlength="254" autocomplete="username"></label>
+<label>Password <input id="password" type="password" required minlength="10" maxlength="128" autocomplete="current-password"></label>
+<button class="primary" id="authSubmit">Sign in</button></form>
+<button id="switchAuth">Create an account</button><p id="authMessage" role="status"></p></section>
+<main id="dashboard" hidden class="wrap"><div class="accountbar"><strong id="signedName"></strong><button id="logout">Sign out</button></div><div class="intro"><div><p class="eyebrow">HARBOUR CITY &nbsp; / &nbsp; DISPATCH DESK</p><h1>Route monitor</h1><p class="muted">Choose a fleet size, then dispatch the closest available car from a depot to a pickup and drop-off.</p></div>
 <div class="setup"><label>Cars in fleet <input id="fleetSize" type="number" required min="1" max="1000" step="1" placeholder="e.g. 50"></label>
 <button id="reset">Set fleet</button><button id="create" class="primary" disabled>Add trip</button>
 <button id="play" disabled>Start</button></div></div>

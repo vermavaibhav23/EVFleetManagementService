@@ -5,7 +5,8 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from cab_watch import city
-from cab_watch.api import Point, explain, record, status
+from cab_watch.api import Point, explain, record
+from cab_watch.fleet import status
 
 
 class Context:
@@ -69,9 +70,9 @@ class RetentionEvidenceTests(unittest.TestCase):
         conn = RecordingConnection(trip)
         lat, lon = city.gps(city.NODES["Z"])
         run_immediate(record(RecordingPool(conn), Point(trip_id=trip_id, sequence=3, leg=0, lat=lat, lon=lon)))
-        alert_write = next(args for sql, args in conn.writes if "INSERT INTO cab_watch.alerts" in sql)
+        alert_write = next(args for sql, args in conn.writes if "INSERT INTO cab_watch_accounts.alerts" in sql)
         samples = json.loads(alert_write[3])
-        self.assertEqual([sample["sequence"] for sample in samples], [1, 2, 3])
+        self.assertEqual([sample["sequence"] for sample in samples], [3])
         self.assertGreater(samples[-1]["metres"], 200)
 
     def test_explanation_uses_alert_snapshot_without_gps_rows(self):
@@ -82,7 +83,7 @@ class RetentionEvidenceTests(unittest.TestCase):
 
         class SnapshotDb:
             async def fetchrow(self, *_):
-                return {"trip_id": trip_id, "vehicle_index": 0,
+                return {"trip_id": trip_id, "cab_number": 1,
                         "opened_sequence": 15, "closed_sequence": 30,
                         "peak_metres": 797, "opening_samples": json.dumps(samples)}
 
@@ -93,7 +94,7 @@ class RetentionEvidenceTests(unittest.TestCase):
         async def unavailable(*_):
             raise ValueError("unavailable")
         with patch("cab_watch.api.generate", new=unavailable):
-            result = run_immediate(explain(uuid4(), 1, request))
+            result = run_immediate(explain(1, request, uuid4()))
         self.assertEqual(result["source"], "Rule-based explanation")
         self.assertEqual(result["facts"]["opening_samples"], samples)
         self.assertEqual(result["facts"]["status"], "resolved")
@@ -108,10 +109,10 @@ class RetentionEvidenceTests(unittest.TestCase):
                 return Context(self)
 
             async def fetch(self, sql, *_):
-                if "FROM cab_watch.vehicles" in sql:
+                if "FROM cab_watch_accounts.vehicles" in sql:
                     return [{"id": uuid4(), "cab": 1, "depot_id": "northeast",
                              "current_node": "E", "status": "busy"}]
-                if "FROM cab_watch.trips" in sql:
+                if "FROM cab_watch_accounts.trips" in sql:
                     return [{"id": trip_id, "last_sequence": 19, "off_count": 0,
                              "distance_m": 0, "lat": None, "lon": None}]
                 return []
@@ -124,7 +125,7 @@ class RetentionEvidenceTests(unittest.TestCase):
                 raise AssertionError("Separate pool queries could mix transaction states")
 
         request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(db=Pool())))
-        snapshot = run_immediate(status(uuid4(), request))
+        snapshot = run_immediate(status(request, uuid4()))
         self.assertEqual(snapshot["vehicles"][0]["status"], "busy")
         self.assertEqual(snapshot["trips"][0]["last_sequence"], 19)
 
