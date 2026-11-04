@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 
 from agent import review
-from cab_watch.api import CabStream, router as cab_router
+from cab_watch.api import cab_runtime, router as cab_router
 from decision import LOW_FRACTION, ROAD_END, assess, drive_step
 
 ROOT = Path(__file__).parent
@@ -75,6 +75,38 @@ async def consume(db, consumer):
         await consumer.commit({TopicPartition(TOPIC, message.partition): message.offset + 1})
 
 
+async def run_guide_stream(app, db):
+    # The charger guide owns this broker. CabWatch can serve GPS while it reconnects.
+    while True:
+        try:
+            async with AsyncExitStack() as broker_stack:
+                options = kafka_options()
+                admin = AIOKafkaAdminClient(**options)
+                try:
+                    await admin.start()
+                    if TOPIC not in await admin.list_topics():
+                        try:
+                            await admin.create_topics([NewTopic(TOPIC, 2, 1)])
+                        except TopicAlreadyExistsError:
+                            pass
+                finally:
+                    await admin.close()
+                producer = AIOKafkaProducer(**options, enable_idempotence=True)
+                broker_stack.push_async_callback(producer.stop)
+                await producer.start()
+                consumer = AIOKafkaConsumer(TOPIC, **options, group_id="charger-guide.v1",
+                                            enable_auto_commit=False, auto_offset_reset="earliest")
+                broker_stack.push_async_callback(consumer.stop)
+                await consumer.start()
+                app.state.producer = producer
+                await consume(db, consumer)
+        except Exception:
+            logger.exception("Charger guide telemetry interrupted; reconnecting")
+        finally:
+            app.state.producer = None
+        await asyncio.sleep(5)
+
+
 @asynccontextmanager
 async def lifespan(app):
     async with AsyncExitStack() as stack:
@@ -85,29 +117,10 @@ async def lifespan(app):
         async with db.acquire() as conn, conn.transaction():
             await conn.execute("SELECT pg_advisory_xact_lock(73949202)")
             await conn.execute((ROOT / "schema.sql").read_text(encoding="utf-8"))
-        options = kafka_options()
-        admin = AIOKafkaAdminClient(**options)
-        try:
-            await admin.start()
-            if TOPIC not in await admin.list_topics():
-                try:
-                    await admin.create_topics([NewTopic(TOPIC, 2, 1)])
-                except TopicAlreadyExistsError:
-                    pass
-        finally:
-            await admin.close()
-        producer = AIOKafkaProducer(**options, enable_idempotence=True)
-        stack.push_async_callback(producer.stop)
-        await producer.start()
-        consumer = AIOKafkaConsumer(TOPIC, **options, group_id="charger-guide.v1",
-                                    enable_auto_commit=False, auto_offset_reset="earliest")
-        stack.push_async_callback(consumer.stop)
-        await consumer.start()
-        worker = asyncio.create_task(consume(db, consumer))
-        app.state.db, app.state.producer, app.state.worker = db, producer, worker
-        app.state.cab_stream = CabStream(db, options)
-        stack.push_async_callback(app.state.cab_stream.stop)
-        await app.state.cab_stream.start()
+        app.state.db = db
+        await stack.enter_async_context(cab_runtime(db))
+        app.state.producer = None
+        worker = asyncio.create_task(run_guide_stream(app, db))
         app.state.drive_task = None
         app.state.drive_lock = asyncio.Lock()
         app.state.drive_stop = asyncio.Event()
@@ -134,7 +147,7 @@ async def dashboard():
 
 @app.get("/fleet")
 async def fleet():
-    if app.state.worker.done():
+    if app.state.producer is None:
         raise HTTPException(503, "Telemetry consumer stopped")
     rows = await app.state.db.fetch("""SELECT v.*, a.reason, a.charger_id, a.id AS alert_id FROM charger_guide.vehicles v
         LEFT JOIN charger_guide.alerts a ON a.vehicle_id=v.id AND a.resolved_at IS NULL ORDER BY v.id""")
@@ -151,9 +164,12 @@ async def overview():
 
 
 async def send_reading(vehicle, battery, road_km):
+    producer = app.state.producer
+    if producer is None:
+        raise HTTPException(503, "Charger telemetry is reconnecting")
     seq = await app.state.db.fetchval("SELECT nextval('charger_guide.demo_reading')")
     reading = Reading(vehicle_id=vehicle, sequence=seq, battery_kwh=battery, road_km=road_km)
-    await app.state.producer.send_and_wait(TOPIC, reading.model_dump_json().encode(), key=vehicle.encode())
+    await producer.send_and_wait(TOPIC, reading.model_dump_json().encode(), key=vehicle.encode())
     return seq
 
 
@@ -217,7 +233,7 @@ async def control_drive(action: str):
 
 @app.post("/demo/{vehicle}/{battery}", status_code=202)
 async def publish(vehicle: str, battery: int):
-    if app.state.worker.done():
+    if app.state.producer is None:
         raise HTTPException(503, "Telemetry consumer stopped")
     van = await app.state.db.fetchrow("SELECT * FROM charger_guide.vehicles WHERE id=$1", vehicle)
     if not van:

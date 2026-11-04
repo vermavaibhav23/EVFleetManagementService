@@ -5,6 +5,7 @@ import os
 import secrets
 import time
 import unittest
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 import httpx
@@ -92,12 +93,13 @@ class AccountFlow(unittest.TestCase):
             self.assertIsNone(busy["parked_depot_id"])
             self.assertIsNone(busy["current_node"])
             lat, lon = city.gps(city.NODES["Z"])
-            gps = {"readings": [dict(trip_id=tid, sequence=1, leg=0, lat=lat, lon=lon)]}
+            capture_time = datetime.now(timezone.utc)
+            gps = {"readings": [dict(trip_id=tid, sequence=1, leg=0, lat=lat, lon=lon, captured_at=capture_time.isoformat())]}
             self.assertEqual(
                 client.post("me/gps", headers=b, json=gps).status_code, 422
             )
             self.assertEqual(
-                client.post("me/gps", headers=a, json=gps).status_code, 202
+                client.post("me/gps", headers=a, json=gps).status_code, 200
             )
             for _ in range(60):
                 state = client.get("me/state", headers=a).json()
@@ -107,6 +109,13 @@ class AccountFlow(unittest.TestCase):
             self.assertTrue(state["alerts"])
             incident = state["alerts"][0]
             self.assertNotIn("opening_samples",incident)
+            stale=dict(gps["readings"][0])
+            stale["lat"], stale["lon"]=city.gps(city.NODES["A"])
+            retry=client.post("me/gps", headers=a, json={"readings":[stale]})
+            self.assertFalse(retry.json()["results"][0]["applied"])
+            alert_state=client.get("me/state?alerts_only=true", headers=a).json()
+            self.assertEqual(set(alert_state), {"alerts"})
+            self.assertIsNone(alert_state["alerts"][0]["closed_sequence"])
             alert = incident["id"]
             explanation = client.post(f"me/alerts/{alert}/explain",headers=a)
             explanation.raise_for_status()
@@ -128,12 +137,13 @@ class AccountFlow(unittest.TestCase):
             restored = client.get("me/fleet", headers=new_headers).json()
             self.assertEqual(restored["vehicles"], repeated["vehicles"])
             self.assertEqual(restored["trips"][0]["last_sequence"], 1)
+            self.assertEqual(datetime.fromisoformat(restored["trips"][0]["captured_at"]), capture_time)
             # Cross the two leg boundaries, then park at E after the G-to-K trip.
             for sequence,leg,node in [(2,1,"G"),(3,2,"K"),(4,2,"E")]:
                 lat,lon=city.gps(city.NODES[node])
                 reading=dict(trip_id=tid, sequence=sequence, leg=leg, lat=lat, lon=lon)
                 reply=client.post("me/gps",headers=a,json={"readings":[reading]})
-                self.assertEqual(reply.status_code,202)
+                self.assertEqual(reply.status_code,200)
             for _ in range(60):
                 final=client.get("me/fleet",headers=a).json()
                 if final["trips"][0]["completed"]:break

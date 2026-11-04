@@ -56,7 +56,15 @@ export function makeLayers(cabs,choose){
     const halo=svg(pin,'circle',{r:17,fill:'white',stroke:c.color,'stroke-width':2});
     svg(pin,'rect',{x:-12,y:-10,width:24,height:20,rx:7,fill:c.color,stroke:'white','stroke-width':1.5});
     svg(pin,'text',{x:0,y:4,'text-anchor':'middle',class:'pinlabel'},c.cab);
-    svg(pin,'title',{},c.vehicle_id+' · '+c.origin+' to '+c.destination);
+    const title=svg(pin,'title',{},c.vehicle_id);
+    const updateTitle=()=>{
+      const age=Math.max(0,Math.floor((Date.now()-Date.parse(c.capturedAt))/1000));
+      const when=Number.isFinite(age)?'Position recorded '+Math.floor(age/60)+'m '+age%60+'s ago':'GPS capture time unavailable';
+      title.textContent=c.vehicle_id+' · '+c.origin+' to '+c.destination+' · '+when;
+      pin.setAttribute('aria-label',title.textContent);
+    };
+    pin.addEventListener('pointerenter',updateTitle);
+    pin.addEventListener('focus',updateTitle);
     pin.setAttribute('transform','translate('+ox+' '+oy+')');
     c.map={g,pin,halo,display:[ox,oy],target:[ox,oy],from:[ox,oy],at:0};
   });

@@ -11,7 +11,6 @@ LAT_SCALE = 111320
 LON_SCALE = LAT_SCALE * cos(radians(ORIGIN[0]))
 LIMIT = 200
 REQUIRED = 1
-TOPIC = "cab.location.accounts"
 LEG_NAMES = ("to_pickup", "customer_ride", "to_depot")
 
 ROUTES = [

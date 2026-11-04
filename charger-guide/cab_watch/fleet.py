@@ -92,9 +92,8 @@ async def snapshot(conn, user, plans=False):
         else "t.id,t.vehicle_id,t.last_sequence,t.distance_m,t.created_at"
     )
     rows = await conn.fetch(
-        f"""SELECT DISTINCT ON (t.vehicle_id) {columns},g.lat,g.lon
+        f"""SELECT DISTINCT ON (t.vehicle_id) {columns},t.last_lat AS lat,t.last_lon AS lon,t.last_captured_at AS captured_at
         FROM cab_watch_accounts.trips t JOIN cab_watch_accounts.vehicles v ON v.id=t.vehicle_id
-        LEFT JOIN cab_watch_accounts.gps_readings g ON (g.trip_id,g.sequence)=(t.id,t.last_sequence)
         WHERE v.user_id=$1 AND v.retired_at IS NULL ORDER BY t.vehicle_id,t.created_at DESC""",
         user,
     )
@@ -107,6 +106,7 @@ async def snapshot(conn, user, plans=False):
             distance_m=row["distance_m"],
             lat=row["lat"],
             lon=row["lon"],
+            captured_at=row["captured_at"],
         )
         if plans:
             trip.update(
@@ -116,12 +116,7 @@ async def snapshot(conn, user, plans=False):
                 motion=json.loads(row["motion"]) if row["motion"] else None,
             )
         trips.append(trip)
-    alerts = await conn.fetch(
-        """SELECT a.*,v.id AS vehicle_id,v.cab_number AS cab FROM cab_watch_accounts.alerts a
-        JOIN cab_watch_accounts.trips t ON t.id=a.trip_id JOIN cab_watch_accounts.vehicles v ON v.id=t.vehicle_id
-        WHERE v.user_id=$1 ORDER BY (a.closed_sequence IS NULL) DESC,a.id DESC LIMIT 1000""",
-        user,
-    )
+    alerts = await fleet_alerts(conn, user)
     return dict(
         vehicles=[dict(v) for v in cars],
         parked_counts=await parked_counts(conn, user),
@@ -131,12 +126,23 @@ async def snapshot(conn, user, plans=False):
     )
 
 
+async def fleet_alerts(conn, user):
+    return await conn.fetch(
+        """SELECT a.*,v.id AS vehicle_id,v.cab_number AS cab FROM cab_watch_accounts.alerts a
+        JOIN cab_watch_accounts.trips t ON t.id=a.trip_id JOIN cab_watch_accounts.vehicles v ON v.id=t.vehicle_id
+        WHERE v.user_id=$1 ORDER BY (a.closed_sequence IS NULL) DESC,a.id DESC LIMIT 1000""",
+        user,
+    )
+
+
 @router.get("/state")
-async def status(request: Request, user: UUID = Depends(owner)):
+async def status(request: Request, user: UUID = Depends(owner), alerts_only: bool = False):
     async with (
         request.app.state.db.acquire() as conn,
         conn.transaction(isolation="repeatable_read", readonly=True),
     ):
+        if alerts_only:
+            return {"alerts": [dict(a) for a in await fleet_alerts(conn, user)]}
         return await snapshot(conn, user)
 
 

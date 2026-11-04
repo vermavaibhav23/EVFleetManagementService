@@ -146,11 +146,20 @@ INSERT INTO cab_watch_accounts.depots(name,node) VALUES
 ON CONFLICT (node) DO NOTHING;
 CREATE UNIQUE INDEX IF NOT EXISTS one_active_trip ON cab_watch_accounts.trips(vehicle_id) WHERE completed_at IS NULL;
 CREATE INDEX IF NOT EXISTS vehicle_history ON cab_watch_accounts.trips(vehicle_id,created_at);
-CREATE TABLE IF NOT EXISTS cab_watch_accounts.gps_readings (
-    trip_id uuid NOT NULL REFERENCES cab_watch_accounts.trips ON DELETE CASCADE,
-    sequence integer NOT NULL, leg smallint NOT NULL, lat double precision NOT NULL, lon double precision NOT NULL,
-    distance_m real NOT NULL, received_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(trip_id,sequence)
-);
+ALTER TABLE cab_watch_accounts.trips
+    ADD COLUMN IF NOT EXISTS last_lat double precision,
+    ADD COLUMN IF NOT EXISTS last_lon double precision,
+    ADD COLUMN IF NOT EXISTS last_captured_at timestamptz;
+-- Older releases only recorded receipt time. Preserve their final coordinates
+-- without presenting that receipt time as the time the GPS point was captured.
+DO $$
+BEGIN
+    IF to_regclass('cab_watch_accounts.gps_readings') IS NOT NULL THEN
+        UPDATE cab_watch_accounts.trips t SET last_lat=g.lat, last_lon=g.lon
+        FROM cab_watch_accounts.gps_readings g
+        WHERE t.id=g.trip_id AND t.last_sequence=g.sequence AND t.last_lat IS NULL;
+    END IF;
+END $$;
 CREATE TABLE IF NOT EXISTS cab_watch_accounts.alerts (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     trip_id uuid NOT NULL REFERENCES cab_watch_accounts.trips ON DELETE CASCADE,
@@ -159,7 +168,7 @@ CREATE TABLE IF NOT EXISTS cab_watch_accounts.alerts (
 );
 ALTER TABLE cab_watch_accounts.alerts DROP COLUMN IF EXISTS opening_samples;
 CREATE UNIQUE INDEX IF NOT EXISTS one_open_alert ON cab_watch_accounts.alerts(trip_id) WHERE closed_sequence IS NULL;
-CREATE INDEX IF NOT EXISTS gps_received_at ON cab_watch_accounts.gps_readings(received_at);
+
 
 
 CREATE TABLE IF NOT EXISTS cab_watch_accounts.dispatch_requests (

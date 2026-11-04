@@ -5,7 +5,7 @@ services:
     plan: free
     branch: codex/charger-guide
     rootDir: charger-guide
-    healthCheckPath: /fleet
+    healthCheckPath: /cab-watch/network
     envVars:
       - key: DATABASE_URL
         sync: false

@@ -1,5 +1,5 @@
 import {makeCab,divert,rejoin,advance} from './motion.mjs?v=named1';
-import {cityMap,drawDepots,makeLayers,drawSharedRoads,selectMap,showPoint,animate} from './map.mjs?v=depots1';
+import {cityMap,drawDepots,makeLayers,drawSharedRoads,selectMap,showPoint,animate} from './map.mjs?v=live1';
 
 const $=id=>document.getElementById(id);
 const STAGES=['To pickup','With customer','Returning to depot'];
@@ -37,7 +37,7 @@ function render(){
   const moving=fleet.cabs.some(c=>c.mode!=='arrived');
   $('mode').textContent=running?'● Running':moving?'Paused':'Ready';
   $('play').textContent=running?'Ⅱ Pause':'▶ Start';
-  $('play').disabled=changing||!moving;
+  $('play').disabled=changing||(!moving&&!fleet.pending);
   $('create').disabled=changing||!fleet.vehicles.some(v=>v.status==='available')||!$('planner').hidden;
   for(const v of fleet.vehicles){
     if(!v.row)continue;
@@ -91,66 +91,81 @@ async function explain(a){
 }
 function draw(now){if(fleet&&animate(fleet.cabs,now))frame=requestAnimationFrame(draw);}
 function gps(f,c){
-  return {trip_id:c.id,sequence:c.sequence,leg:c.leg,
+  return {trip_id:c.id,sequence:c.sequence,leg:c.leg,captured_at:c.capturedAt,
     motion:{mode:c.mode,index:c.index,source:c.from,target:c.to,recovery:c.recovery||[]},
     lat:f.origin[0]-c.point[1]*f.metres/f.lat_scale,
     lon:f.origin[1]+c.point[0]*f.metres/f.lon_scale};
 }
-async function readState(f){
-  const result=await api('me/state');
-  if(fleet!==f)return;
-  f.alerts=result.alerts;
-  for(const saved of result.vehicles){
-    const v=f.vehicles.find(v=>v.id===saved.id);
-    if(!v)continue;
-    v.status=saved.status;v.current_node=saved.current_node;v.parked_depot_id=saved.parked_depot_id;
-    if(v.status==='available')v.currentTrip=null;
-  }
-  for(const trip of result.trips){
-    const c=f.cabs.find(c=>c.id===trip.id);
-    if(!c)continue;
-    c.streak=0;c.offset=trip.distance_m;c.confirmed=trip.last_sequence;
-    if(trip.lat!==null)showPoint(c,[(trip.lon-f.origin[1])*f.lon_scale/f.metres,
-      (f.origin[0]-trip.lat)*f.lat_scale/f.metres]);
-    if(c.mode==='arrived')c.map.pin.setAttribute('visibility','hidden');
-  }
-  drawDepots(network,result.parked_counts);
-  cancelAnimationFrame(frame);draw(performance.now());render();
+async function pollAlerts(f){
+  if(f!==fleet)return;
+  const version=f.alertVersion;
+  try{
+    if(f.vehicles.some(v=>v.status==='busy')){
+      const state=await api('me/state?alerts_only=true');
+      if(f===fleet && version===f.alertVersion){f.alerts=state.alerts;render();}
+    }
+  }catch(e){if(f===fleet)$('connection').textContent='Alert updates delayed';}
+  finally{if(f===fleet)f.pollTimer=setTimeout(()=>pollAlerts(f),1000);}
 }
-function schedule(f,delay){clearTimeout(timer);if(!f.working)timer=setTimeout(()=>tick(f),delay);}
-async function tick(f){
-  if(f!==fleet||f.working)return;
+function applyReceipt(f,result){
+  const cab=f.cabs.find(c=>c.id===result.trip_id);
+  if(!cab || result.sequence<cab.confirmed)return;
+  cab.confirmed=result.sequence;cab.offset=result.distance_m;
+  if(result.alert){
+    const alert={...result.alert,vehicle_id:cab.vehicle_id,cab:cab.cab};
+    f.alerts=[alert,...f.alerts.filter(a=>a.id!==alert.id)];
+  }
+  if(result.parked){
+    const v=f.vehicles.find(v=>v.id===cab.vehicle_id);
+    v.status='available';v.currentTrip=null;v.parked_depot_id=cab.arrival_depot_id;
+    v.current_node=cab.legs[2].stops.at(-1);
+    cab.map.pin.setAttribute('visibility','hidden');
+    const counts={};
+    for(const vehicle of f.vehicles){
+      const id=vehicle.parked_depot_id;
+      if(id)counts[id]=(counts[id]||0)+1;
+    }
+    for(const depot of network.depots)counts[depot.id]??=0;
+    drawDepots(network,counts);
+  }
+}
+async function sendPositions(f){
+  if(f.working || !f.pending)return;
   f.working=true;
   try{
-    if(f.waiting){
-      await readState(f);
+    while(f===fleet && f.pending){
+      const response=await api('me/gps','POST',{readings:f.pending});
       if(f!==fleet)return;
-      if(f.cabs.some(c=>c.confirmed<c.sequence))return;
-      f.waiting=false;
+      f.alertVersion++;
+      for(const result of response.results)applyReceipt(f,result);
+      f.pending=f.nextBatch;f.nextBatch=null;
+      $('connection').textContent='● Connected';render();
     }
-    if(!f.pending&&running){
-      const moving=f.cabs.filter(c=>advance(c));
-      if(!moving.length){running=false;msg('All dispatched cars returned to their depots.');return;}
-      f.pending=moving.map(c=>gps(f,c));f.seconds+=5;
-    }
-    if(f.pending){
-      await api('me/gps','POST',{readings:f.pending});
-      if(f!==fleet)return;
-      f.pending=null;f.waiting=true;
-      await readState(f);
-      if(f!==fleet)return;
-      f.waiting=f.cabs.some(c=>c.confirmed<c.sequence);
-    }
-    if(f.cabs.every(c=>c.mode==='arrived')&&!f.waiting)running=false;
-    $('connection').textContent='● Connected';
   }catch(e){
-    if(f!==fleet)return;
-    running=false;$('connection').textContent='Connection interrupted';
-    msg(e.message+' Press Start to resume.');f.failed=true;
-  }finally{
-    f.working=false;
-    if(f===fleet){render();if(!f.failed&&(running||f.waiting||f.pending))schedule(f,f.waiting?350:950);}
+    if(f===fleet){
+      running=false;f.failed=true;$('connection').textContent='Connection interrupted';
+      msg(e.message+' Press Start to retry these positions.');
+    }
+  }finally{f.working=false;if(f===fleet)render();}
+}
+function schedule(f,delay){clearTimeout(timer);timer=setTimeout(()=>tick(f),delay);}
+function tick(f){
+  if(f!==fleet || f.failed)return;
+  // Allow movement while a request is in flight, but bound unsent work on slow networks.
+  if(running && !f.nextBatch){
+    const moving=f.cabs.filter(c=>advance(c));
+    if(moving.length){
+      const time=new Date().toISOString();
+      for(const cab of moving){cab.capturedAt=time;showPoint(cab,cab.point);}
+      cancelAnimationFrame(frame);draw(performance.now());
+      const batch=moving.map(c=>gps(f,c));
+      if(f.pending)f.nextBatch=batch;else f.pending=batch;
+      f.seconds+=5;
+    }else running=false;
   }
+  sendPositions(f);
+  render();
+  if(running)schedule(f,1000);
 }
 function closePlanner(){
   $('planner').hidden=true;$('map').classList.remove('picking');
@@ -219,6 +234,7 @@ function restoreTrip(trip){
   if(trip.last_sequence===0 && c.stops.length===1){
     c.leg=1;c.stops=c.legs[1].stops;c.nodes=c.legs[1].path;
   }
+  c.capturedAt=trip.captured_at;
   c.confirmed=c.sequence=trip.last_sequence;c.offset=trip.distance_m;
   if(trip.lat!==null)c.point=[(trip.lon-fleet.origin[1])*fleet.lon_scale/fleet.metres,
     (fleet.origin[0]-trip.lat)*fleet.lat_scale/fleet.metres];
@@ -236,7 +252,7 @@ async function setup(loadOnly=false){
   if(!loadOnly && fleet && Number($('fleetSize').value)===fleet.vehicles.length){
     msg('Your fleet already has this size.');return;
   }
-  if(!loadOnly && fleet && (running||fleet.pending||fleet.waiting||fleet.working)){
+  if(!loadOnly && fleet && (running||fleet.pending||fleet.nextBatch||fleet.working)){
     msg('Pause the simulation and let the latest GPS update finish before resizing.');return;
   }
   changing=true;
@@ -245,7 +261,9 @@ async function setup(loadOnly=false){
     network=network||await api('network');
     const created=loadOnly?await api('me/fleet'):await api('me/fleet','PUT',{count:Number($('fleetSize').value)});
     running=false;clearTimeout(timer);cancelAnimationFrame(frame);reviewGeneration++;selected=null;closePlanner();
-    fleet={...network,...created,cabs:[],seconds:0,working:false};
+    clearTimeout(fleet?.pollTimer);
+    fleet={alertVersion:0,...network,...created,cabs:[],seconds:0,working:false};
+    pollAlerts(fleet);
     $('fleetSize').value=created.vehicles.length||'';
     cityMap(network,pick);closePlanner();
     for(const id of ['routes','shared','trails','pins'])$(id).replaceChildren();
@@ -282,7 +300,7 @@ $('return').onclick=()=>{rejoin(chosen());render();
 let registering=false;
 function signOut(message=''){
   sessionStorage.removeItem('cabwatch.token');sessionStorage.removeItem('cabwatch.name');
-  fleet=null;running=false;selected=null;clearTimeout(timer);cancelAnimationFrame(frame);
+  clearTimeout(fleet?.pollTimer);fleet=null;running=false;selected=null;clearTimeout(timer);cancelAnimationFrame(frame);
   $('dashboard').hidden=true;$('account').hidden=false;$('authMessage').textContent=message;
   $('connection').textContent='Signed out';$('password').value='';
 }

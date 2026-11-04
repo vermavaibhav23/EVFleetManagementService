@@ -28,7 +28,8 @@ class RecordingConnection:
     def transaction(self):
         return Context(self)
 
-    async def fetchrow(self, *_):
+    async def fetchrow(self, sql, *args):
+        self.writes.append((sql, args))
         return self.trip
 
     async def fetch(self, *_):
@@ -69,7 +70,7 @@ class RetentionEvidenceTests(unittest.TestCase):
         }
         conn = RecordingConnection(trip)
         lat, lon = city.gps(city.NODES["Z"])
-        run_immediate(record(RecordingPool(conn), Point(trip_id=trip_id, sequence=3, leg=0, lat=lat, lon=lon)))
+        run_immediate(record(conn, trip, Point(trip_id=trip_id, sequence=3, leg=0, lat=lat, lon=lon)))
         alert_write = next(args for sql, args in conn.writes if "INSERT INTO cab_watch_accounts.alerts" in sql)
         self.assertEqual(alert_write[:2], (trip_id, 3))
         self.assertGreater(alert_write[2], 200)
@@ -112,7 +113,7 @@ class RetentionEvidenceTests(unittest.TestCase):
                              "current_node": "E", "status": "busy"}]
                 if "FROM cab_watch_accounts.trips" in sql:
                     return [{"id": trip_id, "last_sequence": 19, "off_count": 0,
-                             "distance_m": 0, "lat": None, "lon": None}]
+                             "distance_m": 0, "lat": None, "lon": None, "captured_at": None}]
                 return []
 
         class Pool:
