@@ -9,12 +9,8 @@ CREATE TABLE IF NOT EXISTS cab_watch_accounts.users (
     created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS cab_watch_accounts.depots (
-    id text PRIMARY KEY, name text NOT NULL, node text NOT NULL UNIQUE
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text NOT NULL, node text NOT NULL UNIQUE
 );
-INSERT INTO cab_watch_accounts.depots(id,name,node) VALUES
-    ('northwest','Northwest Depot','A'), ('northeast','Northeast Depot','E'),
-    ('southwest','Southwest Depot','V'), ('southeast','Southeast Depot','Z')
-ON CONFLICT (id) DO UPDATE SET name=excluded.name,node=excluded.node;
 -- A single sequence supplies synthetic plates across all accounts and retired cabs.
 CREATE SEQUENCE IF NOT EXISTS cab_watch_accounts.plate_serial
     MINVALUE 1 MAXVALUE 669173076 START WITH 11233 NO CYCLE;
@@ -30,7 +26,7 @@ CREATE TABLE IF NOT EXISTS cab_watch_accounts.vehicles (
         CONSTRAINT vehicle_plate_format CHECK(id ~ '^[A-Z]{2}[0-9]{2}[A-Z]{2}[0-9]{4}$'),
     user_id uuid NOT NULL REFERENCES cab_watch_accounts.users,
     cab_number integer NOT NULL CHECK(cab_number>0),
-    parked_depot_id text REFERENCES cab_watch_accounts.depots,
+    parked_depot_id uuid REFERENCES cab_watch_accounts.depots,
     status text NOT NULL DEFAULT 'available' CHECK(status IN ('available','busy')),
     created_at timestamptz NOT NULL DEFAULT now(),
     retired_at timestamptz,
@@ -126,6 +122,28 @@ BEGIN
             CHECK (cab_watch_accounts.valid_trip_plan(planned_legs));
     END IF;
 END $$;
+-- Older installations used direction strings. Assign one UUID per existing
+-- depot and translate every parked vehicle before restoring its foreign key.
+DO $$
+BEGIN
+    IF EXISTS (SELECT FROM information_schema.columns WHERE table_schema='cab_watch_accounts'
+               AND table_name='depots' AND column_name='id' AND data_type='text') THEN
+        LOCK TABLE cab_watch_accounts.depots, cab_watch_accounts.vehicles IN ACCESS EXCLUSIVE MODE;
+        ALTER TABLE cab_watch_accounts.depots ADD COLUMN new_id uuid NOT NULL DEFAULT gen_random_uuid();
+        ALTER TABLE cab_watch_accounts.vehicles
+            DROP CONSTRAINT IF EXISTS vehicles_parked_depot_id_fkey,
+            DROP CONSTRAINT IF EXISTS vehicles_depot_id_fkey;
+        UPDATE cab_watch_accounts.vehicles v SET parked_depot_id=d.new_id::text
+            FROM cab_watch_accounts.depots d WHERE v.parked_depot_id=d.id;
+        ALTER TABLE cab_watch_accounts.vehicles ALTER COLUMN parked_depot_id TYPE uuid USING parked_depot_id::uuid;
+        ALTER TABLE cab_watch_accounts.depots ALTER COLUMN id TYPE uuid USING new_id;
+        ALTER TABLE cab_watch_accounts.depots ALTER COLUMN id SET DEFAULT gen_random_uuid(), DROP COLUMN new_id;
+        ALTER TABLE cab_watch_accounts.vehicles ADD FOREIGN KEY (parked_depot_id) REFERENCES cab_watch_accounts.depots;
+    END IF;
+END $$;
+INSERT INTO cab_watch_accounts.depots(name,node) VALUES
+    ('Northwest Depot','A'), ('Northeast Depot','E'), ('Southwest Depot','V'), ('Southeast Depot','Z')
+ON CONFLICT (node) DO NOTHING;
 CREATE UNIQUE INDEX IF NOT EXISTS one_active_trip ON cab_watch_accounts.trips(vehicle_id) WHERE completed_at IS NULL;
 CREATE INDEX IF NOT EXISTS vehicle_history ON cab_watch_accounts.trips(vehicle_id,created_at);
 CREATE TABLE IF NOT EXISTS cab_watch_accounts.gps_readings (
@@ -143,3 +161,10 @@ ALTER TABLE cab_watch_accounts.alerts DROP COLUMN IF EXISTS opening_samples;
 CREATE UNIQUE INDEX IF NOT EXISTS one_open_alert ON cab_watch_accounts.alerts(trip_id) WHERE closed_sequence IS NULL;
 CREATE INDEX IF NOT EXISTS gps_received_at ON cab_watch_accounts.gps_readings(received_at);
 
+
+CREATE TABLE IF NOT EXISTS cab_watch_accounts.dispatch_requests (
+    user_id uuid NOT NULL REFERENCES cab_watch_accounts.users,
+    request_key uuid NOT NULL,
+    trip_id uuid NOT NULL UNIQUE REFERENCES cab_watch_accounts.trips ON DELETE CASCADE,
+    PRIMARY KEY (user_id, request_key)
+);

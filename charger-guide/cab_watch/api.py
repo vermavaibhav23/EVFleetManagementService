@@ -22,7 +22,7 @@ router = APIRouter(prefix="/cab-watch")
 
 
 from .auth import owner, router as auth_router
-from .fleet import router as fleet_router
+from .fleet import list_depots, router as fleet_router
 
 router.include_router(auth_router)
 router.include_router(fleet_router)
@@ -83,8 +83,8 @@ async def record(db, reading):
             depot = city.NODES[legs["to_depot"][-1]]
             if city.distance_from_path([depot], reading.lat, reading.lon) < 1:
                 await conn.execute("UPDATE cab_watch_accounts.trips SET phase=3,completed_at=now() WHERE id=$1", reading.trip_id)
-                await conn.execute("""UPDATE cab_watch_accounts.vehicles SET status='available',parked_depot_id=$2
-                    WHERE id=$1""", trip["vehicle_id"], city.DEPOT_BY_NODE[legs["to_depot"][-1]]["id"])
+                await conn.execute("""UPDATE cab_watch_accounts.vehicles SET status='available',parked_depot_id=(SELECT id FROM cab_watch_accounts.depots WHERE node=$2)
+                    WHERE id=$1""", trip["vehicle_id"], legs["to_depot"][-1])
 
 
 class CabStream:
@@ -158,9 +158,9 @@ async def page():
 
 
 @router.get("/network")
-async def network():
+async def network(request: Request):
     return dict(nodes=city.NODES, roads=city.ROADS, capacity=city.MAX_FLEET,
-                depots=city.DEPOTS,
+                depots=[dict(d) for d in await list_depots(request.app.state.db)],
                 metres=city.METRES, origin=city.ORIGIN,
                 lat_scale=city.LAT_SCALE, lon_scale=city.LON_SCALE)
 

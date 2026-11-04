@@ -1,15 +1,15 @@
 import {makeCab,divert,rejoin,advance} from './motion.mjs?v=named1';
-import {cityMap,drawDepots,makeLayers,drawSharedRoads,selectMap,showPoint,animate} from './map.mjs?v=plate1';
+import {cityMap,drawDepots,makeLayers,drawSharedRoads,selectMap,showPoint,animate} from './map.mjs?v=depots1';
 
 const $=id=>document.getElementById(id);
 const STAGES=['To pickup','With customer','Returning to depot'];
-let fleet,selected,running=false,frame,timer,changing=false,reviewGeneration=0,network,draftId;
+let fleet,selected,running=false,frame,timer,changing=false,reviewGeneration=0,network,dispatchKey;
 const msg=text=>{$('message').textContent=text;};
 const element=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
 
-async function api(path,method='GET',body){
+async function api(path,method='GET',body,extraHeaders={}){
   const token=sessionStorage.getItem('cabwatch.token');
-  const headers={'Content-Type':'application/json'};
+  const headers={'Content-Type':'application/json',...extraHeaders};
   if(token && !path.startsWith('auth/'))headers.Authorization='Bearer '+token;
   const response=await fetch('/cab-watch/'+path,{method,cache:'no-store',headers,
     body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(35000)});
@@ -23,7 +23,7 @@ async function api(path,method='GET',body){
 function chosen(){return fleet?.cabs.find(c=>c.id===selected);}
 function select(id){selected=id;selectMap(fleet.cabs,id);render();}
 function alertFor(c){return fleet.alerts.find(a=>a.trip_id===c.id&&a.closed_sequence===null);}
-function depotFor(v){return fleet.depots.find(d=>d.id===v.parked_depot_id);}
+function depotById(id){return fleet.depots.find(d=>d.id===id);}
 
 function render(){
   if(!fleet){
@@ -48,7 +48,7 @@ function render(){
     v.badge.textContent=alarm?'Off-route alert':trip?.mode==='turn requested'?'Turn queued':detouring?'Route changed':trip?.streak?'Checking':
       v.status==='available'?'Available':STAGES[trip?.leg]||'Driving';
     v.badge.className='badge'+(trip?.streak?' warn':'');
-    v.desc.textContent=v.status==='available'?depotFor(v).name+' · ready':
+    v.desc.textContent=v.status==='available'?depotById(v.parked_depot_id).name+' · ready':
       (trip?trip.origin+' → '+trip.destination+' · '+STAGES[trip.leg]:'Driving');
   }
   const c=chosen();
@@ -57,8 +57,8 @@ function render(){
     $('distance').textContent='';$('wrong').disabled=true;$('return').disabled=true;
   }else{
     $('selected').textContent=c.vehicle_id+' · '+c.origin+' → '+c.destination;
-    $('tripline').textContent=c.depot+' → pickup '+c.origin+' → drop-off '+c.destination+
-      ' → '+c.arrival_depot+' · '+(c.total_metres/1000).toFixed(2)+' km · '+
+    $('tripline').textContent=depotById(c.departure_depot_id).name+' → pickup '+c.origin+' → drop-off '+c.destination+
+      ' → '+depotById(c.arrival_depot_id).name+' · '+(c.total_metres/1000).toFixed(2)+' km · '+
       (c.mode==='arrived'?'Completed':STAGES[c.leg]+' / '+c.mode);
     $('distance').textContent=Math.round(c.offset)+' m from current leg · GPS #'+c.confirmed+
       ' · Alert at '+fleet.limit+' m';
@@ -114,7 +114,7 @@ async function readState(f){
       (f.origin[0]-trip.lat)*f.lat_scale/f.metres]);
     if(c.mode==='arrived')c.map.pin.setAttribute('visibility','hidden');
   }
-  drawDepots(network,f.vehicles);
+  drawDepots(network,result.parked_counts);
   cancelAnimationFrame(frame);draw(performance.now());render();
 }
 function schedule(f,delay){clearTimeout(timer);if(!f.working)timer=setTimeout(()=>tick(f),delay);}
@@ -169,7 +169,7 @@ function pick(name){
   if(!$('launch').disabled)launch();
 }
 function openPlanner(){
-  draftId=crypto.randomUUID();
+  dispatchKey=crypto.randomUUID();
   $('pickup').value='';$('dropoff').value='';$('planner').hidden=false;
   $('map').classList.add('picking');
   for(const node of document.querySelectorAll('.junction'))node.setAttribute('tabindex','0');
@@ -193,17 +193,17 @@ async function launch(){
   for(const id of ['launch','cancel','reset','pickup','dropoff','fleetSize'])$(id).disabled=true;
   msg('Finding the closest available car by road…');
   try{
-    const trip=await api('me/trips/'+draftId,'PUT',
-      {pickup:$('pickup').value,dropoff:$('dropoff').value});
+    const trip=await api('me/trips','POST',
+      {pickup:$('pickup').value,dropoff:$('dropoff').value},{'Idempotency-Key':dispatchKey});
     if(f!==fleet)return;
     const c=makeCab(trip,network);
     f.cabs.push(c);makeLayers([c],select);drawSharedRoads(f.cabs,network);
     const v=f.vehicles.find(v=>v.id===trip.vehicle_id);
     v.status='busy';v.parked_depot_id=null;v.currentTrip=c.id;v.latestTrip=c.id;
     showCabInRoster(v);
-    drawDepots(network,f.vehicles);
+    drawDepots(network,trip.parked_counts);
     closePlanner();running=true;f.failed=false;select(c.id);schedule(f,0);
-    msg(c.vehicle_id+' left '+c.depot+' for pickup '+c.origin+'.');
+    msg(c.vehicle_id+' left '+depotById(c.departure_depot_id).name+' for pickup '+c.origin+'.');
   }catch(e){msg(e.message);}
   finally{
     changing=false;for(const id of ['cancel','reset','pickup','dropoff','fleetSize'])$(id).disabled=false;
@@ -249,7 +249,7 @@ async function setup(loadOnly=false){
     $('fleetSize').value=created.vehicles.length||'';
     cityMap(network,pick);closePlanner();
     for(const id of ['routes','shared','trails','pins'])$(id).replaceChildren();
-    drawDepots(network,fleet.vehicles);
+    drawDepots(network,created.parked_counts);
     for(const id of ['pickup','dropoff']){
       $(id).replaceChildren(new Option('Select node',''));
       for(const n of Object.keys(network.nodes))$(id).add(new Option(n,n));

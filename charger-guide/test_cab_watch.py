@@ -1,6 +1,6 @@
 import unittest
 from cab_watch.city import (GRAPH, NODES, shortest_route, ROUTES, gps, next_streak,
-                            offset_metres, distance_from_path, DEPOTS, depot_allocation,
+                            offset_metres, distance_from_path, depot_allocation,
                             nearest_available)
 
 
@@ -17,7 +17,8 @@ class CabGeometryTests(unittest.TestCase):
         self.assertAlmostEqual(offset_metres(0, *gps((45,80))), 210, places=5)
 
     def test_boundary_gap_and_recovery(self):
-        self.assertEqual(next_streak(200,2,True),0)
+        self.assertEqual(next_streak(199.99,0,True),0)
+        self.assertEqual(next_streak(200,0,True),1)
         self.assertEqual(next_streak(201,2,True),3)
         self.assertEqual(next_streak(201,2,False),1)
 
@@ -43,11 +44,11 @@ class RoutingTests(unittest.TestCase):
 class FleetTests(unittest.TestCase):
     def test_every_fleet_size_is_split_as_evenly_as_possible(self):
         for count in range(1, 21):
-            allocation = depot_allocation(count)
-            self.assertEqual(len(allocation), len(DEPOTS))
+            allocation = depot_allocation(count, 4)
+            self.assertEqual(len(allocation), 4)
             self.assertEqual(sum(allocation), count)
             self.assertLessEqual(max(allocation) - min(allocation), 1)
-        self.assertEqual(depot_allocation(10), [3, 3, 2, 2])
+        self.assertEqual(depot_allocation(10, 4), [3, 3, 2, 2])
 
     def test_nearest_available_car_uses_road_distance(self):
         vehicles = [

@@ -12,14 +12,7 @@ LON_SCALE = LAT_SCALE * cos(radians(ORIGIN[0]))
 LIMIT = 200
 REQUIRED = 1
 TOPIC = "cab.location.accounts"
-DEPOTS = [
-    {"id": "northwest", "name": "Northwest Depot", "node": "A"},
-    {"id": "northeast", "name": "Northeast Depot", "node": "E"},
-    {"id": "southwest", "name": "Southwest Depot", "node": "V"},
-    {"id": "southeast", "name": "Southeast Depot", "node": "Z"},
-]
 LEG_NAMES = ("to_pickup", "customer_ride", "to_depot")
-DEPOT_BY_NODE = {depot["node"]: depot for depot in DEPOTS}
 
 ROUTES = [
     ("Medical College", "Central Station", "#2663da", [(80,80),(625,80),(625,320)]),
@@ -86,10 +79,10 @@ def shortest_route(start, end):
     raise ValueError("No road connects these intersections")
 
 
-def depot_allocation(count):
+def depot_allocation(count, depot_count):
     """Distribute vehicles as evenly as possible, in a stable depot order."""
-    each, extra = divmod(count, len(DEPOTS))
-    return [each + (index < extra) for index in range(len(DEPOTS))]
+    each, extra = divmod(count, depot_count)
+    return [each + (index < extra) for index in range(depot_count)]
 
 
 def nearest_available(vehicles, pickup):
