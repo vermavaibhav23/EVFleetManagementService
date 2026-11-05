@@ -53,36 +53,55 @@ function takeQueuedTurn(cab) {
   cab.mode = 'detour';
 }
 
-// Start Dijkstra at the cab's position between two intersections. The cost
-// of reaching either endpoint includes only the remaining part of that road.
+// Start Dijkstra at the current point on the road. Score each possible rejoin
+// by connector distance PLUS the remaining planned leg, not proximity alone.
 function recoveryPath(cab) {
   const {nodes} = cab.network;
-  const eligible = new Set(cab.stops);
+  const remaining = new Map();
+  let suffix = 0;
+  for (let i=cab.stops.length-1;i>=0;i--) {
+    if (i<cab.stops.length-1) suffix += distance(nodes[cab.stops[i]],nodes[cab.stops[i+1]]);
+    remaining.set(cab.stops[i],suffix);
+  }
   const costs = new Map();
   const parent = new Map();
   const open = new Set([cab.from, cab.to]);
+  const settled = new Set();
+  let best, bestTotal = Infinity, bestConnector = Infinity;
+  const epsilon = 1e-8;
   for (const end of open) costs.set(end, distance(cab.point, nodes[end]));
   while (open.size) {
     let node;
     for (const candidate of open) {
       if (node === undefined || costs.get(candidate) < costs.get(node)) node = candidate;
     }
-    if (eligible.has(node)) {
-      const path = [node];
-      while (parent.has(node)) {
-        node = parent.get(node);
-        path.unshift(node);
+    const connector = costs.get(node);
+    if (connector>bestTotal+epsilon) break;
+    if (remaining.has(node)) {
+      const total = connector+remaining.get(node);
+      // For equal full journeys, rejoin sooner rather than staying off-route.
+      if (total<bestTotal-epsilon || (Math.abs(total-bestTotal)<=epsilon && connector<bestConnector)) {
+        best=node;bestTotal=total;bestConnector=connector;
       }
-      return path;
     }
     open.delete(node);
+    settled.add(node);
     for (const next of neighbours(cab.network, node)) {
+      if (settled.has(next)) continue;
       const cost = costs.get(node) + distance(nodes[node], nodes[next]);
       if (cost >= (costs.get(next) ?? Infinity)) continue;
       costs.set(next, cost);
       parent.set(next, node);
       open.add(next);
     }
+  }
+  if (best!==undefined) {
+    const path = [best];
+    while (parent.has(best)) {
+      best=parent.get(best);
+      path.unshift(best);
+    }
+    return path;
   }
   throw new Error('No road leads back to the planned route.');
 }
@@ -112,7 +131,7 @@ export function advance(cab) {
       const leg = cab.leg;
       resumeAt(cab, next);
       if (queued && cab.leg === leg && cab.mode === 'route') takeQueuedTurn(cab);
-    } else if (cab.mode === 'returning' && cab.stops.includes(next)) {
+    } else if (cab.mode === 'returning' && cab.recovery.length === 1) {
       resumeAt(cab, next);
     } else if (cab.mode === 'returning') {
       cab.recovery.shift();
