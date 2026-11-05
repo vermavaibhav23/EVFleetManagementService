@@ -15,7 +15,11 @@ The browser sends a two-hour bearer JWT to the private endpoints. FastAPI verifi
 1. The browser moves each simulated cab, timestamps the point, and posts the current batch to `/cab-watch/me/gps`. Hover over a cab for the age of the displayed point.
 2. FastAPI locks the signed-in manager’s trips in a stable order. Each newer sequence is checked against its planned leg. A distance of at least 200 m opens an incident; a newer point below 200 m closes it.
 3. Latest coordinates, capture time, trip state, depot arrival and alert changes commit in one database transaction before the response. Duplicate and older sequences cannot rewind the cab or clear a newer alert.
-4. The dashboard applies alert updates from the response and polls `GET /cab-watch/me/state?alerts_only=true` about once per second while a cab is busy. Fleet loading restores saved positions, including the last known position of older trips.
+4. The dashboard applies alert updates directly from the GPS response, after the transaction commits. It does not poll for alerts. Initial fleet loading restores saved positions and alerts, including the last known position of older trips; any pending GPS from the same tab is replayed first.
+
+### Dashboard update limitation
+
+Only the browser sending GPS receives its acknowledgement and alert update. Other tabs and separate monitoring clients do not automatically see those changes; refreshing loads the saved state. A future deployment with real vehicle devices or multiple monitoring clients needs an independent dashboard update channel, such as authenticated polling or server-sent events (SSE). The existing read-only `/me/state` endpoint remains available for API clients, but the dashboard does not call it periodically.
 
 ## Data retention
 

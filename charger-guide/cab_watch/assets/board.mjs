@@ -102,17 +102,6 @@ function gps(f,c){
     lat:f.origin[0]-c.point[1]*f.metres/f.lat_scale,
     lon:f.origin[1]+c.point[0]*f.metres/f.lon_scale};
 }
-async function pollAlerts(f){
-  if(f!==fleet)return;
-  const version=f.alertVersion;
-  try{
-    if(f.vehicles.some(v=>v.status==='busy')){
-      const state=await api('me/state?alerts_only=true');
-      if(f===fleet && version===f.alertVersion){f.alerts=state.alerts;render();}
-    }
-  }catch(e){if(f===fleet)$('connection').textContent='Alert updates delayed';}
-  finally{if(f===fleet)f.pollTimer=setTimeout(()=>pollAlerts(f),1000);}
-}
 function applyReceipt(f,result){
   const cab=f.cabs.find(c=>c.id===result.trip_id);
   if(!cab || result.sequence<cab.confirmed)return;
@@ -142,7 +131,6 @@ async function sendPositions(f){
     while(f===fleet && f.outbox.length){
       const response=await api('me/gps','POST',{readings:f.outbox.first()});
       if(f!==fleet)return;
-      f.alertVersion++;
       for(const result of response.results)applyReceipt(f,result);
       f.outbox.acknowledge();f.retryAttempts=0;
       $('connection').textContent='● Connected';render();
@@ -287,9 +275,8 @@ async function setup(loadOnly=false){
     network=network||await api('network');
     const created=loadOnly?await api('me/fleet'):await api('me/fleet','PUT',{count:Number($('fleetSize').value)});
     running=false;clearTimeout(timer);cancelAnimationFrame(frame);reviewGeneration++;selected=null;closePlanner();
-    clearTimeout(fleet?.pollTimer);clearTimeout(fleet?.retryTimer);
-    fleet={outbox,alertVersion:0,...network,...created,cabs:[],seconds:0,working:false};
-    pollAlerts(fleet);
+    clearTimeout(fleet?.retryTimer);
+    fleet={outbox,...network,...created,cabs:[],seconds:0,working:false};
     $('fleetSize').value=created.vehicles.length||'';
     cityMap(network,pick);closePlanner();
     for(const id of ['routes','shared','trails','pins'])$(id).replaceChildren();
@@ -332,7 +319,7 @@ $('return').onclick=()=>{rejoin(chosen());render();
 let registering=false;
 function signOut(message=''){
   sessionStorage.removeItem('cabwatch.token');sessionStorage.removeItem('cabwatch.name');
-  clearTimeout(fleet?.pollTimer);clearTimeout(fleet?.retryTimer);fleet=null;running=false;selected=null;clearTimeout(timer);cancelAnimationFrame(frame);
+  clearTimeout(fleet?.retryTimer);fleet=null;running=false;selected=null;clearTimeout(timer);cancelAnimationFrame(frame);
   $('dashboard').hidden=true;$('account').hidden=false;$('authMessage').textContent=message;
   $('connection').textContent='Signed out';$('password').value='';
 }
