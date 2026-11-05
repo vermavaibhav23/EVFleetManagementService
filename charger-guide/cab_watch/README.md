@@ -34,8 +34,8 @@ Open [the dashboard](http://localhost:18080/cab-watch/). Compose starts FastAPI 
 ## Tests
 
 ```sh
-python -m unittest -v test_cab_watch test_retention
-node --test test_motion.mjs
+python -m unittest -v test_cab_watch test_retention test_telemetry
+node --test test_motion.mjs test_telemetry.mjs
 ```
 
 Trips store a single JSONB route with three named node arrays: `to_pickup`, `customer_ride`, and `to_depot`. Pickup, drop-off, and both depot locations are derived from their endpoints.
@@ -45,3 +45,12 @@ Trips store a single JSONB route with three named node arrays: `to_pickup`, `cus
 Send `POST /cab-watch/me/trips` with a bearer token, an `Idempotency-Key` header containing a UUID, and a body such as `{"pickup":"G","dropoff":"K"}`. Generate one key for a new dispatch and reuse it if the response is lost. The server assigns the trip UUID and returns it in `id` alongside the vehicle and route plan.
 
 A new trip returns 201. Retrying with the same account, key and stops returns the existing trip with 200. Changing the stops under a used key returns 409. Keys are retained with their trips. The older `PUT /me/trips/{trip_id}` route is deprecated.
+
+
+### Ordered telemetry
+
+Every trip expects the next consecutive sequence. A gap returns HTTP 409 with the expected sequence and rolls back the whole batch. Retries of processed readings return the current receipt and latest incident, so a lost response cannot hide an alert. Latest coordinates overwrite the trip location, while alert incidents remain available.
+
+The browser saves up to two unacknowledged batches in account-scoped session storage before drawing their movement. It replays them in order after a refresh in the same tab. It uploads each batch in chunks of at most 25 readings so large fleets share processing time. It automatically retries network failures, 429 and temporary server failures with bounded exponential backoff. Simulation movement waits when the buffer is full. Closing the tab ends this simulator's session storage.
+
+Each server worker admits two telemetry transactions at a time, with one active or waiting batch per account and up to 32 FIFO waiters. Waiting admission is limited to two seconds, database connection acquisition to two seconds, and processing to ten seconds. Overload returns retry guidance. A database advisory lock additionally prevents simultaneous telemetry transactions for the same account across workers. These bounds control resource use and give waiting accounts access in order within a worker. They do not establish a measured fleet-capacity or latency guarantee.

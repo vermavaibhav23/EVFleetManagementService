@@ -98,6 +98,12 @@ class AccountFlow(unittest.TestCase):
             self.assertEqual(
                 client.post("me/gps", headers=b, json=gps).status_code, 422
             )
+            future = dict(gps["readings"][0], sequence=2)
+            future["lat"], future["lon"] = city.gps(city.NODES["A"])
+            gap = client.post("me/gps", headers=a, json={"readings": [future]})
+            self.assertEqual(gap.status_code, 409)
+            self.assertEqual(gap.json()["detail"]["expected_sequence"], 1)
+            self.assertEqual(client.get("me/fleet", headers=a).json()["trips"][0]["last_sequence"], 0)
             self.assertEqual(
                 client.post("me/gps", headers=a, json=gps).status_code, 200
             )
@@ -113,6 +119,7 @@ class AccountFlow(unittest.TestCase):
             stale["lat"], stale["lon"]=city.gps(city.NODES["A"])
             retry=client.post("me/gps", headers=a, json={"readings":[stale]})
             self.assertFalse(retry.json()["results"][0]["applied"])
+            self.assertEqual(retry.json()["results"][0]["alert"]["id"], incident["id"])
             alert_state=client.get("me/state?alerts_only=true", headers=a).json()
             self.assertEqual(set(alert_state), {"alerts"})
             self.assertIsNone(alert_state["alerts"][0]["closed_sequence"])
@@ -149,6 +156,8 @@ class AccountFlow(unittest.TestCase):
                 if final["trips"][0]["completed"]:break
                 time.sleep(.4)
             self.assertTrue(final["trips"][0]["completed"])
+            self.assertEqual(final["alerts"][0]["opened_sequence"], 1)
+            self.assertEqual(final["alerts"][0]["closed_sequence"], 2)
             counts[by_node["E"]] += 1
             self.assertEqual(final["parked_counts"], counts)
             parked=next(v for v in final["vehicles"] if v["id"]==busy["id"])

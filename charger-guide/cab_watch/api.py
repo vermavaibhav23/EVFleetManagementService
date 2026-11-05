@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from pydantic import AwareDatetime, BaseModel, Field
 
 from .agent import generate, tool
+from .admission import TelemetryAdmission
 from . import city
 from .retention import retention_settings, run_retention
 
@@ -48,10 +49,19 @@ class Batch(BaseModel):
     readings: list[Point] = Field(min_length=1, max_length=city.MAX_FLEET)
 
 
+async def latest_alert(conn, trip_id):
+    incident = await conn.fetchrow(
+        """SELECT * FROM cab_watch_accounts.alerts WHERE trip_id=$1 ORDER BY id DESC LIMIT 1""", trip_id)
+    return dict(incident) if incident else None
+
+
 async def record(conn, trip, reading):
     if reading.sequence <= trip["last_sequence"] or trip["phase"] == 3:
         return dict(trip_id=reading.trip_id, sequence=trip["last_sequence"], applied=False,
-                    distance_m=trip["distance_m"], parked=trip["phase"] == 3, alert=None)
+                    distance_m=trip["distance_m"], parked=trip["phase"] == 3, alert=await latest_alert(conn, reading.trip_id))
+    if reading.sequence != trip["last_sequence"] + 1:
+        raise HTTPException(409, detail=dict(code="sequence_gap", trip_id=str(reading.trip_id),
+            expected_sequence=trip["last_sequence"] + 1, received_sequence=reading.sequence))
     legs = json.loads(trip["planned_legs"]) if isinstance(trip["planned_legs"], str) else trip["planned_legs"]
     if reading.leg < trip["phase"] or reading.leg > trip["phase"] + 1:
         raise HTTPException(422, "Invalid trip leg or leg transition")
@@ -118,8 +128,26 @@ async def network(request: Request):
 
 @router.post("/me/gps")
 async def ingest(batch: Batch, request: Request, user: UUID=Depends(owner)):
+    if not hasattr(request.app.state, "telemetry_admission"):
+        request.app.state.telemetry_admission = TelemetryAdmission()
+    async with request.app.state.telemetry_admission.slot(user):
+        try:
+            async with asyncio.timeout(10):
+                return await ingest_batch(batch, request.app.state.db, user)
+        except TimeoutError:
+            raise HTTPException(503, "Telemetry processing timed out. Retry this batch.",
+                                headers={"Retry-After": "1"}) from None
+
+
+async def ingest_batch(batch, db, user):
     readings = {point.trip_id: point for point in batch.readings}
-    async with request.app.state.db.acquire() as conn, conn.transaction():
+    async with db.acquire(timeout=2) as conn, conn.transaction():
+        # A second worker must also avoid processing this account simultaneously.
+        admitted = await conn.fetchval(
+            "SELECT pg_try_advisory_xact_lock(hashtextextended($1, 73949204))", str(user))
+        if not admitted:
+            raise HTTPException(429, "Telemetry already processing. Retry this batch.",
+                                headers={"Retry-After": "1"})
         trips = await conn.fetch("""
             SELECT t.* FROM cab_watch_accounts.trips t
             JOIN cab_watch_accounts.vehicles v ON v.id=t.vehicle_id

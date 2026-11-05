@@ -1,3 +1,4 @@
+import {TelemetryOutbox,retryDelay} from './telemetry.mjs?v=ordered1';
 import {makeCab,divert,rejoin,advance} from './motion.mjs?v=named1';
 import {cityMap,drawDepots,makeLayers,drawSharedRoads,selectMap,showPoint,animate} from './map.mjs?v=live1';
 
@@ -16,7 +17,12 @@ async function api(path,method='GET',body,extraHeaders={}){
   if(!response.ok){
     if(response.status===401 && !path.startsWith('auth/'))signOut('Please sign in again.');
     const detail=await response.json().catch(()=>({}));
-    throw Error(typeof detail.detail==='string'?detail.detail:Array.isArray(detail.detail)?detail.detail[0].msg:'Request failed ('+response.status+'). Try again.');
+    const gap=detail.detail?.code==='sequence_gap';
+    const message=gap?'Missing GPS #'+detail.detail.expected_sequence+'. Keep this tab open and retry the missing readings.':
+      typeof detail.detail==='string'?detail.detail:Array.isArray(detail.detail)?detail.detail[0].msg:'Request failed ('+response.status+'). Try again.';
+    const error=Error(message);error.status=response.status;
+    error.retryAfter=Number(response.headers.get('Retry-After')||0)*1000;
+    throw error;
   }
   return response.json();
 }
@@ -37,7 +43,7 @@ function render(){
   const moving=fleet.cabs.some(c=>c.mode!=='arrived');
   $('mode').textContent=running?'● Running':moving?'Paused':'Ready';
   $('play').textContent=running?'Ⅱ Pause':'▶ Start';
-  $('play').disabled=changing||(!moving&&!fleet.pending);
+  $('play').disabled=changing||(!moving&&!fleet.outbox?.length);
   $('create').disabled=changing||!fleet.vehicles.some(v=>v.status==='available')||!$('planner').hidden;
   for(const v of fleet.vehicles){
     if(!v.row)continue;
@@ -92,7 +98,7 @@ async function explain(a){
 function draw(now){if(fleet&&animate(fleet.cabs,now))frame=requestAnimationFrame(draw);}
 function gps(f,c){
   return {trip_id:c.id,sequence:c.sequence,leg:c.leg,captured_at:c.capturedAt,
-    motion:{mode:c.mode,index:c.index,source:c.from,target:c.to,recovery:c.recovery||[]},
+    motion:{mode:c.mode,index:c.index,source:c.from,target:c.to,recovery:[...(c.recovery||[])]},
     lat:f.origin[0]-c.point[1]*f.metres/f.lat_scale,
     lon:f.origin[1]+c.point[0]*f.metres/f.lon_scale};
 }
@@ -130,21 +136,28 @@ function applyReceipt(f,result){
   }
 }
 async function sendPositions(f){
-  if(f.working || !f.pending)return;
+  if(f.working || !f.outbox.length || f.retryTimer)return;
   f.working=true;
   try{
-    while(f===fleet && f.pending){
-      const response=await api('me/gps','POST',{readings:f.pending});
+    while(f===fleet && f.outbox.length){
+      const response=await api('me/gps','POST',{readings:f.outbox.first()});
       if(f!==fleet)return;
       f.alertVersion++;
       for(const result of response.results)applyReceipt(f,result);
-      f.pending=f.nextBatch;f.nextBatch=null;
+      f.outbox.acknowledge();f.retryAttempts=0;
       $('connection').textContent='● Connected';render();
     }
   }catch(e){
     if(f===fleet){
-      running=false;f.failed=true;$('connection').textContent='Connection interrupted';
-      msg(e.message+' Press Start to retry these positions.');
+      const delay=retryDelay(e,f.retryAttempts||0);
+      if(delay!==null){
+        f.retryAttempts=(f.retryAttempts||0)+1;
+        $('connection').textContent='Retrying GPS upload';
+        f.retryTimer=setTimeout(()=>{f.retryTimer=null;sendPositions(f);},delay+Math.random()*250);
+      }else{
+        running=false;f.failed=true;$('connection').textContent='Connection interrupted';
+        msg(e.message+' Press Start to retry these positions.');
+      }
     }
   }finally{f.working=false;if(f===fleet)render();}
 }
@@ -152,14 +165,20 @@ function schedule(f,delay){clearTimeout(timer);timer=setTimeout(()=>tick(f),dela
 function tick(f){
   if(f!==fleet || f.failed)return;
   // Allow movement while a request is in flight, but bound unsent work on slow networks.
-  if(running && !f.nextBatch){
+  if(running && f.outbox.length<2){
+    const before=f.cabs.map(c=>({...c,recovery:c.recovery?[...c.recovery]:undefined}));
     const moving=f.cabs.filter(c=>advance(c));
     if(moving.length){
       const time=new Date().toISOString();
-      for(const cab of moving){cab.capturedAt=time;showPoint(cab,cab.point);}
-      cancelAnimationFrame(frame);draw(performance.now());
+      for(const cab of moving)cab.capturedAt=time;
       const batch=moving.map(c=>gps(f,c));
-      if(f.pending)f.nextBatch=batch;else f.pending=batch;
+      try{f.outbox.append(batch);}
+      catch(e){
+        f.cabs.forEach((cab,index)=>Object.assign(cab,before[index]));
+        running=false;f.failed=true;msg('Unable to save pending GPS locally. '+e.message);render();return;
+      }
+      for(const cab of moving)showPoint(cab,cab.point);
+      cancelAnimationFrame(frame);draw(performance.now());
       f.seconds+=5;
     }else running=false;
   }
@@ -252,17 +271,24 @@ async function setup(loadOnly=false){
   if(!loadOnly && fleet && Number($('fleetSize').value)===fleet.vehicles.length){
     msg('Your fleet already has this size.');return;
   }
-  if(!loadOnly && fleet && (running||fleet.pending||fleet.nextBatch||fleet.working)){
+  if(!loadOnly && fleet && (running||fleet.outbox?.length||fleet.working)){
     msg('Pause the simulation and let the latest GPS update finish before resizing.');return;
   }
   changing=true;
   $('reset').disabled=true;$('fleetSize').disabled=true;
   try{
+    const token=sessionStorage.getItem('cabwatch.token');
+    const subject=JSON.parse(atob(token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).sub;
+    const outbox=new TelemetryOutbox(sessionStorage,subject);
+    while(outbox.length){
+      await api('me/gps','POST',{readings:outbox.first()});
+      outbox.acknowledge();
+    }
     network=network||await api('network');
     const created=loadOnly?await api('me/fleet'):await api('me/fleet','PUT',{count:Number($('fleetSize').value)});
     running=false;clearTimeout(timer);cancelAnimationFrame(frame);reviewGeneration++;selected=null;closePlanner();
-    clearTimeout(fleet?.pollTimer);
-    fleet={alertVersion:0,...network,...created,cabs:[],seconds:0,working:false};
+    clearTimeout(fleet?.pollTimer);clearTimeout(fleet?.retryTimer);
+    fleet={outbox,alertVersion:0,...network,...created,cabs:[],seconds:0,working:false};
     pollAlerts(fleet);
     $('fleetSize').value=created.vehicles.length||'';
     cityMap(network,pick);closePlanner();
@@ -280,7 +306,13 @@ async function setup(loadOnly=false){
     $('alerts').textContent='No route alerts in this simulation.';$('review').hidden=true;
     $('connection').textContent='● Ready';
     msg(fleet.vehicles.length?'Fleet ready. Add a trip or press Start to resume.':'Enter the number of cars and select Set fleet.');
-  }catch(e){msg(e.message+' Try again.');$('connection').textContent='Offline';}
+  }catch(e){
+    msg(e.message+' Try again.');$('connection').textContent='Offline';
+    const delay=retryDelay(e,0);
+    if(loadOnly && delay!==null && sessionStorage.getItem('cabwatch.token')){
+      clearTimeout(timer);timer=setTimeout(()=>setup(true),delay+Math.random()*250);
+    }
+  }
   finally{changing=false;$('reset').disabled=false;$('fleetSize').disabled=false;render();}
 }
 function cityColor(cab){return ['#2164cb','#a53685','#00796b','#be5422','#664bac','#a62844',
@@ -300,7 +332,7 @@ $('return').onclick=()=>{rejoin(chosen());render();
 let registering=false;
 function signOut(message=''){
   sessionStorage.removeItem('cabwatch.token');sessionStorage.removeItem('cabwatch.name');
-  clearTimeout(fleet?.pollTimer);fleet=null;running=false;selected=null;clearTimeout(timer);cancelAnimationFrame(frame);
+  clearTimeout(fleet?.pollTimer);clearTimeout(fleet?.retryTimer);fleet=null;running=false;selected=null;clearTimeout(timer);cancelAnimationFrame(frame);
   $('dashboard').hidden=true;$('account').hidden=false;$('authMessage').textContent=message;
   $('connection').textContent='Signed out';$('password').value='';
 }
