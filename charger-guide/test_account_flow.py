@@ -163,3 +163,10 @@ class AccountFlow(unittest.TestCase):
             parked=next(v for v in final["vehicles"] if v["id"]==busy["id"])
             self.assertEqual((parked["status"],parked["parked_depot_id"]),("available",by_node["E"]))
             self.assertEqual(final["trips"][0]["depot"],"Northwest Depot")
+            # Legacy callers can still create and retry a trip after schema migration.
+            legacy_path = path + '/' + str(uuid4())
+            legacy = client.put(legacy_path, json=route, headers=a)
+            legacy.raise_for_status()
+            retried = client.put(legacy_path, json=route, headers=a)
+            self.assertEqual(retried.json()['id'], legacy.json()['id'])
+            self.assertEqual(retried.json()['vehicle_id'], legacy.json()['vehicle_id'])

@@ -94,7 +94,7 @@ async def snapshot(conn, user, plans=False):
     rows = await conn.fetch(
         f"""SELECT DISTINCT ON (t.vehicle_id) {columns},t.last_lat AS lat,t.last_lon AS lon,t.last_captured_at AS captured_at
         FROM cab_watch_accounts.trips t JOIN cab_watch_accounts.vehicles v ON v.id=t.vehicle_id
-        WHERE v.user_id=$1 AND v.retired_at IS NULL ORDER BY t.vehicle_id,t.created_at DESC""",
+        WHERE t.user_id=$1 AND v.retired_at IS NULL ORDER BY t.vehicle_id,t.created_at DESC""",
         user,
     )
     depots_by_node = {d["node"]: d for d in await list_depots(conn)} if plans else {}
@@ -130,7 +130,7 @@ async def fleet_alerts(conn, user):
     return await conn.fetch(
         """SELECT a.*,v.id AS vehicle_id,v.cab_number AS cab FROM cab_watch_accounts.alerts a
         JOIN cab_watch_accounts.trips t ON t.id=a.trip_id JOIN cab_watch_accounts.vehicles v ON v.id=t.vehicle_id
-        WHERE v.user_id=$1 ORDER BY (a.closed_sequence IS NULL) DESC,a.id DESC LIMIT 1000""",
+        WHERE t.user_id=$1 ORDER BY (a.closed_sequence IS NULL) DESC,a.id DESC LIMIT 1000""",
         user,
     )
 
@@ -196,17 +196,12 @@ async def create_trip(
     async with request.app.state.db.acquire() as conn, conn.transaction():
         await lock_fleet(conn, user)
         previous_id = await conn.fetchval(
-            """SELECT trip_id FROM cab_watch_accounts.dispatch_requests
-               WHERE user_id=$1 AND request_key=$2""", user, idempotency_key,
+            """SELECT id FROM cab_watch_accounts.trips
+               WHERE user_id=$1 AND idempotency_key=$2""", user, idempotency_key,
         )
         trip_id = previous_id or uuid4()
-        payload = await dispatch_locked(conn, user, trip_id, setup)
-        if previous_id is None:
-            await conn.execute(
-                """INSERT INTO cab_watch_accounts.dispatch_requests(user_id, request_key, trip_id)
-                   VALUES($1,$2,$3)""", user, idempotency_key, trip_id,
-            )
-        else:
+        payload = await dispatch_locked(conn, user, trip_id, setup, idempotency_key)
+        if previous_id is not None:
             response.status_code = 200
         return payload
 
@@ -220,7 +215,7 @@ async def dispatch(
         return await dispatch_locked(conn, user, trip_id, setup)
 
 
-async def dispatch_locked(conn, user, trip_id, setup):
+async def dispatch_locked(conn, user, trip_id, setup, idempotency_key=None):
     if setup.pickup == setup.dropoff:
         raise HTTPException(422, "Choose different pickup and drop-off nodes.")
     # Serialize retries and collisions, including requests from different accounts.
@@ -228,7 +223,7 @@ async def dispatch_locked(conn, user, trip_id, setup):
         "SELECT pg_advisory_xact_lock(hashtextextended($1,0))", str(trip_id)
     )
     existing = await conn.fetchrow(
-        """SELECT t.*,v.user_id,v.cab_number FROM cab_watch_accounts.trips t
+        """SELECT t.*,v.cab_number FROM cab_watch_accounts.trips t
         JOIN cab_watch_accounts.vehicles v ON v.id=t.vehicle_id WHERE t.id=$1""",
         trip_id,
     )
@@ -264,11 +259,13 @@ async def dispatch_locked(conn, user, trip_id, setup):
         "to_depot": city.shortest_route(setup.dropoff, arrival["node"])[0],
     }
     row = await conn.fetchrow(
-        """INSERT INTO cab_watch_accounts.trips (id,vehicle_id,planned_legs)
-        VALUES($1,$2,$3::jsonb) RETURNING *""",
+        """INSERT INTO cab_watch_accounts.trips (id,vehicle_id,planned_legs,user_id,idempotency_key)
+        VALUES($1,$2,$3::jsonb,$4,$5) RETURNING *""",
         trip_id,
         car["id"],
         json.dumps(legs),
+        user,
+        idempotency_key if idempotency_key is not None else uuid4(),
     )
     await conn.execute(
         "UPDATE cab_watch_accounts.vehicles SET status='busy',parked_depot_id=NULL WHERE id=$1",

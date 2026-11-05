@@ -49,6 +49,8 @@ BEGIN
 END $$;
 CREATE TABLE IF NOT EXISTS cab_watch_accounts.trips (
     id uuid PRIMARY KEY,
+    user_id uuid NOT NULL,
+    idempotency_key uuid NOT NULL,
     vehicle_id text NOT NULL REFERENCES cab_watch_accounts.vehicles ON UPDATE CASCADE,
     planned_legs jsonb NOT NULL,
     phase smallint NOT NULL DEFAULT 0,
@@ -171,9 +173,49 @@ CREATE UNIQUE INDEX IF NOT EXISTS one_open_alert ON cab_watch_accounts.alerts(tr
 
 
 
-CREATE TABLE IF NOT EXISTS cab_watch_accounts.dispatch_requests (
-    user_id uuid NOT NULL REFERENCES cab_watch_accounts.users,
-    request_key uuid NOT NULL,
-    trip_id uuid NOT NULL UNIQUE REFERENCES cab_watch_accounts.trips ON DELETE CASCADE,
-    PRIMARY KEY (user_id, request_key)
-);
+-- Fold dispatch retry mappings into their trips. Runtime executes this migration
+-- in one transaction: failed validation preserves the original table and data.
+ALTER TABLE cab_watch_accounts.trips
+    ADD COLUMN IF NOT EXISTS user_id uuid,
+    ADD COLUMN IF NOT EXISTS idempotency_key uuid;
+DO $$
+BEGIN
+    LOCK TABLE cab_watch_accounts.vehicles, cab_watch_accounts.trips IN ACCESS EXCLUSIVE MODE;
+    UPDATE cab_watch_accounts.trips t SET user_id=v.user_id
+        FROM cab_watch_accounts.vehicles v WHERE v.id=t.vehicle_id AND t.user_id IS NULL;
+    IF to_regclass('cab_watch_accounts.dispatch_requests') IS NOT NULL THEN
+        LOCK TABLE cab_watch_accounts.dispatch_requests IN ACCESS EXCLUSIVE MODE;
+        IF EXISTS (
+            SELECT FROM cab_watch_accounts.dispatch_requests r
+            JOIN cab_watch_accounts.trips t ON t.id=r.trip_id
+            WHERE r.user_id IS DISTINCT FROM t.user_id
+               OR (t.idempotency_key IS NOT NULL AND t.idempotency_key <> r.request_key)
+        ) THEN RAISE EXCEPTION 'Dispatch mappings disagree with trip ownership or retry keys'; END IF;
+        UPDATE cab_watch_accounts.trips t SET idempotency_key=r.request_key
+            FROM cab_watch_accounts.dispatch_requests r WHERE r.trip_id=t.id;
+    END IF;
+    -- Older PUT-created trips have no dispatch mapping; give each a stable key.
+    UPDATE cab_watch_accounts.trips SET idempotency_key=gen_random_uuid() WHERE idempotency_key IS NULL;
+    ALTER TABLE cab_watch_accounts.trips
+        ALTER COLUMN user_id SET NOT NULL, ALTER COLUMN idempotency_key SET NOT NULL;
+    IF NOT EXISTS (SELECT FROM pg_constraint WHERE conrelid='cab_watch_accounts.vehicles'::regclass
+                   AND conname='vehicles_id_user_unique') THEN
+        ALTER TABLE cab_watch_accounts.vehicles ADD CONSTRAINT vehicles_id_user_unique UNIQUE(id,user_id);
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_constraint WHERE conrelid='cab_watch_accounts.trips'::regclass
+                   AND conname='trips_user_id_fkey') THEN
+        ALTER TABLE cab_watch_accounts.trips ADD CONSTRAINT trips_user_id_fkey
+            FOREIGN KEY(user_id) REFERENCES cab_watch_accounts.users(id);
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_constraint WHERE conrelid='cab_watch_accounts.trips'::regclass
+                   AND conname='trips_user_idempotency_unique') THEN
+        ALTER TABLE cab_watch_accounts.trips ADD CONSTRAINT trips_user_idempotency_unique UNIQUE(user_id,idempotency_key);
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_constraint WHERE conrelid='cab_watch_accounts.trips'::regclass
+                   AND conname='trips_vehicle_owner_fkey') THEN
+        ALTER TABLE cab_watch_accounts.trips ADD CONSTRAINT trips_vehicle_owner_fkey
+            FOREIGN KEY(vehicle_id,user_id) REFERENCES cab_watch_accounts.vehicles(id,user_id) ON UPDATE CASCADE;
+    END IF;
+    ALTER TABLE cab_watch_accounts.trips DROP CONSTRAINT IF EXISTS trips_vehicle_id_fkey;
+    DROP TABLE IF EXISTS cab_watch_accounts.dispatch_requests;
+END $$;

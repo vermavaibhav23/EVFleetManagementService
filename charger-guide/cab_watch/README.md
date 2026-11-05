@@ -8,7 +8,7 @@ Register or sign in with your email and password. Each account owns one persiste
 
 Use **Add trip** to pick two intersections. The closest available cab in your fleet travels to pickup, then drop-off, then the closest depot to drop-off. Only the passenger route is colored. **Change route** queues a side turn at the next eligible junction. **Return to route** finds the closest planned junction by road. After signing in again, choose **Start** to resume a paused trip from its latest recorded GPS update.
 
-The browser sends a two-hour bearer JWT to the private endpoints. FastAPI verifies its signature and claims with the account's random signing key. Passwords use salted scrypt hashes. The live account schema is `cab_watch_accounts` and contains users, depots, vehicles, trips, dispatch_requests and alerts. Account records are separate from historical anonymous simulations in `cab_watch`. Account ownership is checked before processing telemetry.
+The browser sends a two-hour bearer JWT to the private endpoints. FastAPI verifies its signature and claims with the account's random signing key. Passwords use salted scrypt hashes. The live account schema is `cab_watch_accounts` and contains users, depots, vehicles, trips and alerts. Account records are separate from historical anonymous simulations in `cab_watch`. Account ownership is checked before processing telemetry.
 
 ## One GPS reading
 
@@ -38,6 +38,8 @@ python -m unittest -v test_cab_watch test_retention test_telemetry
 node --test test_motion.mjs test_telemetry.mjs
 ```
 
+Set `CABWATCH_TEST_DATABASE_URL` to a test PostgreSQL database and run `python -m unittest -v test_schema` to verify fresh installation, migration, rollback and ownership constraints in isolated temporary schemas. Set `CABWATCH_TEST_URL` to a running test instance's `/cab-watch` URL to run `test_account_flow`, including concurrent dispatch retries and account isolation.
+
 Trips store a single JSONB route with three named node arrays: `to_pickup`, `customer_ride`, and `to_depot`. Pickup, drop-off, and both depot locations are derived from their endpoints.
 
 ### Dispatch API
@@ -45,6 +47,8 @@ Trips store a single JSONB route with three named node arrays: `to_pickup`, `cus
 Send `POST /cab-watch/me/trips` with a bearer token, an `Idempotency-Key` header containing a UUID, and a body such as `{"pickup":"G","dropoff":"K"}`. Generate one key for a new dispatch and reuse it if the response is lost. The server assigns the trip UUID and returns it in `id` alongside the vehicle and route plan.
 
 A new trip returns 201. Retrying with the same account, key and stops returns the existing trip with 200. Changing the stops under a used key returns 409. Keys are retained with their trips. The older `PUT /me/trips/{trip_id}` route is deprecated.
+
+Trips store `user_id` from the verified JWT and the UUID `idempotency_key` directly, with `UNIQUE(user_id, idempotency_key)`. A composite foreign key `(vehicle_id, user_id)` references `vehicles(id, user_id)`, preventing assignment to another user's vehicle. Dispatches are serialized per user and trip creation plus vehicle assignment commit together. Startup migrates existing `dispatch_requests` mappings before removing that table; historical trips without mappings receive a generated key. Existing trip IDs, routes, telemetry and alerts are preserved. As trips expire under retention, their retry keys expire with them. Deploy the schema and backend together; the former backend requires the removed table.
 
 
 ### Ordered telemetry

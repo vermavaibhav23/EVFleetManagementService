@@ -150,8 +150,7 @@ async def ingest_batch(batch, db, user):
                                 headers={"Retry-After": "1"})
         trips = await conn.fetch("""
             SELECT t.* FROM cab_watch_accounts.trips t
-            JOIN cab_watch_accounts.vehicles v ON v.id=t.vehicle_id
-            WHERE v.user_id=$1 AND t.id=ANY($2::uuid[])
+            WHERE t.user_id=$1 AND t.id=ANY($2::uuid[])
             ORDER BY t.id FOR UPDATE OF t""", user, list(readings))
         if len(trips) != len(batch.readings):
             raise HTTPException(422, "Send one reading per trip in your fleet")
@@ -164,7 +163,7 @@ async def explain(alert_id: int, request: Request,user: UUID=Depends(owner)):
     db = request.app.state.db
     alert = await db.fetchrow("""SELECT a.*,v.id AS vehicle_id,v.cab_number FROM cab_watch_accounts.alerts a
         JOIN cab_watch_accounts.trips t ON t.id=a.trip_id JOIN cab_watch_accounts.vehicles v ON v.id=t.vehicle_id
-        WHERE v.user_id=$1 AND a.id=$2""",user,alert_id)
+        WHERE t.user_id=$1 AND a.id=$2""",user,alert_id)
     if not alert:
         raise HTTPException(404, "Unknown alert for this simulation")
     facts = dict(vehicle_id=alert["vehicle_id"], cab=alert["cab_number"], threshold_m=city.LIMIT,
