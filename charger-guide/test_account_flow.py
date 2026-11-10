@@ -32,9 +32,12 @@ class AccountFlow(unittest.TestCase):
             self.assertEqual(trip["id"], replies[1].json()["id"])
             self.assertEqual(trip["route"], ["G","H","I","J","K"])
             self.assertEqual(trip["metres"], 4143)
-            self.assertRegex(trip["vehicle_id"], r"^KA[0-9]{2}[A-Z]{2}[0-9]{4}$")
+            self.assertRegex(trip["vehicle_id"], r"^CB#[0-9]{3,}$")
             self.assertEqual(client.post("me/trips", headers=headers, json={"pickup":"A","dropoff":"K"}).status_code, 409)
             self.assertEqual(client.get("me/trips", headers=b).json()["trips"], [])
+            other = client.post("me/trips", headers={**b, "Idempotency-Key": str(uuid4())}, json=request)
+            self.assertEqual(other.status_code, 201)
+            self.assertNotEqual(other.json()["vehicle_id"], trip["vehicle_id"])
 
             def sample(seq, node, mode, owner=a):
                 lat, lon = city.gps(city.NODES[node])

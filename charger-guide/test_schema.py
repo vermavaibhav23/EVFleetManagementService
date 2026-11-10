@@ -9,6 +9,7 @@ import unittest
 from uuid import uuid4
 
 import asyncpg
+from cab_watch.api import apply_schema
 
 ROOT = Path(__file__).parent
 PLAN = json.dumps(dict(to_pickup=['A', 'G'], customer_ride=['G', 'K'], to_depot=['K', 'E']))
@@ -32,27 +33,36 @@ class TripSchema(unittest.IsolatedAsyncioTestCase):
     async def migrate(self, legacy=False):
         path = ROOT / ('tests/fixtures/pre_trip_idempotency.sql' if legacy else 'cab_watch/schema.sql')
         async with self.db.transaction():
-            await self.db.execute(path.read_text().replace('cab_watch_accounts', self.namespace))
+            if legacy:
+                await self.db.execute(path.read_text().replace('cab_watch_accounts', self.namespace))
+            else:
+                await apply_schema(self.db, self.namespace)
 
-    async def seed(self):
+    async def seed(self, legacy=False):
         self.a, self.b = uuid4(), uuid4()
         for i, user in enumerate((self.a, self.b)):
             await self.sql("""INSERT INTO cab_watch_accounts.users(id,name,email,password_hash,jwt_key)
                 VALUES($1,'Test',$2,'not-a-login',$3)""", user, f'{i}@test.invalid', b'x' * 32)
         self.cars = []
         for i, user in enumerate((self.a, self.a, self.b)):
-            rows = await self.sql("""INSERT INTO cab_watch_accounts.vehicles(user_id,cab_number,parked_depot_id)
-                VALUES($1,$2,(SELECT id FROM cab_watch_accounts.depots WHERE node='A')) RETURNING id""", user, i + 1)
+            if legacy:
+                rows = await self.sql("""INSERT INTO cab_watch_accounts.vehicles(user_id,cab_number,parked_depot_id)
+                    VALUES($1,$2,(SELECT id FROM cab_watch_accounts.depots WHERE node='A')) RETURNING id""", user, i + 1)
+            else:
+                rows = await self.sql("INSERT INTO cab_watch_accounts.vehicles(user_id) VALUES($1) RETURNING id", user)
             self.cars.append(rows[0]['id'])
 
     async def insert_trip(self, user, key, vehicle):
         return await self.sql("""INSERT INTO cab_watch_accounts.trips
-            (id,user_id,idempotency_key,vehicle_id,planned_legs,completed_at)
-            VALUES($1,$2,$3,$4,$5::jsonb,now()) RETURNING id""", uuid4(), user, key, vehicle, PLAN)
+            (id,user_id,idempotency_key,vehicle_id,planned_route,completed_at)
+            VALUES($1,$2,$3,$4,$5::jsonb,now()) RETURNING id""", uuid4(), user, key, vehicle, '["G","H"]')
 
     async def test_fresh_schema_enforces_ownership_and_per_user_keys(self):
         await self.migrate()
         await self.seed()
+        self.assertEqual(self.cars, ['CB#001', 'CB#002', 'CB#003'])
+        await self.sql("SELECT setval('cab_watch_accounts.cb_plate_serial', 999)")
+        self.assertEqual((await self.sql('SELECT cab_watch_accounts.next_plate() AS id'))[0]['id'], 'CB#1000')
         key = uuid4()
         trip = (await self.insert_trip(self.a, key, self.cars[0]))[0]['id']
         with self.assertRaises(asyncpg.UniqueViolationError):
@@ -69,7 +79,7 @@ class TripSchema(unittest.IsolatedAsyncioTestCase):
 
     async def test_upgrade_preserves_history_keys_and_repeat_startup(self):
         await self.migrate(legacy=True)
-        await self.seed()
+        await self.seed(legacy=True)
         trip, old_put, key = uuid4(), uuid4(), uuid4()
         for tid, car in ((trip, self.cars[0]), (old_put, self.cars[1])):
             await self.sql("""INSERT INTO cab_watch_accounts.trips
@@ -82,8 +92,14 @@ class TripSchema(unittest.IsolatedAsyncioTestCase):
         alerts = await self.sql('SELECT * FROM cab_watch_accounts.alerts')
         await self.migrate()
         after = await self.sql('SELECT * FROM cab_watch_accounts.trips ORDER BY id')
+        tables = await self.sql("""SELECT table_name FROM information_schema.tables
+            WHERE table_schema='cab_watch_accounts' AND table_type='BASE TABLE'""")
+        self.assertEqual({r['table_name'] for r in tables}, {'users','vehicles','trips','alerts'})
         for original, updated in zip(before, after):
-            self.assertEqual(dict(original), {k: updated[k] for k in original.keys()})
+            for column in set(original.keys()) - {'motion','planned_legs','distance_m','phase'}:
+                self.assertEqual(original[column], updated[column])
+            self.assertEqual(json.loads(updated['planned_route']), ['G','K'])
+            self.assertEqual(json.loads(updated['motion'])['legacy']['to_depot'], ['K','E'])
             self.assertEqual(updated['user_id'], self.a)
             self.assertIsNotNone(updated['idempotency_key'])
         mapped = next(r for r in after if r['id'] == trip)
@@ -95,7 +111,7 @@ class TripSchema(unittest.IsolatedAsyncioTestCase):
 
     async def test_invalid_mapping_rolls_back_without_dropping_original(self):
         await self.migrate(legacy=True)
-        await self.seed()
+        await self.seed(legacy=True)
         tid, key = uuid4(), uuid4()
         await self.sql("""INSERT INTO cab_watch_accounts.trips(id,vehicle_id,planned_legs)
             VALUES($1,$2,$3::jsonb)""", tid, self.cars[0], PLAN)

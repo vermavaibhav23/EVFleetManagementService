@@ -64,8 +64,8 @@ class RetentionEvidenceTests(unittest.TestCase):
     def test_alert_records_opening_sequence_and_peak(self):
         trip_id = uuid4()
         trip = {
-            "last_sequence": 2, "off_count": 2, "phase": 0,
-            "planned_legs": json.dumps({"to_pickup":["A","B"], "customer_ride":["B","C"], "to_depot":["C","A"]}),
+            "last_sequence": 2, "motion": None, "completed_at": None,
+            "planned_route": json.dumps(["A","B"]),
             "vehicle_id": None,
         }
         conn = RecordingConnection(trip)
@@ -110,7 +110,7 @@ class RetentionEvidenceTests(unittest.TestCase):
             async def fetch(self, sql, *_):
                 if "FROM cab_watch_accounts.trips" in sql:
                     return [dict(id=trip_id,vehicle_id="KA01AB1234",cab_number=1,
-                                 planned_legs={"customer_ride":["G","H"]},last_sequence=19,
+                                 planned_route=json.dumps(["G","H"]),last_sequence=19,
                                  completed_at=None,phase=0,distance_m=0,motion=None,
                                  last_lat=None,last_lon=None,last_captured_at=None)]
                 return []

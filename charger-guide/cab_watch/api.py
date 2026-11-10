@@ -20,7 +20,7 @@ router = APIRouter(prefix="/cab-watch")
 
 
 from .auth import owner, router as auth_router
-from .fleet import router as fleet_router
+from .fleet import plate_number, route_state, router as fleet_router
 
 router.include_router(auth_router)
 router.include_router(fleet_router)
@@ -56,31 +56,37 @@ async def latest_alert(conn, trip_id):
 
 
 async def record(conn, trip, reading):
-    if reading.sequence <= trip["last_sequence"] or trip["phase"] == 3:
+    legs, phase, _ = route_state(trip)
+    direct = "to_pickup" not in legs
+    completed = trip["completed_at"] is not None
+    if reading.sequence <= trip["last_sequence"] or completed:
+        path = legs["customer_ride"] if direct else legs[city.LEG_NAMES[min(phase, 2)]]
+        distance = city.distance_from_path([city.NODES[n] for n in path], trip["last_lat"], trip["last_lon"]) if trip["last_lat"] is not None else 0
         return dict(trip_id=reading.trip_id, sequence=trip["last_sequence"], applied=False,
-                    distance_m=trip["distance_m"], completed=trip["phase"] == 3, parked=trip["phase"] == 3, alert=await latest_alert(conn, reading.trip_id))
+                    distance_m=distance, completed=completed, parked=completed, alert=await latest_alert(conn, reading.trip_id))
     if reading.sequence != trip["last_sequence"] + 1:
         raise HTTPException(409, detail=dict(code="sequence_gap", trip_id=str(reading.trip_id),
             expected_sequence=trip["last_sequence"] + 1, received_sequence=reading.sequence))
-    legs = json.loads(trip["planned_legs"]) if isinstance(trip["planned_legs"], str) else trip["planned_legs"]
-    direct = "to_pickup" not in legs
     if direct:
         if reading.leg != 0:
             raise HTTPException(422, "This ride has one route")
         line = [city.NODES[n] for n in legs["customer_ride"]]
     else:
-        if reading.leg < trip["phase"] or reading.leg > trip["phase"] + 1:
+        if reading.leg < phase or reading.leg > phase + 1:
             raise HTTPException(422, "Invalid trip leg or leg transition")
-        if reading.leg == trip["phase"] + 1:
-            empty_start = trip["phase"] == 0 and trip["last_sequence"] == 0 and len(legs["to_pickup"]) == 1
-            previous_end = city.NODES[legs[city.LEG_NAMES[trip["phase"]]][-1]]
+        if reading.leg == phase + 1:
+            empty_start = phase == 0 and trip["last_sequence"] == 0 and len(legs["to_pickup"]) == 1
+            previous_end = city.NODES[legs[city.LEG_NAMES[phase]][-1]]
             if not empty_start and city.distance_from_path([previous_end], reading.lat, reading.lon) >= 1:
                 raise HTTPException(422, "Invalid trip leg or leg transition")
         line = [city.NODES[n] for n in legs[city.LEG_NAMES[reading.leg]]]
     distance = city.distance_from_path(line, reading.lat, reading.lon)
-    await conn.execute("""UPDATE cab_watch_accounts.trips SET last_sequence=$2,motion=$3::jsonb,distance_m=$4,phase=$5,
-        last_lat=$6,last_lon=$7,last_captured_at=$8
-        WHERE id=$1""", reading.trip_id, reading.sequence, reading.motion.model_dump_json() if reading.motion else None, distance, reading.leg,
+    motion = reading.motion.model_dump() if reading.motion else {}
+    if not direct:
+        motion["legacy"] = dict(to_pickup=legs["to_pickup"], to_depot=legs["to_depot"], phase=reading.leg)
+    await conn.execute("""UPDATE cab_watch_accounts.trips SET last_sequence=$2,motion=$3::jsonb,
+        last_lat=$4,last_lon=$5,last_captured_at=$6
+        WHERE id=$1""", reading.trip_id, reading.sequence, json.dumps(motion) if motion else None,
         reading.lat, reading.lon, reading.captured_at)
     incident = None
     parked = False
@@ -98,18 +104,28 @@ async def record(conn, trip, reading):
         # A wandering cab can pass the destination before returning to its route.
         if not direct or reading.motion is None or reading.motion.mode == "arrived":
             parked = True
-            await conn.execute("UPDATE cab_watch_accounts.trips SET phase=3,completed_at=now() WHERE id=$1", reading.trip_id)
-            await conn.execute("UPDATE cab_watch_accounts.vehicles SET status='available',parked_depot_id=NULL WHERE id=$1",
+            await conn.execute("UPDATE cab_watch_accounts.trips SET completed_at=now() WHERE id=$1", reading.trip_id)
+            await conn.execute("UPDATE cab_watch_accounts.vehicles SET status='available' WHERE id=$1",
                                trip["vehicle_id"])
     return dict(trip_id=reading.trip_id, sequence=reading.sequence, applied=True,
                 distance_m=distance, completed=parked, parked=parked, alert=dict(incident) if incident else None)
+
+
+async def apply_schema(conn, namespace="cab_watch_accounts"):
+    legacy = await conn.fetchval("""SELECT EXISTS(SELECT FROM information_schema.columns
+        WHERE table_schema=$1 AND table_name='trips' AND column_name='planned_legs')""", namespace)
+    for filename in (["upgrade_legacy.sql", "schema.sql"] if legacy else ["schema.sql"]):
+        await conn.execute((ROOT / filename).read_text(encoding="utf-8").replace("cab_watch_accounts", namespace))
+    if legacy:
+        await conn.execute(f"""ALTER TABLE {namespace}.trips ADD CONSTRAINT valid_planned_route
+            CHECK ({namespace}.valid_route(planned_route))""")
 
 
 @asynccontextmanager
 async def cab_runtime(db):
     async with db.acquire() as conn, conn.transaction():
         await conn.execute("SELECT pg_advisory_xact_lock(73949203)")
-        await conn.execute((ROOT / "schema.sql").read_text(encoding="utf-8"))
+        await apply_schema(conn)
     task = asyncio.create_task(run_retention(db, *retention_settings()))
     try:
         yield
@@ -167,12 +183,12 @@ async def ingest_batch(batch, db, user):
 @router.post("/me/alerts/{alert_id}/explain")
 async def explain(alert_id: int, request: Request,user: UUID=Depends(owner)):
     db = request.app.state.db
-    alert = await db.fetchrow("""SELECT a.*,v.id AS vehicle_id,v.cab_number FROM cab_watch_accounts.alerts a
-        JOIN cab_watch_accounts.trips t ON t.id=a.trip_id JOIN cab_watch_accounts.vehicles v ON v.id=t.vehicle_id
+    alert = await db.fetchrow("""SELECT a.*,t.vehicle_id FROM cab_watch_accounts.alerts a
+        JOIN cab_watch_accounts.trips t ON t.id=a.trip_id
         WHERE t.user_id=$1 AND a.id=$2""",user,alert_id)
     if not alert:
         raise HTTPException(404, "Unknown alert for this simulation")
-    facts = dict(vehicle_id=alert["vehicle_id"], cab=alert["cab_number"], threshold_m=city.LIMIT,
+    facts = dict(vehicle_id=alert["vehicle_id"], cab=plate_number(alert["vehicle_id"]), threshold_m=city.LIMIT,
                  opened_sequence=alert["opened_sequence"], closed_sequence=alert["closed_sequence"],
                  status="resolved" if alert["closed_sequence"] is not None else "open",
                  peak_m=round(alert["peak_metres"]))

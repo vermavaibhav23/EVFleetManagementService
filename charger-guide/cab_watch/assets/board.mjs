@@ -183,9 +183,9 @@ function showCabInRoster(v){
   if(v.row)return;
   if(!$('roster').querySelector('.cabrow'))$('roster').replaceChildren();
   v.row=element('button',undefined,'cabrow');
-  v.row.style.setProperty('--cab',cityColor(v.cab));
+  v.row.style.setProperty('--cab',v.color);
   const top=element('span',undefined,'rowtop'),id=element('span',undefined,'cabid');
-  id.append(element('i',undefined,'swatch'),element('strong','#'+v.cab+' · '+v.vehicle_id));
+  id.append(element('i',undefined,'swatch'),element('strong',v.vehicle_id));
   v.badge=element('span','With customer','badge');top.append(id,v.badge);
   v.desc=element('span',undefined,'desc');v.row.append(top,v.desc);
   v.row.onclick=()=>select(v.id);
@@ -269,9 +269,6 @@ async function setup(){
   }
   finally{changing=false;render();}
 }
-function cityColor(cab){return ['#2164cb','#a53685','#00796b','#be5422','#664bac','#a62844',
-  '#11759c','#637521','#ab400f','#594ba6','#08805a','#ad365e','#38578c','#885a0b',
-  '#426d57','#804991','#2d7782','#8c5436','#536aaf','#923b32'][(cab-1)%20];}
 
 $('pickup').onchange=$('dropoff').onchange=updatePlanner;
 $('launch').onclick=launch;$('cancel').onclick=()=>{closePlanner();render();};
