@@ -1,9 +1,9 @@
 import {TelemetryOutbox,retryDelay} from './telemetry.mjs?v=ordered1';
-import {makeCab,divert,rejoin,advance} from './motion.mjs?v=shortest-return1';
-import {cityMap,drawDepots,makeLayers,drawSharedRoads,selectMap,showPoint,animate} from './map.mjs?v=live1';
+import {makeCab,divert,rejoin,advance} from './motion.mjs?v=direct1';
+import {cityMap,makeLayers,drawSharedRoads,selectMap,showPoint,animate} from './map.mjs?v=direct1';
 
 const $=id=>document.getElementById(id);
-const STAGES=['To pickup','With customer','Returning to depot'];
+const stage=c=>c.mode==='arrived'?'Completed':c.legs.length===1||c.leg===1?'With customer':c.leg===0?'To pickup':'Finishing trip';
 let fleet,selected,running=false,frame,timer,changing=false,reviewGeneration=0,network,dispatchKey;
 const msg=text=>{$('message').textContent=text;};
 const element=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
@@ -29,46 +29,40 @@ async function api(path,method='GET',body,extraHeaders={}){
 function chosen(){return fleet?.cabs.find(c=>c.id===selected);}
 function select(id){selected=id;selectMap(fleet.cabs,id);render();}
 function alertFor(c){return fleet.alerts.find(a=>a.trip_id===c.id&&a.closed_sequence===null);}
-function depotById(id){return fleet.depots.find(d=>d.id===id);}
+
 
 function render(){
   if(!fleet){
     $('create').disabled=true;$('play').disabled=true;
-    $('total').textContent='—';$('open').textContent='—';$('mode').textContent='Set up fleet';
+    $('total').textContent='—';$('open').textContent='—';$('mode').textContent='Loading trips';
     return;
   }
   $('clock').textContent=[Math.floor(fleet.seconds/60),fleet.seconds%60].map(s=>String(s).padStart(2,'0')).join(':');
-  $('total').textContent=fleet.vehicles.length;
+  $('total').textContent=fleet.cabs.filter(c=>c.mode!=='arrived').length;
   $('open').textContent=fleet.alerts.filter(a=>a.closed_sequence===null).length;
   const moving=fleet.cabs.some(c=>c.mode!=='arrived');
   $('mode').textContent=running?'● Running':moving?'Paused':'Ready';
   $('play').textContent=running?'Ⅱ Pause':'▶ Start';
   $('play').disabled=changing||(!moving&&!fleet.outbox?.length);
-  $('create').disabled=changing||!fleet.vehicles.some(v=>v.status==='available')||!$('planner').hidden;
-  for(const v of fleet.vehicles){
-    if(!v.row)continue;
-    const trip=fleet.cabs.find(c=>c.id===v.currentTrip);
-    v.row.setAttribute('aria-pressed',String(v.latestTrip===selected));
-    const detouring=trip?.mode==='detour', alarm=trip && alertFor(trip);
-    v.row.classList.toggle('alarm',Boolean(alarm));
-    v.badge.textContent=alarm?'Off-route alert':trip?.mode==='turn requested'?'Turn queued':detouring?'Route changed':trip?.streak?'Checking':
-      v.status==='available'?'Available':STAGES[trip?.leg]||'Driving';
-    v.badge.className='badge'+(trip?.streak?' warn':'');
-    v.desc.textContent=v.status==='available'?depotById(v.parked_depot_id).name+' · ready':
-      (trip?trip.origin+' → '+trip.destination+' · '+STAGES[trip.leg]:'Driving');
+  $('create').disabled=changing||!$('planner').hidden;
+  for(const c of fleet.cabs){
+    c.row.setAttribute('aria-pressed',String(c.id===selected));
+    const alarm=alertFor(c);
+    c.row.classList.toggle('alarm',Boolean(alarm));
+    c.badge.textContent=alarm?'Off-route alert':c.mode==='turn requested'?'Turn queued':
+      c.mode==='detour'?'Route changed':stage(c);
+    c.desc.textContent=c.origin+' → '+c.destination;
   }
   const c=chosen();
   if(!c){
-    $('selected').textContent='Select a cab';$('tripline').textContent='Add a trip to dispatch the closest available car.';
+    $('selected').textContent='Select a cab';$('tripline').textContent='Choose pickup and drop-off to start a trip.';
     $('distance').textContent='';$('wrong').disabled=true;$('return').disabled=true;
   }else{
     $('selected').textContent=c.vehicle_id+' · '+c.origin+' → '+c.destination;
-    $('tripline').textContent=depotById(c.departure_depot_id).name+' → pickup '+c.origin+' → drop-off '+c.destination+
-      ' → '+depotById(c.arrival_depot_id).name+' · '+(c.total_metres/1000).toFixed(2)+' km · '+
-      (c.mode==='arrived'?'Completed':STAGES[c.leg]+' / '+c.mode);
+    $('tripline').textContent=c.origin+' → '+c.destination+' · '+(c.metres/1000).toFixed(2)+' km · '+stage(c);
     $('distance').textContent=Math.round(c.offset)+' m from current leg · GPS #'+c.confirmed+
       ' · Alert at '+fleet.limit+' m';
-    $('wrong').disabled=changing||c.leg!==1||c.mode!=='route'||c.index+1>=c.stops.length-1;
+    $('wrong').disabled=changing||(c.legs.length>1&&c.leg!==1)||c.mode!=='route'||c.index+1>=c.stops.length-1;
     $('return').disabled=changing||!['detour','turn requested'].includes(c.mode);
   }
   const logKey=JSON.stringify(fleet.alerts.map(a=>[a.id,a.closed_sequence,Math.round(a.peak_metres)]));
@@ -110,19 +104,7 @@ function applyReceipt(f,result){
     const alert={...result.alert,vehicle_id:cab.vehicle_id,cab:cab.cab};
     f.alerts=[alert,...f.alerts.filter(a=>a.id!==alert.id)];
   }
-  if(result.parked){
-    const v=f.vehicles.find(v=>v.id===cab.vehicle_id);
-    v.status='available';v.currentTrip=null;v.parked_depot_id=cab.arrival_depot_id;
-    v.current_node=cab.legs[2].stops.at(-1);
-    cab.map.pin.setAttribute('visibility','hidden');
-    const counts={};
-    for(const vehicle of f.vehicles){
-      const id=vehicle.parked_depot_id;
-      if(id)counts[id]=(counts[id]||0)+1;
-    }
-    for(const depot of network.depots)counts[depot.id]??=0;
-    drawDepots(network,counts);
-  }
+  if(result.completed)cab.mode='arrived';
 }
 async function sendPositions(f){
   if(f.working || !f.outbox.length || f.retryTimer)return;
@@ -203,40 +185,34 @@ function showCabInRoster(v){
   v.row=element('button',undefined,'cabrow');
   v.row.style.setProperty('--cab',cityColor(v.cab));
   const top=element('span',undefined,'rowtop'),id=element('span',undefined,'cabid');
-  id.append(element('i',undefined,'swatch'),element('strong','#'+v.cab+' · '+v.id));
-  v.badge=element('span','Available','badge');top.append(id,v.badge);
+  id.append(element('i',undefined,'swatch'),element('strong','#'+v.cab+' · '+v.vehicle_id));
+  v.badge=element('span','With customer','badge');top.append(id,v.badge);
   v.desc=element('span',undefined,'desc');v.row.append(top,v.desc);
-  v.row.onclick=()=>{if(v.latestTrip)select(v.latestTrip);};
+  v.row.onclick=()=>select(v.id);
   $('roster').append(v.row);
 }
 async function launch(){
   if(changing||$('launch').disabled)return;
   const f=fleet;changing=true;
-  for(const id of ['launch','cancel','reset','pickup','dropoff','fleetSize'])$(id).disabled=true;
-  msg('Finding the closest available car by road…');
+  for(const id of ['launch','cancel','pickup','dropoff'])$(id).disabled=true;
+  msg('Planning the route…');
   try{
     const trip=await api('me/trips','POST',
       {pickup:$('pickup').value,dropoff:$('dropoff').value},{'Idempotency-Key':dispatchKey});
     if(f!==fleet)return;
-    const c=makeCab(trip,network);
-    f.cabs.push(c);makeLayers([c],select);drawSharedRoads(f.cabs,network);
-    const v=f.vehicles.find(v=>v.id===trip.vehicle_id);
-    v.status='busy';v.parked_depot_id=null;v.currentTrip=c.id;v.latestTrip=c.id;
-    showCabInRoster(v);
-    drawDepots(network,trip.parked_counts);
-    closePlanner();running=true;f.failed=false;select(c.id);schedule(f,0);
-    msg(c.vehicle_id+' left '+depotById(c.departure_depot_id).name+' for pickup '+c.origin+'.');
+    const c=f.cabs.find(c=>c.id===trip.id)||restoreTrip(trip);
+    drawSharedRoads(f.cabs,network);
+    closePlanner();running=true;f.failed=false;select(c.id);schedule(f,1000);
+    msg(c.vehicle_id+' started at '+c.origin+' for '+c.destination+'.');
   }catch(e){msg(e.message);}
   finally{
-    changing=false;for(const id of ['cancel','reset','pickup','dropoff','fleetSize'])$(id).disabled=false;
+    changing=false;for(const id of ['cancel','pickup','dropoff'])$(id).disabled=false;
     updatePlanner();render();
   }
 }
 function restoreTrip(trip){
   const c=makeCab(trip,network);
-  const v=fleet.vehicles.find(v=>v.id===trip.vehicle_id);
-  if(!v)return;
-  c.leg=Math.min(trip.phase,2);
+  c.leg=Math.min(trip.phase,c.legs.length-1);
   c.stops=c.legs[c.leg].stops;c.nodes=c.legs[c.leg].path;
   if(trip.last_sequence===0 && c.stops.length===1){
     c.leg=1;c.stops=c.legs[1].stops;c.nodes=c.legs[1].path;
@@ -251,19 +227,12 @@ function restoreTrip(trip){
   }
   if(trip.completed)c.mode='arrived';
   fleet.cabs.push(c);makeLayers([c],select);showPoint(c,c.point);
-  if(trip.completed)c.map.pin.setAttribute('visibility','hidden');
-  v.currentTrip=trip.completed?null:c.id;v.latestTrip=c.id;showCabInRoster(v);
+  showCabInRoster(c);
+  return c;
 }
-async function setup(loadOnly=false){
-  if(changing || (!loadOnly && !$('fleetSize').reportValidity()))return;
-  if(!loadOnly && fleet && Number($('fleetSize').value)===fleet.vehicles.length){
-    msg('Your fleet already has this size.');return;
-  }
-  if(!loadOnly && fleet && (running||fleet.outbox?.length||fleet.working)){
-    msg('Pause the simulation and let the latest GPS update finish before resizing.');return;
-  }
+async function setup(){
+  if(changing)return;
   changing=true;
-  $('reset').disabled=true;$('fleetSize').disabled=true;
   try{
     const token=sessionStorage.getItem('cabwatch.token');
     const subject=JSON.parse(atob(token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).sub;
@@ -273,14 +242,12 @@ async function setup(loadOnly=false){
       outbox.acknowledge();
     }
     network=network||await api('network');
-    const created=loadOnly?await api('me/fleet'):await api('me/fleet','PUT',{count:Number($('fleetSize').value)});
+    const created=await api('me/trips');
     running=false;clearTimeout(timer);cancelAnimationFrame(frame);reviewGeneration++;selected=null;closePlanner();
     clearTimeout(fleet?.retryTimer);
     fleet={outbox,...network,...created,cabs:[],seconds:0,working:false};
-    $('fleetSize').value=created.vehicles.length||'';
     cityMap(network,pick);closePlanner();
     for(const id of ['routes','shared','trails','pins'])$(id).replaceChildren();
-    drawDepots(network,created.parked_counts);
     for(const id of ['pickup','dropoff']){
       $(id).replaceChildren(new Option('Select node',''));
       for(const n of Object.keys(network.nodes))$(id).add(new Option(n,n));
@@ -292,24 +259,23 @@ async function setup(loadOnly=false){
     if(selected){selectMap(fleet.cabs,selected);draw(performance.now());}
     $('alerts').textContent='No route alerts in this simulation.';$('review').hidden=true;
     $('connection').textContent='● Ready';
-    msg(fleet.vehicles.length?'Fleet ready. Add a trip or press Start to resume.':'Enter the number of cars and select Set fleet.');
+    msg(fleet.cabs.length?'Add a trip or press Start to resume.':'Add a trip to choose a pickup and drop-off.');
   }catch(e){
     msg(e.message+' Try again.');$('connection').textContent='Offline';
     const delay=retryDelay(e,0);
-    if(loadOnly && delay!==null && sessionStorage.getItem('cabwatch.token')){
-      clearTimeout(timer);timer=setTimeout(()=>setup(true),delay+Math.random()*250);
+    if(delay!==null && sessionStorage.getItem('cabwatch.token')){
+      clearTimeout(timer);timer=setTimeout(()=>setup(),delay+Math.random()*250);
     }
   }
-  finally{changing=false;$('reset').disabled=false;$('fleetSize').disabled=false;render();}
+  finally{changing=false;render();}
 }
 function cityColor(cab){return ['#2164cb','#a53685','#00796b','#be5422','#664bac','#a62844',
   '#11759c','#637521','#ab400f','#594ba6','#08805a','#ad365e','#38578c','#885a0b',
   '#426d57','#804991','#2d7782','#8c5436','#536aaf','#923b32'][(cab-1)%20];}
 
-$('fleetSize').onkeydown=e=>{if(e.key==='Enter')setup();};
 $('pickup').onchange=$('dropoff').onchange=updatePlanner;
 $('launch').onclick=launch;$('cancel').onclick=()=>{closePlanner();render();};
-$('create').onclick=openPlanner;$('reset').onclick=()=>setup();
+$('create').onclick=openPlanner;
 $('play').onclick=()=>{if(!fleet)return;running=!running;fleet.failed=false;render();
   msg(running?'Simulation running · each update advances five simulated seconds.':'Simulation paused.');schedule(fleet,0);};
 $('wrong').onclick=()=>{divert(chosen());render();
@@ -325,7 +291,7 @@ function signOut(message=''){
 }
 async function openDashboard(){
   $('signedName').textContent=sessionStorage.getItem('cabwatch.name')||'My fleet';
-  $('account').hidden=true;$('dashboard').hidden=false;await setup(true);
+  $('account').hidden=true;$('dashboard').hidden=false;await setup();
 }
 $('switchAuth').onclick=()=>{
   registering=!registering;

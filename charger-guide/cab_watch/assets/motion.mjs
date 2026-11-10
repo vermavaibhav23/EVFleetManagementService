@@ -4,7 +4,7 @@ export function makeCab(trip, network) {
   const legs = trip.planned_legs ? ["to_pickup","customer_ride","to_depot"].map(name => {
     const stops = trip.planned_legs[name];
     return {stops, path:stops.map(node => network.nodes[node])};
-  }) : trip.legs || [{stops:trip.stops, path:trip.path}];
+  }) : trip.route ? [{stops:trip.route, path:trip.route.map(n=>network.nodes[n])}] : trip.legs || [{stops:trip.stops, path:trip.path}];
   const point = [...legs[0].path[0]];
   const cab = {...trip, legs, fullStops:trip.stops, stops:legs[0].stops,
     nodes:legs[0].path, leg:0, index:0, point, mode:'route', sequence:0,

@@ -126,3 +126,11 @@ test('drop-off at the home depot completes the empty return leg',()=>{
   assert.deepEqual(cab.point,nodes.A);
 });
 
+
+test('direct ride starts at pickup and stops on the final junction',()=>{
+  const cab=makeCab({route:['A','B','C']},network);
+  assert.deepEqual(cab.point,nodes.A);
+  until(cab,()=>cab.mode==='arrived');
+  assert.deepEqual(cab.point,nodes.C);
+  assert.equal(advance(cab),false);
+});

@@ -20,7 +20,7 @@ router = APIRouter(prefix="/cab-watch")
 
 
 from .auth import owner, router as auth_router
-from .fleet import list_depots, router as fleet_router
+from .fleet import router as fleet_router
 
 router.include_router(auth_router)
 router.include_router(fleet_router)
@@ -58,19 +58,25 @@ async def latest_alert(conn, trip_id):
 async def record(conn, trip, reading):
     if reading.sequence <= trip["last_sequence"] or trip["phase"] == 3:
         return dict(trip_id=reading.trip_id, sequence=trip["last_sequence"], applied=False,
-                    distance_m=trip["distance_m"], parked=trip["phase"] == 3, alert=await latest_alert(conn, reading.trip_id))
+                    distance_m=trip["distance_m"], completed=trip["phase"] == 3, parked=trip["phase"] == 3, alert=await latest_alert(conn, reading.trip_id))
     if reading.sequence != trip["last_sequence"] + 1:
         raise HTTPException(409, detail=dict(code="sequence_gap", trip_id=str(reading.trip_id),
             expected_sequence=trip["last_sequence"] + 1, received_sequence=reading.sequence))
     legs = json.loads(trip["planned_legs"]) if isinstance(trip["planned_legs"], str) else trip["planned_legs"]
-    if reading.leg < trip["phase"] or reading.leg > trip["phase"] + 1:
-        raise HTTPException(422, "Invalid trip leg or leg transition")
-    if reading.leg == trip["phase"] + 1:
-        empty_start = trip["phase"] == 0 and trip["last_sequence"] == 0 and len(legs["to_pickup"]) == 1
-        previous_end = city.NODES[legs[city.LEG_NAMES[trip["phase"]]][-1]]
-        if not empty_start and city.distance_from_path([previous_end], reading.lat, reading.lon) >= 1:
+    direct = "to_pickup" not in legs
+    if direct:
+        if reading.leg != 0:
+            raise HTTPException(422, "This ride has one route")
+        line = [city.NODES[n] for n in legs["customer_ride"]]
+    else:
+        if reading.leg < trip["phase"] or reading.leg > trip["phase"] + 1:
             raise HTTPException(422, "Invalid trip leg or leg transition")
-    line = [city.NODES[n] for n in legs[city.LEG_NAMES[reading.leg]]]
+        if reading.leg == trip["phase"] + 1:
+            empty_start = trip["phase"] == 0 and trip["last_sequence"] == 0 and len(legs["to_pickup"]) == 1
+            previous_end = city.NODES[legs[city.LEG_NAMES[trip["phase"]]][-1]]
+            if not empty_start and city.distance_from_path([previous_end], reading.lat, reading.lon) >= 1:
+                raise HTTPException(422, "Invalid trip leg or leg transition")
+        line = [city.NODES[n] for n in legs[city.LEG_NAMES[reading.leg]]]
     distance = city.distance_from_path(line, reading.lat, reading.lon)
     await conn.execute("""UPDATE cab_watch_accounts.trips SET last_sequence=$2,motion=$3::jsonb,distance_m=$4,phase=$5,
         last_lat=$6,last_lon=$7,last_captured_at=$8
@@ -87,15 +93,16 @@ async def record(conn, trip, reading):
     else:
         incident = await conn.fetchrow("""UPDATE cab_watch_accounts.alerts SET closed_sequence=$2,resolved_at=now()
             WHERE trip_id=$1 AND closed_sequence IS NULL RETURNING *""", reading.trip_id, reading.sequence)
-    if trip["vehicle_id"] and reading.leg == 2:
-        depot = city.NODES[legs["to_depot"][-1]]
-        if city.distance_from_path([depot], reading.lat, reading.lon) < 1:
+    final_leg = direct or reading.leg == 2
+    if final_leg and city.distance_from_path([line[-1]], reading.lat, reading.lon) < 1:
+        # A wandering cab can pass the destination before returning to its route.
+        if not direct or reading.motion is None or reading.motion.mode == "arrived":
             parked = True
             await conn.execute("UPDATE cab_watch_accounts.trips SET phase=3,completed_at=now() WHERE id=$1", reading.trip_id)
-            await conn.execute("""UPDATE cab_watch_accounts.vehicles SET status='available',parked_depot_id=(SELECT id FROM cab_watch_accounts.depots WHERE node=$2)
-                WHERE id=$1""", trip["vehicle_id"], legs["to_depot"][-1])
+            await conn.execute("UPDATE cab_watch_accounts.vehicles SET status='available',parked_depot_id=NULL WHERE id=$1",
+                               trip["vehicle_id"])
     return dict(trip_id=reading.trip_id, sequence=reading.sequence, applied=True,
-                distance_m=distance, parked=parked, alert=dict(incident) if incident else None)
+                distance_m=distance, completed=parked, parked=parked, alert=dict(incident) if incident else None)
 
 
 @asynccontextmanager
@@ -119,9 +126,8 @@ async def page():
 
 
 @router.get("/network")
-async def network(request: Request):
-    return dict(nodes=city.NODES, roads=city.ROADS, capacity=city.MAX_FLEET,
-                depots=[dict(d) for d in await list_depots(request.app.state.db)],
+async def network():
+    return dict(nodes=city.NODES, roads=city.ROADS,
                 metres=city.METRES, origin=city.ORIGIN,
                 lat_scale=city.LAT_SCALE, lon_scale=city.LON_SCALE)
 

@@ -26,27 +26,15 @@ export function cityMap(network,pick){
     g.onkeydown=e=>{if(['Enter',' '].includes(e.key)){e.preventDefault();pick(name);}};
   }
 }
-export function drawDepots(network,parkedCounts){
-  const layer=document.querySelector('#depots');
-  layer.replaceChildren();
-  for(const depot of network.depots){
-    const [x,y]=network.nodes[depot.node];
-    const parked=parkedCounts[depot.id];
-    const right=x>network.nodes.N[0];
-    svg(layer,'rect',{x:x-11,y:y-11,width:22,height:22,rx:5,fill:'#173f4a',stroke:'white','stroke-width':2});
-    svg(layer,'text',{x,y:y+5,'text-anchor':'middle',class:'depot-mark'},parked);
-    svg(layer,'text',{x:x+(right?-19:19),y:y+31,'text-anchor':right?'end':'start',class:'depot-label'},depot.name);
-  }
-}
 export function makeLayers(cabs,choose){
   const routes=document.querySelector('#routes'),pins=document.querySelector('#pins');
   cabs.forEach(c=>{
-    const g=svg(routes,'g',{}), points=c.legs[1].path.map(p=>p.join(',')).join(' ');
+    const passenger=c.legs[1]||c.legs[0];
+    const g=svg(routes,'g',{}), points=passenger.path.map(p=>p.join(',')).join(' ');
     svg(g,'polyline',{points,fill:'none',stroke:'white','stroke-width':8,'stroke-linejoin':'round'});
     svg(g,'polyline',{points,fill:'none',stroke:c.color,'stroke-width':4,'stroke-linejoin':'round'});
-    const [ox,oy]=c.path[0];
-    const pickup=c.legs.length>1?c.legs[1].path[0]:c.path[0];
-    const destination=c.legs.length>1?c.legs[1].path.at(-1):c.path.at(-1);
+    const [ox,oy]=c.point;
+    const pickup=passenger.path[0], destination=passenger.path.at(-1);
     svg(g,'circle',{cx:pickup[0],cy:pickup[1],r:7,fill:'white',stroke:c.color,'stroke-width':3});
     svg(g,'rect',{x:destination[0]-6,y:destination[1]-6,width:12,height:12,fill:'white',stroke:c.color,'stroke-width':3,
       transform:'rotate(45 '+destination[0]+' '+destination[1]+')'});
@@ -75,7 +63,7 @@ export function drawSharedRoads(cabs,network){
   layer.replaceChildren();
   const owners=new Map();
   for(const cab of cabs){
-    const seen=new Set(), passenger=cab.legs[1].stops;
+    const seen=new Set(), passenger=(cab.legs[1]||cab.legs[0]).stops;
     for(let i=1;i<passenger.length;i++){
       const edge=[passenger[i-1],passenger[i]].sort().join('');
       if(seen.has(edge))continue;

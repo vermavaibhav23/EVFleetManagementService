@@ -42,9 +42,10 @@ BEGIN
         UPDATE cab_watch_accounts.vehicles SET parked_depot_id=NULL WHERE status='busy';
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='cab_watch_accounts.vehicles'::regclass
-                   AND conname='vehicle_parking_matches_status') THEN
-        ALTER TABLE cab_watch_accounts.vehicles ADD CONSTRAINT vehicle_parking_matches_status
-            CHECK ((status='available') = (parked_depot_id IS NOT NULL));
+                   AND conname='busy_vehicle_has_no_depot') THEN
+        ALTER TABLE cab_watch_accounts.vehicles DROP CONSTRAINT IF EXISTS vehicle_parking_matches_status;
+        ALTER TABLE cab_watch_accounts.vehicles ADD CONSTRAINT busy_vehicle_has_no_depot
+            CHECK (status <> 'busy' OR parked_depot_id IS NULL);
     END IF;
 END $$;
 CREATE TABLE IF NOT EXISTS cab_watch_accounts.trips (
@@ -86,6 +87,12 @@ DECLARE
     nodes jsonb;
 BEGIN
     IF jsonb_typeof(plan) <> 'object' THEN RETURN false; END IF;
+    -- New rides have one route. Older three-leg plans remain readable.
+    IF plan - 'customer_ride' = '{}'::jsonb AND jsonb_typeof(plan->'customer_ride') = 'array' THEN
+        nodes = plan->'customer_ride';
+        RETURN jsonb_array_length(nodes) >= 2 AND NOT EXISTS (
+            SELECT FROM jsonb_array_elements_text(nodes) AS n(node) WHERE node IS NULL OR node !~ '^[A-Z]$');
+    END IF;
     IF plan - ARRAY['to_pickup','customer_ride','to_depot'] <> '{}'::jsonb THEN RETURN false; END IF;
     FOREACH leg_name IN ARRAY ARRAY['to_pickup','customer_ride','to_depot'] LOOP
         nodes := plan -> leg_name;

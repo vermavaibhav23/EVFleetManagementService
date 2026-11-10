@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from cab_watch import city
 from cab_watch.api import Point, explain, record
-from cab_watch.fleet import status
+from cab_watch.fleet import list_trips
 
 
 class Context:
@@ -98,7 +98,7 @@ class RetentionEvidenceTests(unittest.TestCase):
         self.assertEqual(result["facts"]["closed_sequence"], 30)
         self.assertEqual(result["facts"]["status"], "resolved")
 
-    def test_status_reads_vehicle_and_gps_from_one_snapshot(self):
+    def test_trip_and_alert_reads_share_one_snapshot(self):
         trip_id = uuid4()
 
         class SnapshotConnection:
@@ -108,12 +108,11 @@ class RetentionEvidenceTests(unittest.TestCase):
                 return Context(self)
 
             async def fetch(self, sql, *_):
-                if "FROM cab_watch_accounts.vehicles" in sql:
-                    return [{"id": uuid4(), "cab": 1, "depot_id": "northeast",
-                             "current_node": "E", "status": "busy"}]
                 if "FROM cab_watch_accounts.trips" in sql:
-                    return [{"id": trip_id, "last_sequence": 19, "off_count": 0,
-                             "distance_m": 0, "lat": None, "lon": None, "captured_at": None}]
+                    return [dict(id=trip_id,vehicle_id="KA01AB1234",cab_number=1,
+                                 planned_legs={"customer_ride":["G","H"]},last_sequence=19,
+                                 completed_at=None,phase=0,distance_m=0,motion=None,
+                                 last_lat=None,last_lon=None,last_captured_at=None)]
                 return []
 
         class Pool:
@@ -124,8 +123,8 @@ class RetentionEvidenceTests(unittest.TestCase):
                 raise AssertionError("Separate pool queries could mix transaction states")
 
         request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(db=Pool())))
-        snapshot = run_immediate(status(request, uuid4()))
-        self.assertEqual(snapshot["vehicles"][0]["status"], "busy")
+        snapshot = run_immediate(list_trips(request, uuid4()))
+        self.assertEqual(snapshot["trips"][0]["route"], ["G","H"])
         self.assertEqual(snapshot["trips"][0]["last_sequence"], 19)
 
 
