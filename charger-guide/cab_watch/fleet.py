@@ -16,38 +16,17 @@ class TripRequest(BaseModel):
     dropoff: str = Field(pattern="^[A-Z]$")
 
 
-def route_state(row):
-    route = json.loads(row["planned_route"])
-    motion = json.loads(row["motion"]) if row["motion"] else {}
-    legacy = motion.pop("legacy", None)
-    plan = {"customer_ride": route}
-    if legacy:
-        plan.update(to_pickup=legacy["to_pickup"], to_depot=legacy["to_depot"])
-    phase = legacy["phase"] if legacy else 0
-    return plan, phase, motion or None
-
-
-def plate_number(plate):
-    return int(plate.split("#")[1]) if plate.startswith("CB#") else int(plate[-4:])
-
-
 def trip_payload(row):
-    plan, phase, motion = route_state(row)
-    route = plan["customer_ride"]
-    cab = plate_number(row["vehicle_id"])
-    path = plan[city.LEG_NAMES[min(phase, 2)]] if "to_pickup" in plan else route
-    distance = city.distance_from_path([city.NODES[n] for n in path], row["last_lat"], row["last_lon"]) if row["last_lat"] is not None else 0
-    result = dict(id=row["id"], vehicle_id=row["vehicle_id"], cab=cab,
+    route = json.loads(row["planned_route"])
+    line = [city.NODES[node] for node in route]
+    distance = city.distance_from_path(line, row["last_lat"], row["last_lon"]) if row["last_lat"] is not None else 0
+    return dict(id=row["id"], vehicle_id=row["vehicle_id"],
                   origin=route[0], destination=route[-1], route=route,
                   metres=sum(city.GRAPH[a][b] for a, b in zip(route, route[1:])),
-                  color=city.COLORS[(cab-1) % len(city.COLORS)],
-                  phase=3 if row["completed_at"] else phase, completed=row["completed_at"] is not None,
+                  completed=row["completed_at"] is not None,
                   last_sequence=row["last_sequence"], distance_m=distance,
                   lat=row["last_lat"], lon=row["last_lon"], captured_at=row["last_captured_at"],
-                  motion=motion)
-    if "to_pickup" in plan:
-        result["planned_legs"] = plan
-    return result
+                  motion=json.loads(row["motion"]) if row["motion"] else None)
 
 
 TRIP_SELECT = "SELECT t.* FROM cab_watch_accounts.trips t"
@@ -60,12 +39,9 @@ async def fleet_alerts(conn, user):
 
 
 @router.get("/trips")
-@router.get("/state", include_in_schema=False)
-async def list_trips(request: Request, user: UUID = Depends(owner), alerts_only: bool = False):
+async def list_trips(request: Request, user: UUID = Depends(owner)):
     async with request.app.state.db.acquire() as conn, conn.transaction(isolation="repeatable_read", readonly=True):
-        alerts = [dict(a, cab=plate_number(a["vehicle_id"])) for a in await fleet_alerts(conn, user)]
-        if alerts_only:
-            return {"alerts": alerts}
+        alerts = [dict(a) for a in await fleet_alerts(conn, user)]
         rows = await conn.fetch(TRIP_SELECT + " WHERE t.user_id=$1 ORDER BY t.created_at", user)
         return dict(trips=[trip_payload(row) for row in rows], alerts=alerts, limit=city.LIMIT)
 

@@ -99,7 +99,7 @@ class TripSchema(unittest.IsolatedAsyncioTestCase):
             for column in set(original.keys()) - {'motion','planned_legs','distance_m','phase'}:
                 self.assertEqual(original[column], updated[column])
             self.assertEqual(json.loads(updated['planned_route']), ['G','K'])
-            self.assertEqual(json.loads(updated['motion'])['legacy']['to_depot'], ['K','E'])
+            self.assertIsNone(updated['motion'])
             self.assertEqual(updated['user_id'], self.a)
             self.assertIsNotNone(updated['idempotency_key'])
         mapped = next(r for r in after if r['id'] == trip)
@@ -108,6 +108,34 @@ class TripSchema(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone((await self.sql("SELECT to_regclass('cab_watch_accounts.dispatch_requests') AS table_name"))[0]['table_name'])
         await self.migrate()
         self.assertEqual(after, await self.sql('SELECT * FROM cab_watch_accounts.trips ORDER BY id'))
+
+    async def test_convert_active_depot_trips_by_their_saved_phase(self):
+        await self.migrate()
+        await self.seed()
+        await self.sql("UPDATE cab_watch_accounts.vehicles SET status='busy'")
+        for phase, (user, car) in enumerate(zip((self.a, self.a, self.b), self.cars)):
+            motion = json.dumps({"index": 1, "mode": "route", "legacy": {"phase": phase}})
+            tid = uuid4()
+            await self.sql("""INSERT INTO cab_watch_accounts.trips
+                (id,user_id,idempotency_key,vehicle_id,planned_route,last_sequence,last_lat,last_lon,motion)
+                VALUES($1,$2,$3,$4,'["G","H","K"]',8,13,80,$5::jsonb)""",
+                tid, user, uuid4(), car, motion)
+            await self.sql("""INSERT INTO cab_watch_accounts.alerts(trip_id,opened_sequence,peak_metres)
+                VALUES($1,6,250)""", tid)
+        await self.migrate()
+        query = """SELECT t.*, v.status, a.closed_sequence FROM cab_watch_accounts.trips t
+            JOIN cab_watch_accounts.vehicles v ON v.id=t.vehicle_id
+            JOIN cab_watch_accounts.alerts a ON a.trip_id=t.id ORDER BY v.id"""
+        pickup, riding, finished = before = await self.sql(query)
+        self.assertIsNone(pickup["last_lat"])
+        self.assertEqual(json.loads(pickup["motion"]), {"mode":"route","index":0})
+        self.assertEqual((pickup["status"], pickup["closed_sequence"]), ("busy", 8))
+        self.assertEqual(json.loads(riding["motion"]), {"mode":"route","index":1})
+        self.assertEqual((riding["last_lat"], riding["status"], riding["closed_sequence"]), (13, "busy", None))
+        self.assertIsNotNone(finished["completed_at"])
+        self.assertEqual((finished["status"], finished["closed_sequence"]), ("available", 8))
+        await self.migrate()
+        self.assertEqual(before, await self.sql(query))
 
     async def test_invalid_mapping_rolls_back_without_dropping_original(self):
         await self.migrate(legacy=True)

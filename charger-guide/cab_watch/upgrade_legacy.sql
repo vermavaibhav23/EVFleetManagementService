@@ -228,12 +228,10 @@ BEGIN
     DROP TABLE IF EXISTS cab_watch_accounts.dispatch_requests;
 END $$;
 
--- Keep old multi-leg simulations resumable with their original checkpoints.
--- New rides never write this compatibility data.
+-- Carry checkpoint phase into the single-route conversion run in this transaction.
 UPDATE cab_watch_accounts.trips
 SET motion=coalesce(motion, '{}'::jsonb) || jsonb_build_object(
-    'legacy',jsonb_build_object('to_pickup',planned_legs->'to_pickup',
-                                'to_depot',planned_legs->'to_depot','phase',phase))
+    'legacy',jsonb_build_object('phase',phase))
 WHERE planned_legs ? 'to_pickup';
 ALTER TABLE cab_watch_accounts.trips DROP CONSTRAINT valid_named_legs;
 ALTER TABLE cab_watch_accounts.trips RENAME COLUMN planned_legs TO planned_route;

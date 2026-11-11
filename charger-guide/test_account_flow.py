@@ -30,6 +30,7 @@ class AccountFlow(unittest.TestCase):
             self.assertEqual(sorted(r.status_code for r in replies), [200, 201])
             trip = replies[0].json()
             self.assertEqual(trip["id"], replies[1].json()["id"])
+            self.assertTrue({"planned_legs","phase","cab","color"}.isdisjoint(trip))
             self.assertEqual(trip["route"], ["G","H","I","J","K"])
             self.assertEqual(trip["metres"], 4143)
             self.assertRegex(trip["vehicle_id"], r"^CB#[0-9]{3,}$")
@@ -41,20 +42,31 @@ class AccountFlow(unittest.TestCase):
 
             def sample(seq, node, mode, owner=a):
                 lat, lon = city.gps(city.NODES[node])
+                motion = {"mode": mode}
+                if mode == "detour":
+                    motion.update(trail=["I", "D", "I"] if seq >= 4 else ["I"], target=node)
+                elif mode == "route":
+                    motion["index"] = trip["route"].index(node)
                 return client.post("me/gps", headers=owner, json={"readings": [{
                     "trip_id":trip["id"], "sequence":seq, "lat":lat, "lon":lon,
-                    "motion":{"index":0,"mode":mode}}]})
+                    "motion":motion}]})
 
             self.assertEqual(sample(1,"G","route",b).status_code,422)
             self.assertIsNone(sample(1,"G","route").json()["results"][0]["alert"])
             self.assertEqual(sample(2,"D","detour").json()["results"][0]["alert"]["opened_sequence"],2)
-            self.assertEqual(sample(3,"I","route").json()["results"][0]["alert"]["closed_sequence"],3)
-            self.assertFalse(sample(4,"K","detour").json()["results"][0]["completed"])
-            self.assertTrue(sample(5,"K","arrived").json()["results"][0]["completed"])
+            checkpoint = client.get("me/trips", headers=a).json()["trips"][0]["motion"]
+            self.assertEqual(checkpoint, {"mode":"detour", "trail":["I"], "target":"D"})
+            self.assertEqual(sample(3,"I","detour").json()["results"][0]["alert"]["closed_sequence"],3)
+            self.assertEqual(sample(4,"D","detour").json()["results"][0]["alert"]["opened_sequence"],4)
+            self.assertFalse(sample(5,"K","detour").json()["results"][0]["completed"])
+            receipt = sample(6,"K","arrived").json()["results"][0]
+            self.assertTrue(receipt["completed"])
+            self.assertNotIn("parked",receipt)
+            self.assertFalse(sample(6,"K","arrived").json()["results"][0]["applied"])
             restored = client.get("me/trips",headers=a).json()
             self.assertTrue(restored["trips"][0]["completed"])
-            self.assertEqual(restored["trips"][0]["last_sequence"],5)
-            self.assertEqual(len(restored["alerts"]),1)
+            self.assertEqual(restored["trips"][0]["last_sequence"],6)
+            self.assertEqual(len(restored["alerts"]),2)
             self.assertEqual(client.get("me/trips",headers=b).json()["alerts"],[])
             another = client.post("me/trips",headers={**a,"Idempotency-Key":str(uuid4())},json=request)
             self.assertEqual(another.status_code,201)

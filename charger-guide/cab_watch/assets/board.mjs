@@ -1,9 +1,15 @@
-import {TelemetryOutbox,retryDelay} from './telemetry.mjs?v=ordered1';
-import {makeCab,divert,rejoin,advance} from './motion.mjs?v=direct1';
-import {cityMap,makeLayers,drawSharedRoads,selectMap,showPoint,animate} from './map.mjs?v=direct1';
+import {TelemetryOutbox,retryDelay} from './telemetry.mjs?v=route2';
+import {makeCab,motionSnapshot,divert,rejoin,advance} from './motion.mjs?v=retrace1';
+import {cityMap,makeLayers,drawSharedRoads,selectMap,showPoint,animate} from './map.mjs?v=route2';
 
 const $=id=>document.getElementById(id);
-const stage=c=>c.mode==='arrived'?'Completed':c.legs.length===1||c.leg===1?'With customer':c.leg===0?'To pickup':'Finishing trip';
+const colors=[
+    "#2164cb", "#a53685", "#00796b", "#be5422", "#664bac", "#a62844",
+    "#11759c", "#637521", "#ab400f", "#594ba6", "#08805a", "#ad365e",
+    "#38578c", "#885a0b", "#426d57", "#804991", "#2d7782", "#8c5436",
+    "#536aaf", "#923b32",
+];
+const stage=c=>c.mode==='arrived'?'Completed':'With customer';
 let fleet,selected,running=false,frame,timer,changing=false,reviewGeneration=0,network,dispatchKey;
 const msg=text=>{$('message').textContent=text;};
 const element=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
@@ -60,9 +66,9 @@ function render(){
   }else{
     $('selected').textContent=c.vehicle_id+' · '+c.origin+' → '+c.destination;
     $('tripline').textContent=c.origin+' → '+c.destination+' · '+(c.metres/1000).toFixed(2)+' km · '+stage(c);
-    $('distance').textContent=Math.round(c.offset)+' m from current leg · GPS #'+c.confirmed+
+    $('distance').textContent=Math.round(c.offset)+' m from planned route · GPS #'+c.confirmed+
       ' · Alert at '+fleet.limit+' m';
-    $('wrong').disabled=changing||(c.legs.length>1&&c.leg!==1)||c.mode!=='route'||c.index+1>=c.stops.length-1;
+    $('wrong').disabled=changing||c.mode!=='route'||c.index+1>=c.route.length-1;
     $('return').disabled=changing||!['detour','turn requested'].includes(c.mode);
   }
   const logKey=JSON.stringify(fleet.alerts.map(a=>[a.id,a.closed_sequence,Math.round(a.peak_metres)]));
@@ -91,8 +97,8 @@ async function explain(a){
 }
 function draw(now){if(fleet&&animate(fleet.cabs,now))frame=requestAnimationFrame(draw);}
 function gps(f,c){
-  return {trip_id:c.id,sequence:c.sequence,leg:c.leg,captured_at:c.capturedAt,
-    motion:{mode:c.mode,index:c.index,source:c.from,target:c.to,recovery:[...(c.recovery||[])]},
+  return {trip_id:c.id,sequence:c.sequence,captured_at:c.capturedAt,
+    motion:motionSnapshot(c),
     lat:f.origin[0]-c.point[1]*f.metres/f.lat_scale,
     lon:f.origin[1]+c.point[0]*f.metres/f.lon_scale};
 }
@@ -101,7 +107,7 @@ function applyReceipt(f,result){
   if(!cab || result.sequence<cab.confirmed)return;
   cab.confirmed=result.sequence;cab.offset=result.distance_m;
   if(result.alert){
-    const alert={...result.alert,vehicle_id:cab.vehicle_id,cab:cab.cab};
+    const alert={...result.alert,vehicle_id:cab.vehicle_id};
     f.alerts=[alert,...f.alerts.filter(a=>a.id!==alert.id)];
   }
   if(result.completed)cab.mode='arrived';
@@ -212,19 +218,13 @@ async function launch(){
 }
 function restoreTrip(trip){
   const c=makeCab(trip,network);
-  c.leg=Math.min(trip.phase,c.legs.length-1);
-  c.stops=c.legs[c.leg].stops;c.nodes=c.legs[c.leg].path;
-  if(trip.last_sequence===0 && c.stops.length===1){
-    c.leg=1;c.stops=c.legs[1].stops;c.nodes=c.legs[1].path;
-  }
+  const plate=trip.vehicle_id;
+  c.cab=Number(plate.startsWith('CB#') ? plate.slice(3) : plate.slice(-4));
+  c.color=colors[(c.cab+colors.length-1)%colors.length];
   c.capturedAt=trip.captured_at;
   c.confirmed=c.sequence=trip.last_sequence;c.offset=trip.distance_m;
   if(trip.lat!==null)c.point=[(trip.lon-fleet.origin[1])*fleet.lon_scale/fleet.metres,
     (fleet.origin[0]-trip.lat)*fleet.lat_scale/fleet.metres];
-  if(trip.motion){
-    c.mode=trip.motion.mode;c.index=trip.motion.index;
-    c.from=trip.motion.source;c.to=trip.motion.target;c.recovery=trip.motion.recovery;
-  }
   if(trip.completed)c.mode='arrived';
   fleet.cabs.push(c);makeLayers([c],select);showPoint(c,c.point);
   showCabInRoster(c);
@@ -237,6 +237,10 @@ async function setup(){
     const token=sessionStorage.getItem('cabwatch.token');
     const subject=JSON.parse(atob(token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).sub;
     const outbox=new TelemetryOutbox(sessionStorage,subject);
+    if(outbox.hasLegacyReadings()){
+      const saved=await api('me/trips');
+      outbox.upgrade(saved.trips);
+    }
     while(outbox.length){
       await api('me/gps','POST',{readings:outbox.first()});
       outbox.acknowledge();
@@ -247,7 +251,7 @@ async function setup(){
     clearTimeout(fleet?.retryTimer);
     fleet={outbox,...network,...created,cabs:[],seconds:0,working:false};
     cityMap(network,pick);closePlanner();
-    for(const id of ['routes','shared','trails','pins'])$(id).replaceChildren();
+    for(const id of ['routes','shared','pins'])$(id).replaceChildren();
     for(const id of ['pickup','dropoff']){
       $(id).replaceChildren(new Option('Select node',''));
       for(const n of Object.keys(network.nodes))$(id).add(new Option(n,n));
@@ -278,7 +282,7 @@ $('play').onclick=()=>{if(!fleet)return;running=!running;fleet.failed=false;rend
 $('wrong').onclick=()=>{divert(chosen());render();
   msg(running?'Turn queued for the next junction.':'Turn queued for the next junction. Press Start to drive.');};
 $('return').onclick=()=>{rejoin(chosen());render();
-  msg(running?'Cab is rejoining its current planned leg.':'Return requested. Press Start to drive.');};
+  msg(running?'Cab is retracing its detour.':'Return requested. Press Start to drive.');};
 let registering=false;
 function signOut(message=''){
   sessionStorage.removeItem('cabwatch.token');sessionStorage.removeItem('cabwatch.name');

@@ -8,7 +8,7 @@ from typing import Literal, Annotated
 import httpx
 from fastapi import Depends, APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
-from pydantic import AwareDatetime, BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, Field, model_validator
 
 from .agent import generate, tool
 from .admission import TelemetryAdmission
@@ -20,33 +20,54 @@ router = APIRouter(prefix="/cab-watch")
 
 
 from .auth import owner, router as auth_router
-from .fleet import plate_number, route_state, router as fleet_router
+from .fleet import router as fleet_router
 
 router.include_router(auth_router)
 router.include_router(fleet_router)
 
 Node = Annotated[str, Field(pattern="^[A-Z]$")]
 
-class Motion(BaseModel):
+class RouteMotion(BaseModel):
+    mode: Literal["route", "turn requested"]
     index: int = Field(ge=0, le=25)
-    mode: Literal["route","turn requested","detour","returning","arrived"]
-    source: Node | None = None
-    target: Node | None = None
-    recovery: list[Node] = Field(default_factory=list, max_length=26)
 
 
-class Point(BaseModel):
+class DetourMotion(BaseModel):
+    mode: Literal["detour"]
+    trail: list[Node] = Field(min_length=1)
+    target: Node
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_previous_checkpoint(cls, value):
+        if isinstance(value, dict) and "trail" not in value and "source" in value:
+            return {**value, "trail": [value["source"]]}
+        return value
+
+
+class ReturnMotion(BaseModel):
+    mode: Literal["returning"]
+    recovery: list[Node] = Field(min_length=1)
+
+
+class ArrivedMotion(BaseModel):
+    mode: Literal["arrived"]
+
+
+Motion = Annotated[RouteMotion | DetourMotion | ReturnMotion | ArrivedMotion, Field(discriminator="mode")]
+
+
+class Point(BaseModel, extra="forbid"):
     trip_id: UUID
     captured_at: AwareDatetime | None = None
     motion: Motion | None = None
     sequence: int = Field(ge=1, le=2**31-1)
-    leg: int = Field(default=0, ge=0, le=2)
     lat: float = Field(ge=-90, le=90, allow_inf_nan=False)
     lon: float = Field(ge=-180, le=180, allow_inf_nan=False)
 
 
 class Batch(BaseModel):
-    readings: list[Point] = Field(min_length=1, max_length=city.MAX_FLEET)
+    readings: list[Point] = Field(min_length=1, max_length=1000)
 
 
 async def latest_alert(conn, trip_id):
@@ -56,40 +77,21 @@ async def latest_alert(conn, trip_id):
 
 
 async def record(conn, trip, reading):
-    legs, phase, _ = route_state(trip)
-    direct = "to_pickup" not in legs
+    line = [city.NODES[node] for node in json.loads(trip["planned_route"])]
     completed = trip["completed_at"] is not None
     if reading.sequence <= trip["last_sequence"] or completed:
-        path = legs["customer_ride"] if direct else legs[city.LEG_NAMES[min(phase, 2)]]
-        distance = city.distance_from_path([city.NODES[n] for n in path], trip["last_lat"], trip["last_lon"]) if trip["last_lat"] is not None else 0
+        distance = city.distance_from_path(line, trip["last_lat"], trip["last_lon"]) if trip["last_lat"] is not None else 0
         return dict(trip_id=reading.trip_id, sequence=trip["last_sequence"], applied=False,
-                    distance_m=distance, completed=completed, parked=completed, alert=await latest_alert(conn, reading.trip_id))
+                    distance_m=distance, completed=completed, alert=await latest_alert(conn, reading.trip_id))
     if reading.sequence != trip["last_sequence"] + 1:
         raise HTTPException(409, detail=dict(code="sequence_gap", trip_id=str(reading.trip_id),
             expected_sequence=trip["last_sequence"] + 1, received_sequence=reading.sequence))
-    if direct:
-        if reading.leg != 0:
-            raise HTTPException(422, "This ride has one route")
-        line = [city.NODES[n] for n in legs["customer_ride"]]
-    else:
-        if reading.leg < phase or reading.leg > phase + 1:
-            raise HTTPException(422, "Invalid trip leg or leg transition")
-        if reading.leg == phase + 1:
-            empty_start = phase == 0 and trip["last_sequence"] == 0 and len(legs["to_pickup"]) == 1
-            previous_end = city.NODES[legs[city.LEG_NAMES[phase]][-1]]
-            if not empty_start and city.distance_from_path([previous_end], reading.lat, reading.lon) >= 1:
-                raise HTTPException(422, "Invalid trip leg or leg transition")
-        line = [city.NODES[n] for n in legs[city.LEG_NAMES[reading.leg]]]
     distance = city.distance_from_path(line, reading.lat, reading.lon)
-    motion = reading.motion.model_dump() if reading.motion else {}
-    if not direct:
-        motion["legacy"] = dict(to_pickup=legs["to_pickup"], to_depot=legs["to_depot"], phase=reading.leg)
+    motion = reading.motion.model_dump_json() if reading.motion else None
     await conn.execute("""UPDATE cab_watch_accounts.trips SET last_sequence=$2,motion=$3::jsonb,
         last_lat=$4,last_lon=$5,last_captured_at=$6
-        WHERE id=$1""", reading.trip_id, reading.sequence, json.dumps(motion) if motion else None,
+        WHERE id=$1""", reading.trip_id, reading.sequence, motion,
         reading.lat, reading.lon, reading.captured_at)
-    incident = None
-    parked = False
     if distance >= city.LIMIT:
         incident = await conn.fetchrow("""INSERT INTO cab_watch_accounts.alerts
             (trip_id,opened_sequence,peak_metres)
@@ -99,16 +101,13 @@ async def record(conn, trip, reading):
     else:
         incident = await conn.fetchrow("""UPDATE cab_watch_accounts.alerts SET closed_sequence=$2,resolved_at=now()
             WHERE trip_id=$1 AND closed_sequence IS NULL RETURNING *""", reading.trip_id, reading.sequence)
-    final_leg = direct or reading.leg == 2
-    if final_leg and city.distance_from_path([line[-1]], reading.lat, reading.lon) < 1:
-        # A wandering cab can pass the destination before returning to its route.
-        if not direct or reading.motion is None or reading.motion.mode == "arrived":
-            parked = True
-            await conn.execute("UPDATE cab_watch_accounts.trips SET completed_at=now() WHERE id=$1", reading.trip_id)
-            await conn.execute("UPDATE cab_watch_accounts.vehicles SET status='available' WHERE id=$1",
-                               trip["vehicle_id"])
+    arrived = reading.motion is None or reading.motion.mode == "arrived"
+    completed = arrived and city.distance_from_path([line[-1]], reading.lat, reading.lon) < 1
+    if completed:
+        await conn.execute("UPDATE cab_watch_accounts.trips SET completed_at=now() WHERE id=$1", reading.trip_id)
+        await conn.execute("UPDATE cab_watch_accounts.vehicles SET status='available' WHERE id=$1", trip["vehicle_id"])
     return dict(trip_id=reading.trip_id, sequence=reading.sequence, applied=True,
-                distance_m=distance, completed=parked, parked=parked, alert=dict(incident) if incident else None)
+                distance_m=distance, completed=completed, alert=dict(incident) if incident else None)
 
 
 async def apply_schema(conn, namespace="cab_watch_accounts"):
@@ -119,6 +118,8 @@ async def apply_schema(conn, namespace="cab_watch_accounts"):
     if legacy:
         await conn.execute(f"""ALTER TABLE {namespace}.trips ADD CONSTRAINT valid_planned_route
             CHECK ({namespace}.valid_route(planned_route))""")
+
+    await conn.execute((ROOT / "normalize_trips.sql").read_text(encoding="utf-8").replace("cab_watch_accounts", namespace))
 
 
 @asynccontextmanager
@@ -177,7 +178,7 @@ async def ingest_batch(batch, db, user):
         if len(trips) != len(batch.readings):
             raise HTTPException(422, "Send one reading per trip in your fleet")
         results = [await record(conn, trip, readings[trip["id"]]) for trip in trips]
-    return {"accepted": len(trips), "results": results}
+    return {"results": results}
 
 
 @router.post("/me/alerts/{alert_id}/explain")
@@ -188,7 +189,7 @@ async def explain(alert_id: int, request: Request,user: UUID=Depends(owner)):
         WHERE t.user_id=$1 AND a.id=$2""",user,alert_id)
     if not alert:
         raise HTTPException(404, "Unknown alert for this simulation")
-    facts = dict(vehicle_id=alert["vehicle_id"], cab=plate_number(alert["vehicle_id"]), threshold_m=city.LIMIT,
+    facts = dict(vehicle_id=alert["vehicle_id"], threshold_m=city.LIMIT,
                  opened_sequence=alert["opened_sequence"], closed_sequence=alert["closed_sequence"],
                  status="resolved" if alert["closed_sequence"] is not None else "open",
                  peak_m=round(alert["peak_metres"]))

@@ -8,9 +8,6 @@
 .node-label{font:700 14px system-ui;fill:#293c42;paint-order:stroke;stroke:#f5f4ee;stroke-width:3px}
 .junction{pointer-events:none}.picking .junction{pointer-events:all;cursor:crosshair}
 .picking .junction:hover circle,.picking .junction:focus circle{fill:#c6e5ad}
-.depot-mark{font:700 13px system-ui;fill:white;pointer-events:none}
-.depot-label{font:700 11px system-ui;fill:#173f4a;paint-order:stroke;stroke:#f5f4ee;stroke-width:3px;pointer-events:none}
-#depots{pointer-events:none}
 .picking .cabpin{pointer-events:none}
 
 

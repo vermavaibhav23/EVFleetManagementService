@@ -1,16 +1,28 @@
 const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
 export function makeCab(trip, network) {
-  const legs = trip.planned_legs ? ["to_pickup","customer_ride","to_depot"].map(name => {
-    const stops = trip.planned_legs[name];
-    return {stops, path:stops.map(node => network.nodes[node])};
-  }) : trip.route ? [{stops:trip.route, path:trip.route.map(n=>network.nodes[n])}] : trip.legs || [{stops:trip.stops, path:trip.path}];
-  const point = [...legs[0].path[0]];
-  const cab = {...trip, legs, fullStops:trip.stops, stops:legs[0].stops,
-    nodes:legs[0].path, leg:0, index:0, point, mode:'route', sequence:0,
-    streak:0, offset:0, confirmed:0, trail:[point], network};
-  while (cab.stops.length === 1 && cab.leg < legs.length - 1) nextLeg(cab);
-  return cab;
+  const nodes = trip.route.map(node => network.nodes[node]);
+  const point = [...nodes[0]];
+  const motion = trip.motion;
+  return {...trip, nodes, point, mode:motion?.mode ?? 'route', index:motion?.index ?? 0,
+    trail:motion?.mode === 'detour' ? restoreTrail(motion, trip.route, network) : [],
+    to:motion?.target, recovery:motion?.recovery?.slice(), sequence:0,
+    offset:0, confirmed:0, network};
+}
+
+export function motionSnapshot(cab) {
+  switch (cab.mode) {
+    case 'route':
+    case 'turn requested':
+      return {mode:cab.mode, index:cab.index};
+    case 'detour':
+      return {mode:cab.mode, trail:[...cab.trail], target:cab.to};
+    case 'returning':
+      return {mode:cab.mode, recovery:[...cab.recovery]};
+    case 'arrived':
+      return {mode:cab.mode};
+  }
+  throw new Error('Unknown cab movement: ' + cab.mode);
 }
 
 function neighbours(network, node) {
@@ -21,96 +33,54 @@ function pick(choices) {
   return choices[Math.floor(Math.random() * choices.length)];
 }
 
-function nextLeg(cab) {
-  cab.leg++;
-  cab.stops = cab.legs[cab.leg].stops;
-  cab.nodes = cab.legs[cab.leg].path;
-  cab.index = 0;
-  cab.mode = 'route';
-}
-
 function resumeAt(cab, node) {
-  cab.index = cab.stops.indexOf(node);
-  cab.mode = 'route';
-  while (cab.index === cab.stops.length - 1 && cab.leg < cab.legs.length - 1) {
-    nextLeg(cab);
-  }
-  if (cab.index === cab.stops.length - 1) cab.mode = 'arrived';
+  cab.index = cab.route.indexOf(node);
+  cab.mode = cab.index === cab.route.length - 1 ? 'arrived' : 'route';
 }
 
 export function divert(cab) {
-  if (cab.mode !== 'route' || (cab.legs.length > 1 && cab.leg !== 1)) return;
-  if (cab.index + 1 < cab.stops.length - 1) cab.mode = 'turn requested';
+  if (cab.mode !== 'route') return;
+  if (cab.index + 1 < cab.route.length - 1) cab.mode = 'turn requested';
 }
 
-function takeQueuedTurn(cab) {
-  const node = cab.stops[cab.index];
-  const exits = neighbours(cab.network,node).filter(n =>
-    n !== cab.stops[cab.index-1] && n !== cab.stops[cab.index+1]);
-  if (!exits.length) { divert(cab); return; }
-  cab.from = node;
-  cab.to = pick(exits);
+function chooseDetourRoad(cab, node) {
+  const index = cab.route.indexOf(node);
+  const plannedNext = index < 0 ? undefined : cab.route[index + 1];
+  const roads = neighbours(cab.network, node);
+  const alternatives = roads.filter(next => next !== plannedNext);
+  cab.trail = [...cab.trail, node];
+  cab.to = pick(alternatives.length ? alternatives : roads);
   cab.mode = 'detour';
 }
 
-// Start Dijkstra at the current point on the road. Score each possible rejoin
-// by connector distance PLUS the remaining planned leg, not proximity alone.
-function recoveryPath(cab) {
-  const {nodes} = cab.network;
-  const remaining = new Map();
-  let suffix = 0;
-  for (let i=cab.stops.length-1;i>=0;i--) {
-    if (i<cab.stops.length-1) suffix += distance(nodes[cab.stops[i]],nodes[cab.stops[i+1]]);
-    remaining.set(cab.stops[i],suffix);
-  }
-  const costs = new Map();
-  const parent = new Map();
-  const open = new Set([cab.from, cab.to]);
-  const settled = new Set();
-  let best, bestTotal = Infinity, bestConnector = Infinity;
-  const epsilon = 1e-8;
-  for (const end of open) costs.set(end, distance(cab.point, nodes[end]));
-  while (open.size) {
-    let node;
-    for (const candidate of open) {
-      if (node === undefined || costs.get(candidate) < costs.get(node)) node = candidate;
+// Older checkpoints only saved the current road. Find a connected prefix
+// once for those cabs; all newly recorded turns have an exact trail.
+function restoreTrail(motion, route, network) {
+  const trail = motion.trail ?? [motion.source];
+  if (route.includes(trail[0])) return [...trail];
+  const pending = [trail[0]];
+  const parent = new Map([[trail[0], null]]);
+  for (const node of pending) {
+    if (route.includes(node)) {
+      const prefix = [];
+      for (let at=node; parent.get(at) !== null; at=parent.get(at)) prefix.push(at);
+      return [...prefix, ...trail];
     }
-    const connector = costs.get(node);
-    if (connector>bestTotal+epsilon) break;
-    if (remaining.has(node)) {
-      const total = connector+remaining.get(node);
-      // For equal full journeys, rejoin sooner rather than staying off-route.
-      if (total<bestTotal-epsilon || (Math.abs(total-bestTotal)<=epsilon && connector<bestConnector)) {
-        best=node;bestTotal=total;bestConnector=connector;
-      }
-    }
-    open.delete(node);
-    settled.add(node);
-    for (const next of neighbours(cab.network, node)) {
-      if (settled.has(next)) continue;
-      const cost = costs.get(node) + distance(nodes[node], nodes[next]);
-      if (cost >= (costs.get(next) ?? Infinity)) continue;
-      costs.set(next, cost);
+    for (const next of neighbours(network, node)) {
+      if (parent.has(next)) continue;
       parent.set(next, node);
-      open.add(next);
+      pending.push(next);
     }
   }
-  if (best!==undefined) {
-    const path = [best];
-    while (parent.has(best)) {
-      best=parent.get(best);
-      path.unshift(best);
-    }
-    return path;
-  }
-  throw new Error('No road leads back to the planned route.');
+  throw new Error('Saved detour is disconnected from its route.');
 }
 
 export function rejoin(cab) {
   if (cab.mode === 'turn requested') {
     cab.mode = 'route';
   } else if (cab.mode === 'detour') {
-    cab.recovery = recoveryPath(cab);
+    cab.recovery = [...cab.trail].reverse();
+    cab.trail = [];
     cab.mode = 'returning';
   }
 }
@@ -118,7 +88,7 @@ export function rejoin(cab) {
 export function advance(cab) {
   if (cab.mode === 'arrived') return false;
   const onRoute = cab.mode === 'route' || cab.mode === 'turn requested';
-  const next = onRoute ? cab.stops[cab.index + 1] :
+  const next = onRoute ? cab.route[cab.index + 1] :
     cab.mode === 'returning' ? cab.recovery[0] : cab.to;
   const target = cab.network.nodes[next];
   const remaining = distance(cab.point, target);
@@ -128,19 +98,14 @@ export function advance(cab) {
     cab.point = [...target];
     if (onRoute) {
       const queued = cab.mode === 'turn requested';
-      const leg = cab.leg;
       resumeAt(cab, next);
-      if (queued && cab.leg === leg && cab.mode === 'route') takeQueuedTurn(cab);
+      if (queued && cab.mode === 'route') chooseDetourRoad(cab, next);
     } else if (cab.mode === 'returning' && cab.recovery.length === 1) {
       resumeAt(cab, next);
     } else if (cab.mode === 'returning') {
       cab.recovery.shift();
     } else {
-      const exits = neighbours(cab.network, next).filter(n => n !== cab.from);
-      const sideRoads = exits.filter(n => !cab.stops.some((v,i) => i>0 &&
-        ((v===n && cab.stops[i-1]===next) || (v===next && cab.stops[i-1]===n))));
-      cab.to = sideRoads.length ? pick(sideRoads) : exits.length ? pick(exits) : cab.from;
-      cab.from = next;
+      chooseDetourRoad(cab, next);
     }
   }
   cab.sequence++;

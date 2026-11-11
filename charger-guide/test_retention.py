@@ -70,7 +70,7 @@ class RetentionEvidenceTests(unittest.TestCase):
         }
         conn = RecordingConnection(trip)
         lat, lon = city.gps(city.NODES["Z"])
-        run_immediate(record(conn, trip, Point(trip_id=trip_id, sequence=3, leg=0, lat=lat, lon=lon)))
+        run_immediate(record(conn, trip, Point(trip_id=trip_id, sequence=3, lat=lat, lon=lon)))
         alert_write = next(args for sql, args in conn.writes if "INSERT INTO cab_watch_accounts.alerts" in sql)
         self.assertEqual(alert_write[:2], (trip_id, 3))
         self.assertGreater(alert_write[2], 200)
@@ -80,7 +80,7 @@ class RetentionEvidenceTests(unittest.TestCase):
 
         class SnapshotDb:
             async def fetchrow(self, *_):
-                return {"trip_id": trip_id, "vehicle_id":"KA01AB1234", "cab_number": 1,
+                return {"trip_id": trip_id, "vehicle_id":"KA01AB1234",
                         "opened_sequence": 15, "closed_sequence": 30,
                         "peak_metres": 797}
 
@@ -109,9 +109,9 @@ class RetentionEvidenceTests(unittest.TestCase):
 
             async def fetch(self, sql, *_):
                 if "FROM cab_watch_accounts.trips" in sql:
-                    return [dict(id=trip_id,vehicle_id="KA01AB1234",cab_number=1,
+                    return [dict(id=trip_id,vehicle_id="KA01AB1234",
                                  planned_route=json.dumps(["G","H"]),last_sequence=19,
-                                 completed_at=None,phase=0,distance_m=0,motion=None,
+                                 completed_at=None,motion=None,
                                  last_lat=None,last_lon=None,last_captured_at=None)]
                 return []
 

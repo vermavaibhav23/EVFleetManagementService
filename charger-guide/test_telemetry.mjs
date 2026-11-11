@@ -36,3 +36,15 @@ test('large fleets upload bounded chunks without losing readings',()=>{
   assert.equal(received.length,60);
   assert.equal(new Set(received.map(r=>r.trip_id)).size,60);
 });
+
+test('upgrade replays pending passenger GPS and skips obsolete depot movements',()=>{
+  const storage={value:null,getItem(){return this.value;},setItem(key,value){this.value=value;}};
+  const queue=new TelemetryOutbox(storage,'manager');
+  queue.append([{trip_id:'pickup',sequence:7,leg:0},{trip_id:'direct',sequence:1,leg:0},
+    {trip_id:'ride',sequence:9,leg:1},{trip_id:'return',sequence:4,leg:2}]);
+  queue.upgrade([{id:'pickup',last_sequence:6,lat:null,motion:{mode:'route',index:0}},
+    {id:'direct',last_sequence:0,lat:null,motion:null},{id:'ride',last_sequence:8,lat:13},
+    {id:'return',completed:true}]);
+  assert.deepEqual(queue.first(),[{trip_id:'direct',sequence:1},{trip_id:'ride',sequence:9}]);
+  assert.equal(queue.hasLegacyReadings(),false);
+});

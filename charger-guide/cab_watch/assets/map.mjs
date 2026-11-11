@@ -29,12 +29,11 @@ export function cityMap(network,pick){
 export function makeLayers(cabs,choose){
   const routes=document.querySelector('#routes'),pins=document.querySelector('#pins');
   cabs.forEach(c=>{
-    const passenger=c.legs[1]||c.legs[0];
-    const g=svg(routes,'g',{}), points=passenger.path.map(p=>p.join(',')).join(' ');
+    const g=svg(routes,'g',{}), points=c.nodes.map(p=>p.join(',')).join(' ');
     svg(g,'polyline',{points,fill:'none',stroke:'white','stroke-width':8,'stroke-linejoin':'round'});
     svg(g,'polyline',{points,fill:'none',stroke:c.color,'stroke-width':4,'stroke-linejoin':'round'});
     const [ox,oy]=c.point;
-    const pickup=passenger.path[0], destination=passenger.path.at(-1);
+    const pickup=c.nodes[0], destination=c.nodes.at(-1);
     svg(g,'circle',{cx:pickup[0],cy:pickup[1],r:7,fill:'white',stroke:c.color,'stroke-width':3});
     svg(g,'rect',{x:destination[0]-6,y:destination[1]-6,width:12,height:12,fill:'white',stroke:c.color,'stroke-width':3,
       transform:'rotate(45 '+destination[0]+' '+destination[1]+')'});
@@ -63,9 +62,9 @@ export function drawSharedRoads(cabs,network){
   layer.replaceChildren();
   const owners=new Map();
   for(const cab of cabs){
-    const seen=new Set(), passenger=(cab.legs[1]||cab.legs[0]).stops;
-    for(let i=1;i<passenger.length;i++){
-      const edge=[passenger[i-1],passenger[i]].sort().join('');
+    const seen=new Set(), route=cab.route;
+    for(let i=1;i<route.length;i++){
+      const edge=[route[i-1],route[i]].sort().join('');
       if(seen.has(edge))continue;
       seen.add(edge);
       if(!owners.has(edge))owners.set(edge,[]);
