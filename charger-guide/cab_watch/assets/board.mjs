@@ -23,9 +23,7 @@ async function api(path,method='GET',body,extraHeaders={}){
   if(!response.ok){
     if(response.status===401 && !path.startsWith('auth/'))signOut('Please sign in again.');
     const detail=await response.json().catch(()=>({}));
-    const gap=detail.detail?.code==='sequence_gap';
-    const message=gap?'Missing GPS #'+detail.detail.expected_sequence+'. Keep this tab open and retry the missing readings.':
-      typeof detail.detail==='string'?detail.detail:Array.isArray(detail.detail)?detail.detail[0].msg:'Request failed ('+response.status+'). Try again.';
+    const message=typeof detail.detail==='string'?detail.detail:Array.isArray(detail.detail)?detail.detail[0].msg:'Request failed ('+response.status+'). Try again.';
     const error=Error(message);error.status=response.status;
     error.retryAfter=Number(response.headers.get('Retry-After')||0)*1000;
     throw error;

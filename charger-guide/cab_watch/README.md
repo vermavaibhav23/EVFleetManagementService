@@ -50,7 +50,7 @@ Send `POST /cab-watch/me/trips` with a bearer token, a UUID `Idempotency-Key` he
 
 ### Ordered telemetry
 
-Every trip expects the next consecutive sequence. A gap returns HTTP 409 with the expected sequence and rolls back the whole batch. Retries of processed readings return the current receipt and latest incident, so a lost response cannot hide an alert. Latest coordinates overwrite the trip location, while alert incidents remain available.
+Each active trip accepts any sequence greater than its last saved sequence. A missing reading does not delay newer positions or other trips in the batch. Late and duplicate readings return the current receipt and latest incident without changing the saved position or alert.
 
 The browser saves up to two unacknowledged batches in account-scoped session storage before drawing their movement. It replays them in order after a refresh in the same tab. It uploads each batch in chunks of at most 25 readings so large fleets share processing time. It automatically retries network failures, 429 and temporary server failures with bounded exponential backoff. Simulation movement waits when the buffer is full. Closing the tab ends this simulator's session storage.
 

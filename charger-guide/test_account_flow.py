@@ -11,6 +11,47 @@ from cab_watch import city
 
 @unittest.skipUnless(os.getenv("CABWATCH_TEST_URL"), "Requires running test instance")
 class AccountFlow(unittest.TestCase):
+    def test_missing_and_late_gps_in_a_multi_trip_batch(self):
+        with httpx.Client(base_url=os.environ["CABWATCH_TEST_URL"].rstrip("/") + "/", timeout=60) as client:
+            account = client.post("auth/register", json={
+                "name": "GPS check", "email": f"gps-{uuid4().hex}@example.invalid",
+                "password": secrets.token_urlsafe(20)})
+            account.raise_for_status()
+            client.headers["Authorization"] = "Bearer " + account.json()["access_token"]
+
+            def trip():
+                response = client.post("me/trips", headers={"Idempotency-Key": str(uuid4())},
+                                       json={"pickup": "G", "dropoff": "K"})
+                response.raise_for_status()
+                return response.json()["id"]
+
+            def point(trip_id, sequence, node):
+                lat, lon = city.gps(city.NODES[node])
+                return {"trip_id": trip_id, "sequence": sequence, "lat": lat, "lon": lon}
+
+            def send(*readings):
+                response = client.post("me/gps", json={"readings": readings})
+                response.raise_for_status()
+                return {row["trip_id"]: row for row in response.json()["results"]}
+
+            a, b = trip(), trip()
+            send(point(a, 13, "G"), point(b, 1, "G"))
+            opened = send(point(a, 15, "D"), point(b, 2, "H"))
+            self.assertEqual(opened[a]["alert"]["opened_sequence"], 15)
+            self.assertTrue(opened[b]["applied"])
+            late = send(point(a, 14, "I"), point(b, 3, "I"))
+            self.assertFalse(late[a]["applied"])
+            self.assertEqual(late[a]["sequence"], 15)
+            self.assertIsNone(late[a]["alert"]["closed_sequence"])
+            self.assertTrue(late[b]["applied"])
+            closed = send(point(a, 16, "J"))
+            self.assertEqual(closed[a]["alert"]["closed_sequence"], 16)
+            replay = send(point(a, 15, "D"))
+            self.assertFalse(replay[a]["applied"])
+            self.assertEqual(replay[a]["alert"]["closed_sequence"], 16)
+            finished = send(point(a, 17, "K"), point(b, 4, "K"))
+            self.assertTrue(all(row["completed"] for row in finished.values()))
+
     def test_direct_trip_retry_alert_recovery_and_dropoff(self):
         with httpx.Client(base_url=os.environ["CABWATCH_TEST_URL"].rstrip("/") + "/", timeout=60) as client:
             def account():

@@ -83,9 +83,6 @@ async def record(conn, trip, reading):
         distance = city.distance_from_path(line, trip["last_lat"], trip["last_lon"]) if trip["last_lat"] is not None else 0
         return dict(trip_id=reading.trip_id, sequence=trip["last_sequence"], applied=False,
                     distance_m=distance, completed=completed, alert=await latest_alert(conn, reading.trip_id))
-    if reading.sequence != trip["last_sequence"] + 1:
-        raise HTTPException(409, detail=dict(code="sequence_gap", trip_id=str(reading.trip_id),
-            expected_sequence=trip["last_sequence"] + 1, received_sequence=reading.sequence))
     distance = city.distance_from_path(line, reading.lat, reading.lon)
     motion = reading.motion.model_dump_json() if reading.motion else None
     await conn.execute("""UPDATE cab_watch_accounts.trips SET last_sequence=$2,motion=$3::jsonb,

@@ -17,10 +17,10 @@ test('pending detour survives refresh and is acknowledged before the return read
   assert.equal(new TelemetryOutbox(storage,'manager-a').length,0);
 });
 
-test('retry respects server delay and stops on a missing sequence',()=>{
+test('retry respects server delay and stops on client errors',()=>{
   assert.equal(retryDelay({status:429,retryAfter:5000},0),5000);
   assert.equal(retryDelay({},9),30000);
-  assert.equal(retryDelay({status:409},0),null);
+  assert.equal(retryDelay({status:422},0),null);
 });
 
 test('large fleets upload bounded chunks without losing readings',()=>{
